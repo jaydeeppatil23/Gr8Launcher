@@ -95,7 +95,7 @@ def save_theme_choice(theme_name: str) -> None:
         print(f"Could not save selected theme: {error}")
 
 
-def load_installations() -> list[dict[str, str]]:
+def load_installations() -> list[dict[str, object]]:
     try:
         document = json.loads(INSTALLATIONS_FILE.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
@@ -142,7 +142,7 @@ def load_latest_release_id() -> str | None:
 
 
 def save_installations(
-    installations: list[dict[str, str]],
+    installations: list[dict[str, object]],
     handled_external_profile_ids: set[str] | None = None,
     latest_release_id: str | None = None,
 ) -> bool:

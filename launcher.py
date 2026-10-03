@@ -3,6 +3,7 @@ import ctypes
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import uuid
@@ -252,7 +253,7 @@ def _loader_version_from_id(
 	return remainder[: -len(suffix)] if remainder.endswith(suffix) else remainder
 
 
-def get_external_installations() -> list[dict[str, str]]:
+def get_external_installations() -> list[dict[str, object]]:
 	profiles_path = Path(minecraft_directory) / "launcher_profiles.json"
 	try:
 		document = json.loads(profiles_path.read_text(encoding="utf-8"))
@@ -267,6 +268,22 @@ def get_external_installations() -> list[dict[str, str]]:
 	for profile_id, profile in profiles.items():
 		if not isinstance(profile, dict) or profile.get("type") != "custom":
 			continue
+
+		game_dir = profile.get("gameDir")
+		is_instance = False
+		instance_name = ""
+		resolved_game_dir = ""
+		if isinstance(game_dir, str) and game_dir.strip():
+			try:
+				p_game_dir = Path(game_dir).resolve()
+				p_mc_dir = Path(minecraft_directory).resolve()
+				if p_game_dir != p_mc_dir:
+					is_instance = True
+					resolved_game_dir = str(p_game_dir)
+					instance_name = p_game_dir.name
+			except Exception:
+				pass
+
 		external.append(
 			{
 				"id": str(profile_id),
@@ -278,49 +295,83 @@ def get_external_installations() -> list[dict[str, str]]:
 				"version_id": str(
 					profile.get("lastVersionId") or "Version not selected"
 				),
+				"is_instance": is_instance,
+				"instance_name": instance_name,
+				"game_directory": resolved_game_dir,
 			}
 		)
 	return external
 
 
 def import_external_installations(
-	installations: list[dict[str, str]],
+	installations: list[dict[str, object]],
 	handled_profile_ids: set[str],
 	installed_versions: list[dict[str, str]],
-	external_profiles: list[dict[str, str]],
+	external_profiles: list[dict[str, object]],
 	version_catalog: list[dict],
-) -> tuple[list[dict[str, str]], set[str], bool]:
+) -> tuple[list[dict[str, object]], set[str], bool]:
 	installed_by_id = {
 		version["version_id"]: version for version in installed_versions
 	}
 	known_profile_versions = {
 		profile.get("version_id") or profile.get("minecraft_version")
 		for profile in installations
+		if not profile.get("is_instance")
+	}
+	known_game_dirs = {
+		str(Path(p["game_directory"]).resolve())
+		for p in installations
+		if p.get("game_directory")
 	}
 	version_types = {version["id"]: version.get("type") for version in version_catalog}
 	imported_installations = list(installations)
 	handled_ids = set(handled_profile_ids)
 	changed = False
 
+	# Upgrade any existing installations if their external profile has instance/custom dir info
+	ext_by_id = {p["id"]: p for p in external_profiles}
+	for inst in imported_installations:
+		ext_id = inst.get("external_profile_id")
+		if ext_id and ext_id in ext_by_id:
+			ext_prof = ext_by_id[ext_id]
+			if ext_prof.get("is_instance") and not inst.get("is_instance"):
+				inst["is_instance"] = True
+				inst["instance_name"] = str(ext_prof.get("instance_name", ""))
+				inst["game_directory"] = str(ext_prof.get("game_directory", ""))
+				changed = True
+				if inst["game_directory"]:
+					try:
+						known_game_dirs.add(str(Path(inst["game_directory"]).resolve()))
+					except Exception:
+						pass
+
 	for external_profile in external_profiles:
-		external_id = external_profile["id"]
+		external_id = str(external_profile["id"])
 		if external_id in handled_ids:
 			continue
 
-		version_id = external_profile["version_id"]
+		version_id = str(external_profile["version_id"])
 		version_info = installed_by_id.get(version_id)
 		if version_info is None:
 			continue
 
 		handled_ids.add(external_id)
 		changed = True
-		if version_id in known_profile_versions:
+		is_inst = bool(external_profile.get("is_instance", False))
+		ext_game_dir = str(external_profile.get("game_directory", "") or "")
+		if is_inst and ext_game_dir:
+			try:
+				if str(Path(ext_game_dir).resolve()) in known_game_dirs:
+					continue
+			except Exception:
+				pass
+		elif not is_inst and version_id in known_profile_versions:
 			continue
 
 		imported_installations.append(
 			{
 				"id": f"minecraft-launcher:{external_id}",
-				"name": external_profile["name"],
+				"name": str(external_profile["name"]),
 				"loader": version_info["loader"],
 				"channel": (
 					"Snapshot"
@@ -332,13 +383,275 @@ def import_external_installations(
 				"version_id": version_id,
 				"source": "minecraft_launcher",
 				"external_profile_id": external_id,
+				"is_instance": is_inst,
+				"instance_name": str(external_profile.get("instance_name", "")),
+				"game_directory": ext_game_dir,
 			}
 		)
-		known_profile_versions.add(version_id)
+		if ext_game_dir:
+			try:
+				known_game_dirs.add(str(Path(ext_game_dir).resolve()))
+			except Exception:
+				pass
+		if not is_inst:
+			known_profile_versions.add(version_id)
 
 	if changed:
 		invalidate_installed_versions_cache()
 	return imported_installations, handled_ids, changed
+
+
+def _detect_instance_configuration(
+	folder: Path,
+	installed_by_id: dict[str, dict[str, str]],
+	installed_ids: set[str],
+	version_catalog: list[dict],
+) -> dict[str, str] | None:
+	mc_version = None
+	loader = "Vanilla"
+	loader_version = ""
+
+	# 1. Custom instance metadata if present
+	for meta_name in ("instance.json", "profile.json", "minecraft_instance.json"):
+		meta_file = folder / meta_name
+		if meta_file.is_file():
+			try:
+				meta_data = json.loads(meta_file.read_text(encoding="utf-8"))
+				if isinstance(meta_data, dict):
+					mc_version = meta_data.get("minecraft_version") or meta_data.get("mc_version") or mc_version
+					loader = meta_data.get("loader") or loader
+					loader_version = meta_data.get("loader_version") or loader_version
+			except Exception:
+				pass
+
+	# 2. Check logs (latest.log or recent logs)
+	log_files = []
+	latest_log = folder / "logs" / "latest.log"
+	if latest_log.is_file():
+		log_files.append(latest_log)
+	logs_dir = folder / "logs"
+	if logs_dir.is_dir():
+		log_files.extend(sorted(logs_dir.glob("*.log"), reverse=True)[:3])
+
+	for log_file in log_files:
+		if mc_version and loader != "Vanilla" and loader_version:
+			break
+		try:
+			with log_file.open("r", encoding="utf-8", errors="ignore") as f:
+				for _ in range(80):
+					line = f.readline()
+					if not line:
+						break
+					m = re.search(
+						r"Loading Minecraft\s+([^\s]+)\s+with\s+(\w+)\s+Loader\s+([^\s]+)",
+						line,
+						re.IGNORECASE,
+					)
+					if m:
+						mc_version = m.group(1)
+						loader = m.group(2).capitalize()
+						loader_version = m.group(3)
+						break
+					m2 = re.search(r"Loading Minecraft\s+([^\s]+)", line, re.IGNORECASE)
+					if m2 and not mc_version:
+						mc_version = m2.group(1)
+					if "Fabric Loader" in line:
+						loader = "Fabric"
+					elif "NeoForge" in line:
+						loader = "NeoForge"
+					elif "Forge" in line:
+						loader = "Forge"
+		except Exception:
+			pass
+
+	# 3. Indicator directories
+	if loader == "Vanilla":
+		if (folder / ".fabric").exists():
+			loader = "Fabric"
+		elif (folder / ".quilt").exists():
+			loader = "Quilt"
+
+	# 4. Check mods folder
+	mods_dir = folder / "mods"
+	if mods_dir.is_dir():
+		for mod in mods_dir.glob("*.jar"):
+			m_mod = re.search(
+				r"[+\-_]mc([0-9]+\.[0-9]+(?:\.[0-9]+)?)", mod.name, re.IGNORECASE
+			)
+			if m_mod and not mc_version:
+				mc_version = m_mod.group(1)
+			mod_lower = mod.name.lower()
+			if "fabric" in mod_lower and loader == "Vanilla":
+				loader = "Fabric"
+			elif "neoforge" in mod_lower:
+				loader = "NeoForge"
+			elif "forge" in mod_lower and loader == "Vanilla":
+				loader = "Forge"
+
+	# 5. Check folder name for clues if version is still missing
+	if not mc_version:
+		clean_name = folder.name.replace("_", ".")
+		for v_id in sorted(installed_ids, key=len, reverse=True):
+			if v_id in clean_name or clean_name in v_id:
+				if v_id in installed_by_id:
+					v_info = installed_by_id[v_id]
+					mc_version = v_info["minecraft_version"]
+					if loader == "Vanilla":
+						loader = v_info["loader"]
+						loader_version = v_info.get("loader_version", "")
+				break
+
+	# 6. Resolve version_id against installed_versions
+	version_id = None
+	if loader == "Fabric":
+		if loader_version and mc_version:
+			target_id = f"fabric-loader-{loader_version}-{mc_version}"
+			if target_id in installed_ids:
+				version_id = target_id
+		if not version_id and mc_version:
+			for v_id in installed_ids:
+				if v_id.startswith("fabric-loader-") and v_id.endswith(f"-{mc_version}"):
+					version_id = v_id
+					v_info = installed_by_id[v_id]
+					loader_version = v_info.get("loader_version", loader_version)
+					break
+		if not version_id and mc_version:
+			version_id = f"fabric-loader-{loader_version or '0.16.0'}-{mc_version}"
+	elif loader == "NeoForge" and mc_version:
+		for v_id in installed_ids:
+			if "neoforge" in v_id.lower() and mc_version in v_id:
+				version_id = v_id
+				break
+	elif loader == "Forge" and mc_version:
+		for v_id in installed_ids:
+			if "forge" in v_id.lower() and mc_version in v_id:
+				version_id = v_id
+				break
+	elif loader == "Vanilla" and mc_version:
+		version_id = mc_version
+
+	if not version_id and mc_version:
+		version_id = mc_version
+
+	if not version_id:
+		for v_id in installed_ids:
+			if v_id.lower() in folder.name.lower():
+				version_id = v_id
+				v_info = installed_by_id[v_id]
+				mc_version = v_info["minecraft_version"]
+				loader = v_info["loader"]
+				loader_version = v_info.get("loader_version", "")
+				break
+
+	if not version_id:
+		is_mc_folder = any(
+			(folder / item).exists()
+			for item in ("saves", "mods", "resourcepacks", "options.txt", "config")
+		)
+		if not is_mc_folder:
+			return None
+		if installed_ids:
+			first_id = sorted(installed_ids)[0]
+			version_id = first_id
+			v_info = installed_by_id.get(first_id, {})
+			mc_version = v_info.get("minecraft_version", first_id)
+			loader = v_info.get("loader", "Vanilla")
+			loader_version = v_info.get("loader_version", "")
+		else:
+			return None
+
+	if version_id in installed_by_id:
+		v_info = installed_by_id[version_id]
+		mc_version = v_info["minecraft_version"]
+		loader = v_info["loader"]
+		loader_version = v_info.get("loader_version", loader_version)
+
+	return {
+		"version_id": version_id,
+		"minecraft_version": mc_version or version_id,
+		"loader": loader,
+		"loader_version": loader_version,
+	}
+
+
+def discover_local_instances(
+	mc_dir: str | Path,
+	installations: list[dict[str, object]],
+	installed_versions: list[dict[str, str]],
+	version_catalog: list[dict],
+) -> tuple[list[dict[str, object]], bool]:
+	instances_root = Path(mc_dir) / "instances"
+	if not instances_root.is_dir():
+		return installations, False
+
+	existing_game_dirs = set()
+	for item in installations:
+		gd = item.get("game_directory")
+		if gd:
+			try:
+				existing_game_dirs.add(str(Path(str(gd)).resolve()))
+			except Exception:
+				existing_game_dirs.add(str(gd))
+		iname = item.get("instance_name")
+		if iname:
+			try:
+				existing_game_dirs.add(str((instances_root / str(iname)).resolve()))
+			except Exception:
+				pass
+
+	existing_ids = {str(item["id"]) for item in installations}
+	installed_by_id = {v["version_id"]: v for v in installed_versions}
+	installed_ids = set(installed_by_id.keys())
+	version_types = {v["id"]: v.get("type") for v in version_catalog}
+
+	updated_installations = list(installations)
+	changed = False
+
+	for folder in sorted(instances_root.iterdir()):
+		if not folder.is_dir():
+			continue
+		try:
+			folder_resolved = str(folder.resolve())
+		except Exception:
+			folder_resolved = str(folder)
+
+		if folder_resolved in existing_game_dirs:
+			continue
+
+		detected = _detect_instance_configuration(
+			folder, installed_by_id, installed_ids, version_catalog
+		)
+		if not detected:
+			continue
+
+		profile_id = f"instance:{folder.name}"
+		if profile_id in existing_ids:
+			profile_id = f"instance:{uuid.uuid4().hex[:8]}"
+
+		new_profile = {
+			"id": profile_id,
+			"name": folder.name.replace("_", " "),
+			"loader": detected["loader"],
+			"channel": (
+				"Snapshot"
+				if version_types.get(detected["minecraft_version"]) == "snapshot"
+				else "Release"
+			),
+			"minecraft_version": detected["minecraft_version"],
+			"loader_version": detected["loader_version"],
+			"version_id": detected["version_id"],
+			"is_instance": True,
+			"instance_name": folder.name,
+			"game_directory": folder_resolved,
+			"source": "discovered_instance",
+		}
+
+		updated_installations.append(new_profile)
+		existing_game_dirs.add(folder_resolved)
+		existing_ids.add(profile_id)
+		changed = True
+
+	return updated_installations, changed
 
 
 def get_mod_loader(loader_name: str):

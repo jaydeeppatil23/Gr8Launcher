@@ -18,6 +18,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 import flet as ft
 from colors import get_theme, get_theme_names, get_pagecolor, DEFAULT_THEME
 from launcher import (
+    discover_local_instances,
     get_external_installations,
     get_installed_versions,
     invalidate_installed_versions_cache,
@@ -109,8 +110,14 @@ def main(page: ft.Page):
             version_catalog,
         )
     )
-    if imports_changed and not save_installations(
-        installations, handled_external_profile_ids
+    installations, discovered_changed = discover_local_instances(
+        minecraft_directory,
+        installations,
+        get_installed_versions(),
+        version_catalog,
+    )
+    if (imports_changed or discovered_changed) and not save_installations(
+        installations, handled_external_profile_ids, latest_release_id
     ):
         installations = load_installations()
         handled_external_profile_ids = load_handled_external_profile_ids()
@@ -123,6 +130,7 @@ def main(page: ft.Page):
     connectivity_known = {"value": False}
     notification_state = {"show": None, "pending": None, "epoch": 0}
     options_background_state = {"animation_running": False}
+    danger_zone_state = {"expanded": False}
     launcher_log_state = {
         "lines": [],
         "list": None,
@@ -1240,7 +1248,7 @@ def main(page: ft.Page):
             )
 
         def navigate(name, profile_id=None, force=False):
-            nonlocal current_page, transition_id, tab
+            nonlocal current_page, transition_id, tab, handled_external_profile_ids
             if name == "profiles":
                 name = "options_accounts"
             if name == "edit_installation":
@@ -1264,6 +1272,28 @@ def main(page: ft.Page):
             active_page["profile_id"] = profile_id
 
             installed_versions = get_installed_versions(force_refresh=force)
+            if force:
+                installations[:], handled_external_profile_ids, imp_changed = (
+                    import_external_installations(
+                        installations,
+                        handled_external_profile_ids,
+                        installed_versions,
+                        get_external_installations(),
+                        version_catalog,
+                    )
+                )
+                installations[:], disc_changed = discover_local_instances(
+                    minecraft_directory,
+                    installations,
+                    installed_versions,
+                    version_catalog,
+                )
+                if imp_changed or disc_changed:
+                    save_installations(
+                        installations,
+                        handled_external_profile_ids,
+                        latest_release_id,
+                    )
 
             def profile_summary(installation):
                 summary = (
@@ -1318,31 +1348,208 @@ def main(page: ft.Page):
                     notify("This installation is busy launching.", ft.Icons.INFO_OUTLINE)
                     return
 
-                dialog = build_themed_alert_dialog(
-                    title=ft.Text(
-                        "Remove installation?",
-                        color=theme["btn_primary"],
-                        weight=ft.FontWeight.BOLD,
-                    ),
-                    content=ft.Text(
-                        f"Remove '{profile['name']}' from Gr8 Launcher?",
-                        color=theme["text_primary"],
-                    ),
-                    actions=[
-                        ft.TextButton(
-                            "Cancel",
-                            on_click=lambda e: close_delete_dialog(dialog),
-                            style=ft.ButtonStyle(color=theme["text_secondary"]),
+                is_inst = bool(profile.get("is_instance"))
+                if is_inst:
+                    game_dir = profile.get("game_directory")
+                    if not game_dir and profile.get("instance_name"):
+                        game_dir = str(
+                            Path(minecraft_directory)
+                            / "instances"
+                            / profile["instance_name"]
+                        )
+                    dialog = build_themed_alert_dialog(
+                        title=ft.Row(
+                            spacing=10,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            controls=[
+                                ft.Icon(
+                                    ft.Icons.WARNING_ROUNDED,
+                                    color=ft.Colors.RED_400,
+                                    size=26,
+                                ),
+                                ft.Text(
+                                    "Delete Instance & Files?",
+                                    color=ft.Colors.RED_400,
+                                    weight=ft.FontWeight.BOLD,
+                                    size=17,
+                                ),
+                            ],
                         ),
-                        ft.Button(
-                            "Remove",
-                            bgcolor=theme["btn_primary"],
-                            color=theme["btn_primary_text"],
-                            style=rounded_button_style,
-                            on_click=lambda e: delete_profile(profile_id, dialog),
+                        content=ft.Column(
+                            spacing=12,
+                            tight=True,
+                            controls=[
+                                ft.Text(
+                                    f"Are you sure you want to permanently delete the instance '{profile['name']}'?",
+                                    color=theme["text_primary"],
+                                    size=14,
+                                    weight=ft.FontWeight.W_500,
+                                ),
+                                ft.Container(
+                                    padding=ft.Padding.all(12),
+                                    bgcolor=ft.Colors.with_opacity(
+                                        0.12, ft.Colors.RED_900
+                                    ),
+                                    border=ft.Border.all(
+                                        1,
+                                        color=ft.Colors.with_opacity(
+                                            0.35, ft.Colors.RED_400
+                                        ),
+                                    ),
+                                    border_radius=8,
+                                    content=ft.Column(
+                                        spacing=6,
+                                        tight=True,
+                                        controls=[
+                                            ft.Text(
+                                                "⚠️ DANGER: This is an isolated instance directory!",
+                                                color=ft.Colors.RED_300,
+                                                size=12,
+                                                weight=ft.FontWeight.BOLD,
+                                            ),
+                                            ft.Text(
+                                                "Deleting this instance will permanently delete all its files:\n"
+                                                "• All singleplayer Worlds and Saves\n"
+                                                "• Installed Resource Packs, Texture Packs & Shader Packs\n"
+                                                "• Installed Mods, Configurations & custom Options\n"
+                                                "• Screenshots, Logs, and Instance data",
+                                                color=theme["text_primary"],
+                                                size=12,
+                                            ),
+                                            ft.Text(
+                                                "This action cannot be undone!",
+                                                color=ft.Colors.RED_300,
+                                                size=11,
+                                                italic=True,
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                                *(
+                                    [
+                                        ft.Text(
+                                            f"Instance Directory:\n{game_dir}",
+                                            size=11,
+                                            color=theme["text_muted"],
+                                            selectable=True,
+                                        )
+                                    ]
+                                    if game_dir
+                                    else []
+                                ),
+                            ],
                         ),
-                    ],
-                )
+                        actions=[
+                            ft.TextButton(
+                                "Cancel",
+                                on_click=lambda e: close_delete_dialog(dialog),
+                                style=ft.ButtonStyle(
+                                    color=theme["text_secondary"]
+                                ),
+                            ),
+                            ft.Button(
+                                "Delete Instance",
+                                bgcolor=ft.Colors.RED_700,
+                                color=ft.Colors.WHITE,
+                                style=rounded_button_style,
+                                on_click=lambda e: delete_profile(
+                                    profile_id, dialog
+                                ),
+                            ),
+                        ],
+                    )
+                else:
+                    dialog = build_themed_alert_dialog(
+                        title=ft.Row(
+                            spacing=8,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            controls=[
+                                ft.Icon(
+                                    ft.Icons.REMOVE_CIRCLE_OUTLINE,
+                                    color=theme["btn_primary"],
+                                    size=22,
+                                ),
+                                ft.Text(
+                                    "Remove Profile Configuration?",
+                                    color=theme["btn_primary"],
+                                    weight=ft.FontWeight.BOLD,
+                                    size=16,
+                                ),
+                            ],
+                        ),
+                        content=ft.Column(
+                            spacing=10,
+                            tight=True,
+                            controls=[
+                                ft.Text(
+                                    f"Are you sure you want to remove '{profile['name']}' from Gr8 Launcher?",
+                                    color=theme["text_primary"],
+                                    size=14,
+                                ),
+                                ft.Container(
+                                    padding=ft.Padding.all(12),
+                                    bgcolor=ft.Colors.with_opacity(
+                                        0.08, theme["btn_primary"]
+                                    ),
+                                    border=ft.Border.all(
+                                        1,
+                                        color=ft.Colors.with_opacity(
+                                            0.25, theme["btn_primary"]
+                                        ),
+                                    ),
+                                    border_radius=8,
+                                    content=ft.Column(
+                                        spacing=6,
+                                        tight=True,
+                                        controls=[
+                                            ft.Row(
+                                                spacing=8,
+                                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                                controls=[
+                                                    ft.Icon(
+                                                        ft.Icons.INFO_OUTLINE,
+                                                        color=theme["btn_primary"],
+                                                        size=18,
+                                                    ),
+                                                    ft.Text(
+                                                        "Profile Configuration Removal",
+                                                        color=theme["btn_primary"],
+                                                        weight=ft.FontWeight.BOLD,
+                                                        size=12,
+                                                    ),
+                                                ],
+                                            ),
+                                            ft.Text(
+                                                "• This will only remove its configuration from your profiles list.\n"
+                                                "• Your Minecraft game files, worlds, packs, and saves will NOT be deleted.\n"
+                                                "• This version will now be shown under the Unconfigured Versions section at the bottom of the Installations tab.",
+                                                color=theme["text_secondary"],
+                                                size=12,
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                            ],
+                        ),
+                        actions=[
+                            ft.TextButton(
+                                "Cancel",
+                                on_click=lambda e: close_delete_dialog(dialog),
+                                style=ft.ButtonStyle(
+                                    color=theme["text_secondary"]
+                                ),
+                            ),
+                            ft.Button(
+                                "Remove Profile",
+                                bgcolor=theme["btn_primary"],
+                                color=theme["btn_primary_text"],
+                                style=rounded_button_style,
+                                on_click=lambda e: delete_profile(
+                                    profile_id, dialog
+                                ),
+                            ),
+                        ],
+                    )
                 show_dialog_with_blur(dialog)
 
             def confirm_delete_installed_version(version_id):
@@ -1488,13 +1695,31 @@ def main(page: ft.Page):
                         except Exception:
                             pass
 
+                if target_profile and target_profile.get("external_profile_id"):
+                    handled_external_profile_ids.add(str(target_profile["external_profile_id"]))
+
                 updated_installations = [
                     item for item in installations if item["id"] != profile_id
                 ]
-                if save_installations(updated_installations):
+                if save_installations(
+                    updated_installations,
+                    handled_external_profile_ids,
+                    latest_release_id,
+                ):
                     installations[:] = updated_installations
+                    if launch_selection["key"] == profile_id:
+                        launch_selection["key"] = (
+                            "latest-release" if latest_release_id else ""
+                        )
+                        save_profile_options(
+                            player_name_state["value"],
+                            launch_selection["key"],
+                            profile_picture_state["path"],
+                        )
                     close_dialog_with_blur(dialog)
                     navigate("installations", force=True)
+                    if target_profile:
+                        notify(f"Removed '{target_profile['name']}'.", ft.Icons.DELETE_OUTLINE)
                 else:
                     dialog.content = ft.Text("Could not save installation changes.")
                     page.update()
@@ -1761,6 +1986,30 @@ def main(page: ft.Page):
                 color=theme["text_primary"],
                 overflow=ft.TextOverflow.ELLIPSIS,
             )
+            selected_version_instance_badge = ft.Container(
+                content=ft.Text(
+                    "INSTANCE",
+                    size=10,
+                    weight=ft.FontWeight.BOLD,
+                    color=theme["btn_primary"],
+                ),
+                bgcolor=ft.Colors.with_opacity(
+                    0.14, theme["btn_primary"]
+                ),
+                padding=ft.Padding.symmetric(
+                    horizontal=6, vertical=2
+                ),
+                border_radius=4,
+                visible=bool(selected_target and selected_target.get("is_instance")),
+            )
+            selected_version_title_row = ft.Row(
+                spacing=10,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                controls=[
+                    selected_version_name,
+                    selected_version_instance_badge,
+                ],
+            )
             selected_version_summary = ft.Text(
                 profile_summary(selected_target) if selected_target else "Your installed versions will appear here.",
                 size=14,
@@ -1957,11 +2206,12 @@ def main(page: ft.Page):
                     log_file.flush()
 
             def launch_is_ready():
+                uname = player_name_state["value"].strip() or "Player"
                 return bool(
                     launch_selection["key"] in launch_targets
                     and re.fullmatch(
-                        r"[A-Za-z0-9_]{3,16}",
-                        player_name_state["value"].strip(),
+                        r"[A-Za-z0-9_]{1,16}",
+                        uname,
                     )
                 )
 
@@ -1976,6 +2226,7 @@ def main(page: ft.Page):
                 )
                 selected_target = launch_targets[key]
                 selected_version_name.value = selected_target["name"]
+                selected_version_instance_badge.visible = bool(selected_target.get("is_instance"))
                 selected_version_summary.value = profile_summary(selected_target)
                 selected_version_details.value = get_selected_version_details(
                     selected_target
@@ -2180,10 +2431,10 @@ def main(page: ft.Page):
                 if launcher_log_state["running"]:
                     return
 
-                username = player_name_state["value"].strip()
-                if not re.fullmatch(r"[A-Za-z0-9_]{3,16}", username):
+                username = player_name_state["value"].strip() or "Player"
+                if not re.fullmatch(r"[A-Za-z0-9_]{1,16}", username):
                     launch_status.value = (
-                        "Enter a 3-16 character username using letters, numbers, or _."
+                        "Enter a 1-16 character username using letters, numbers, or _."
                     )
                     page.update()
                     return
@@ -2200,6 +2451,7 @@ def main(page: ft.Page):
                     launch_selection["key"],
                     profile_picture_state["path"],
                 )
+                update_sidebar_username()
                 launcher_log_state["running"] = True
                 launcher_log_state["game_started"] = False
                 launcher_log_state["downloading"] = (
@@ -2425,12 +2677,8 @@ def main(page: ft.Page):
             ]
 
             installed_rows = []
-            total_installed_items = len(installed_profiles) + len(unconfigured_versions)
-            current_installed_index = 0
-
-            for profile in installed_profiles:
-                is_last = current_installed_index == total_installed_items - 1
-                current_installed_index += 1
+            for idx, profile in enumerate(installed_profiles):
+                is_last = idx == len(installed_profiles) - 1
                 is_inst = bool(profile.get("is_instance"))
                 icon = (
                     ft.Icons.FOLDER_SPECIAL
@@ -2467,11 +2715,7 @@ def main(page: ft.Page):
                 row_controls = [
                     ft.Icon(
                         icon,
-                        color=(
-                            theme["text_secondary"]
-                            # if not is_inst
-                            # else theme["btn_primary"]
-                        ),
+                        color=theme["text_secondary"],
                         size=24,
                     ),
                     ft.Column(
@@ -2512,8 +2756,12 @@ def main(page: ft.Page):
                         ),
                     ),
                     ft.IconButton(
-                        icon=ft.Icons.REMOVE,
-                        tooltip=tooltip(f"Remove {profile['name']}?"),
+                        icon=ft.Icons.DELETE_OUTLINE if is_inst else ft.Icons.CLOSE,
+                        tooltip=tooltip(
+                            f"Delete instance {profile['name']} (permanent)"
+                            if is_inst
+                            else f"Remove {profile['name']} from profiles"
+                        ),
                         icon_color=theme["text_secondary"],
                         style=rounded_button_style,
                         disabled=is_active_launch_version(
@@ -2537,27 +2785,62 @@ def main(page: ft.Page):
                     )
                 )
 
-            for version in unconfigured_versions:
-                is_last = current_installed_index == total_installed_items - 1
-                current_installed_index += 1
+            if not installed_rows:
+                installed_rows.append(
+                    ft.Container(
+                        padding=ft.Padding.symmetric(vertical=24, horizontal=20),
+                        alignment=ft.Alignment.CENTER,
+                        content=ft.Text(
+                            "No local installations or instances found",
+                            color=theme["text_muted"],
+                            size=13,
+                        ),
+                    )
+                )
+
+            unconfigured_rows = []
+            for idx, version in enumerate(unconfigured_versions):
+                is_last = idx == len(unconfigured_versions) - 1
                 row_controls = [
                     ft.Icon(
-                        ft.Icons.INVENTORY_2_OUTLINED,
-                        color=theme["text_muted"],
+                        ft.Icons.WARNING_AMBER_ROUNDED,
+                        color=ft.Colors.ORANGE_400,
                         size=24,
                     ),
                     ft.Column(
                         spacing=2,
                         controls=[
-                            ft.Text(
-                                version["version_id"],
-                                size=14,
-                                color=theme["text_muted"],
+                            ft.Row(
+                                spacing=8,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                controls=[
+                                    ft.Text(
+                                        version["version_id"],
+                                        size=14,
+                                        weight=ft.FontWeight.W_500,
+                                        color=theme["text_primary"],
+                                    ),
+                                    ft.Container(
+                                        content=ft.Text(
+                                            "RAW VERSION",
+                                            size=9,
+                                            weight=ft.FontWeight.BOLD,
+                                            color=ft.Colors.ORANGE_300,
+                                        ),
+                                        bgcolor=ft.Colors.with_opacity(
+                                            0.14, ft.Colors.ORANGE_400
+                                        ),
+                                        padding=ft.Padding.symmetric(
+                                            horizontal=5, vertical=1
+                                        ),
+                                        border_radius=4,
+                                    ),
+                                ],
                             ),
                             ft.Text(
                                 profile_summary(version),
                                 size=12,
-                                color=theme["text_muted"],
+                                color=theme["text_secondary"],
                             ),
                         ],
                         expand=True,
@@ -2565,7 +2848,7 @@ def main(page: ft.Page):
                     ft.IconButton(
                         icon=ft.Icons.INFO_OUTLINE,
                         icon_size=15,
-                        tooltip=tooltip(f"About {version['version_id']}"),
+                        tooltip=tooltip(f"About unconfigured version {version['version_id']}"),
                         icon_color=theme["text_muted"],
                         style=rounded_button_style,
                         hover_color=ft.Colors.TRANSPARENT,
@@ -2574,9 +2857,9 @@ def main(page: ft.Page):
                         ]: show_unconfigured_version_info(vid),
                     ),
                     ft.IconButton(
-                        icon=ft.Icons.ADD,
-                        tooltip=tooltip(f"Configure {version['version_id']}"),
-                        icon_color=theme["text_secondary"],
+                        icon=ft.Icons.ADD_CIRCLE_OUTLINE,
+                        tooltip=tooltip(f"Configure {version['version_id']} as a profile"),
+                        icon_color=theme["btn_primary"],
                         style=rounded_button_style,
                         disabled=is_active_launch_version(version["version_id"]),
                         on_click=lambda e, selected_version=version: navigate(
@@ -2584,9 +2867,9 @@ def main(page: ft.Page):
                         ),
                     ),
                     ft.IconButton(
-                        icon=ft.Icons.DELETE_OUTLINE,
-                        tooltip=tooltip(f"Delete {version['version_id']} from Minecraft"),
-                        icon_color=theme["text_secondary"],
+                        icon=ft.Icons.DELETE_FOREVER,
+                        tooltip=tooltip(f"Permanently delete {version['version_id']} from Minecraft"),
+                        icon_color=ft.Colors.RED_400,
                         style=rounded_button_style,
                         disabled=is_active_launch_version(version["version_id"]),
                         on_click=lambda e, version_id=version[
@@ -2594,7 +2877,7 @@ def main(page: ft.Page):
                         ]: confirm_delete_installed_version(version_id),
                     ),
                 ]
-                installed_rows.append(
+                unconfigured_rows.append(
                     ft.Container(
                         padding=ft.Padding.symmetric(vertical=12, horizontal=16),
                         border=None if is_last else ft.Border.only(
@@ -2603,19 +2886,6 @@ def main(page: ft.Page):
                         content=ft.Row(
                             controls=row_controls,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
-                    )
-                )
-
-            if not installed_rows:
-                installed_rows.append(
-                    ft.Container(
-                        padding=ft.Padding.symmetric(vertical=24, horizontal=20),
-                        alignment=ft.Alignment.CENTER,
-                        content=ft.Text(
-                            "No local versions found",
-                            color=theme["text_muted"],
-                            size=13,
                         ),
                     )
                 )
@@ -2704,8 +2974,12 @@ def main(page: ft.Page):
                                     ]: navigate("edit_installation", selected_id),
                                 ),
                                 ft.IconButton(
-                                    icon=ft.Icons.DELETE_OUTLINE,
-                                    tooltip=tooltip(f"Delete {profile['name']}"),
+                                    icon=ft.Icons.DELETE_OUTLINE if profile.get("is_instance") else ft.Icons.CLOSE,
+                                    tooltip=tooltip(
+                                        f"Delete instance {profile['name']} (permanent)"
+                                        if profile.get("is_instance")
+                                        else f"Remove {profile['name']} from profiles"
+                                    ),
                                     icon_color=theme["text_secondary"],
                                     style=rounded_button_style,
                                     disabled=is_active_launch_version(
@@ -3236,10 +3510,10 @@ def main(page: ft.Page):
 
             accounts_player_field = ft.TextField(
                 label="Player username",
-                value=player_name_state["value"],
+                value=player_name_state["value"] or "Player",
                 width=280,
                 max_length=16,
-                hint_text="3-16 letters, numbers, or _",
+                hint_text="1-16 letters, numbers, or _",
                 border_color=theme["border"],
                 focused_border_color=theme["btn_primary"],
                 color=theme["text_primary"],
@@ -3832,7 +4106,7 @@ def main(page: ft.Page):
                             
                         ],
                     ),
-                    selected_version_name,
+                    selected_version_title_row,
                     selected_version_summary,
                     selected_version_details,
                 ],
@@ -3907,6 +4181,151 @@ def main(page: ft.Page):
                 on_click=lambda e: navigate("new_installation"),
             )
             launcher_log_state["new_installation_button"] = new_installation_button
+
+            danger_zone_controls = []
+            if unconfigured_rows:
+                danger_zone_content = ft.Column(
+                    visible=danger_zone_state["expanded"],
+                    spacing=8,
+                    controls=[
+                        ft.Text(
+                            "These raw version folders were detected on your disk in Minecraft's versions directory, but are not configured into Gr8 Launcher profiles. Deleting a version here permanently removes its core jar and json files from your disk.",
+                            size=11,
+                            color=theme["text_muted"],
+                        ),
+                        ft.Container(
+                            bgcolor=theme["surface"],
+                            border=ft.Border.all(
+                                1,
+                                color=theme["border"],
+                            ),
+                            border_radius=12,
+                            clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+                            content=ft.Column(
+                                spacing=0,
+                                controls=unconfigured_rows,
+                            ),
+                        ),
+                    ],
+                )
+
+                danger_chevron = ft.Icon(
+                    ft.Icons.KEYBOARD_ARROW_UP_ROUNDED
+                    if danger_zone_state["expanded"]
+                    else ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED,
+                    color=theme["text_secondary"],
+                    size=20,
+                )
+
+                danger_count_badge = ft.Container(
+                    content=ft.Text(
+                        f"{len(unconfigured_rows)} raw {'version' if len(unconfigured_rows) == 1 else 'versions'}",
+                        size=10,
+                        weight=ft.FontWeight.W_500,
+                        color=theme["text_secondary"],
+                    ),
+                    bgcolor=theme["card"],
+                    border=ft.Border.all(
+                        1,
+                        color=theme["border"],
+                    ),
+                    padding=ft.Padding.symmetric(horizontal=7, vertical=2),
+                    border_radius=5,
+                )
+
+                def toggle_danger_zone(e):
+                    danger_zone_state["expanded"] = not danger_zone_state["expanded"]
+                    danger_zone_content.visible = danger_zone_state["expanded"]
+                    danger_chevron.icon = (
+                        ft.Icons.KEYBOARD_ARROW_UP_ROUNDED
+                        if danger_zone_state["expanded"]
+                        else ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED
+                    )
+                    page.update()
+
+                danger_zone_header = ft.Container(
+                    bgcolor=theme["surface"],
+                    border=ft.Border.all(
+                        1,
+                        color=theme["border"],
+                    ),
+                    border_radius=10,
+                    padding=ft.Padding.symmetric(horizontal=14, vertical=12),
+                    ink=True,
+                    on_click=toggle_danger_zone,
+                    tooltip=tooltip("Click to expand or collapse unconfigured raw versions"),
+                    content=ft.Row(
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        controls=[
+                            ft.Row(
+                                spacing=10,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                controls=[
+                                    ft.Icon(
+                                        ft.Icons.UNARCHIVE_ROUNDED,
+                                        color=theme["text_secondary"],
+                                        size=20,
+                                    ),
+                                    ft.Column(
+                                        spacing=2,
+                                        tight=True,
+                                        controls=[
+                                            ft.Row(
+                                                spacing=8,
+                                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                                controls=[
+                                                    ft.Text(
+                                                        "UNCONFIGURED RAW VERSIONS",
+                                                        size=12,
+                                                        color=theme["text_primary"],
+                                                        weight=ft.FontWeight.BOLD,
+                                                    ),
+                                                    danger_count_badge,
+                                                ],
+                                            ),
+                                            ft.Text(
+                                                "Hidden by default. Click to expand and manage unconfigured version folders on disk.",
+                                                size=11,
+                                                color=theme["text_muted"],
+                                            ),
+                                        ],
+                                    ),
+                                ],
+                            ),
+                            danger_chevron,
+                        ],
+                    ),
+                )
+
+                def on_danger_header_hover(e):
+                    is_h = e.data == "true"
+                    danger_zone_header.bgcolor = (
+                        theme.get("card_hover", theme["card"])
+                        if is_h
+                        else theme["surface"]
+                    )
+                    danger_zone_header.border = ft.Border.all(
+                        1,
+                        color=theme["btn_primary"] if is_h else theme["border"],
+                    )
+                    danger_zone_header.update()
+
+                danger_zone_header.on_hover = on_danger_header_hover
+
+                danger_zone_controls = [
+                    ft.Container(
+                        margin=ft.Margin.only(top=16),
+                        content=ft.Column(
+                            spacing=10,
+                            tight=True,
+                            controls=[
+                                danger_zone_header,
+                                danger_zone_content,
+                            ],
+                        ),
+                    )
+                ]
 
             pages = {
                 "home": ft.Row(
@@ -4071,6 +4490,7 @@ def main(page: ft.Page):
                                         if pending_rows
                                         else []
                                     ),
+                                    *danger_zone_controls,
                                 ],
                             ),
                         ],
