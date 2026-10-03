@@ -1,0 +1,11 @@
+{
+  "ram_mb": 6700,
+  "java_path": "",
+  "window_width": 854,
+  "window_height": 480,
+  "fullscreen": false,
+  "launch_action": "Hide launcher",
+  "capture_logs": true,
+  "show_installation_directory": true,
+  "enable_orbs": true
+}

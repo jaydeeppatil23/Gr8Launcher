@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "installations": [
+    {
+      "id": "950eea5c3a5646e3b78c0a2802ef1c3b",
+      "name": "1.21.11 Fab",
+      "loader": "Fabric",
+      "channel": "",
+      "minecraft_version": "1.21.11",
+      "loader_version": "0.19.5",
+      "version_id": "fabric-loader-0.19.5-1.21.11",
+      "is_instance": true,
+      "instance_name": "1_21_11_Fab",
+      "game_directory": "C:\\Users\\Jaydeep Patil\\AppData\\Roaming\\.minecraft\\instances\\1_21_11_Fab"
+    },
+    {
+      "id": "7d3760c2df554ac8bfd8d8005d9611af",
+      "name": "1.21.11",
+      "loader": "Vanilla",
+      "channel": "Release",
+      "minecraft_version": "1.21.11",
+      "loader_version": "",
+      "version_id": "1.21.11",
+      "is_instance": false,
+      "instance_name": "",
+      "game_directory": ""
+    },
+    {
+      "id": "98bb7db0f33640ad964591c3cf73cd5c",
+      "name": "Fab 26.3",
+      "loader": "Fabric",
+      "channel": "",
+      "minecraft_version": "26.3",
+      "loader_version": "0.19.5",
+      "version_id": "fabric-loader-0.19.5-26.3",
+      "is_instance": true,
+      "instance_name": "26_3",
+      "game_directory": "C:\\Users\\Jaydeep Patil\\AppData\\Roaming\\.minecraft\\instances\\26_3"
+    },
+    {
+      "id": "134605640520412ebc236405834ba4b8",
+      "name": "1.8.9",
+      "loader": "Vanilla",
+      "channel": "Release",
+      "minecraft_version": "1.8.9",
+      "loader_version": "",
+      "version_id": "1.8.9",
+      "is_instance": false,
+      "instance_name": "",
+      "game_directory": ""
+    }
+  ],
+  "handled_external_profile_ids": [
+    "29880a1edecd46a189fa64e3b405b762",
+    "7e948f67782c4b6084e3a74a726e07af",
+    "8b569d2f9155474d90c62899c4488c86",
+    "be7e3a6f9b9445a58edd8e0553c8b1f6",
+    "e5f775df0c574416916397d84567d679"
+  ],
+  "latest_release_id": "26.3"
+}
