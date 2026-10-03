@@ -1,0 +1,5 @@
+.flet/
+.data/
+__pycache__/
+logs/
+*.log
