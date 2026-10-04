@@ -42,7 +42,7 @@ A sleek, lightweight, and modern Minecraft launcher built with Python and [Flet]
 
 2. **Install dependencies**:
    ```bash
-   pip install flet minecraft-launcher-lib
+   pip install -r requirements.txt
    ```
 
 3. **Launch the application**:
