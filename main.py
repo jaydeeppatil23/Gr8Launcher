@@ -46,7 +46,8 @@ from storage import (
     save_theme_choice,
 )
 
-THOUGHTS_FILE = Path(__file__).resolve().parent / ".assets" / "thoughts.json"
+ASSETS_DIR = Path(__file__).resolve().parent / ".assets"
+THOUGHTS_FILE = ASSETS_DIR / "thoughts.json"
 
 DEFAULT_THOUGHTS = [
     "Never dig straight down; patience always reveals the safer path.",
@@ -79,7 +80,7 @@ def get_random_thought() -> str:
 
 
 def main(page: ft.Page):
-    page.window.icon = "./.assets/icons/gr8_icon_r_256.ico"
+    page.window.icon = str(ASSETS_DIR / "icons" / "gr8_icon_r_256.ico")
     available_themes = get_theme_names()
     installations = load_installations()
     profile_options = load_profile_options()
@@ -159,7 +160,7 @@ def main(page: ft.Page):
 
     page.window.prevent_close = False
     page.window.title_bar_hidden = True
-    page.fonts = {"Mojangles": ".assets/font/Mojangles-v2.otf"}
+    page.fonts = {"Mojangles": str(ASSETS_DIR / "font" / "mojangles-v2.otf")}
     account_picture_picker = ft.FilePicker()
     page.services.append(account_picture_picker)
     clipboard_service = ft.Clipboard()
@@ -4773,4 +4774,4 @@ def main(page: ft.Page):
     page.run_task(monitor_connectivity)
 
 if __name__ == "__main__":
-    ft.run(main, assets_dir=".assets")
+    ft.run(main, assets_dir=str(ASSETS_DIR))
