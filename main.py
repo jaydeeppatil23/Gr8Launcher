@@ -2632,7 +2632,9 @@ def main(page: ft.Page):
                     bgcolor={
                         ft.ControlState.DEFAULT: theme["btn_primary"],
                         ft.ControlState.DISABLED: theme["surface"],
+                        
                     },
+                    icon_size=20,
                     color={
                         ft.ControlState.DEFAULT: theme["btn_primary_text"],
                         ft.ControlState.DISABLED: theme["text_muted"],
@@ -4126,7 +4128,7 @@ def main(page: ft.Page):
             )
             selected_installation_card = ft.Container(
                 expand=True,
-                border=ft.Border.all(1, theme["border"]),
+                # border=ft.Border.all(1, theme["border"]),
                 border_radius=25,
                 bgcolor=ft.Colors.TRANSPARENT,
                 padding=1,
@@ -4335,9 +4337,9 @@ def main(page: ft.Page):
                         ft.Container(
                             width=230,
                             bgcolor=theme["surface"],
-                            border=ft.Border.only(
-                                right=ft.BorderSide(1, color=theme["border"])
-                            ),
+                            # border=ft.Border.only(
+                            #     right=ft.BorderSide(1, color=theme["border"])
+                            # ),
                             padding=10,
                             content=ft.Column(
                                 expand=True,
@@ -4403,7 +4405,7 @@ def main(page: ft.Page):
                                                     "Ready to play?",
                                                     size=25,
                                                     weight=ft.FontWeight.BOLD,
-                                                    color=theme["text_primary"],
+                                                    color=theme["text_secondary"],
                                                 ),
                                             ],
                                         ),
@@ -4658,7 +4660,7 @@ def main(page: ft.Page):
                                 icon=ft.Icons.FILE_DOWNLOAD_OUTLINED,
                                 tooltip=tooltip("Installations"),
                             ),
-                            ft.Tab(icon=ft.Icons.SETTINGS, tooltip=tooltip("Options")),
+                            ft.Tab(icon=ft.Icons.TUNE, tooltip=tooltip("Options")),
                         ],
                     ),
                 ],
