@@ -6,9 +6,11 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import uuid
 from pathlib import Path
 
+import requests
 import minecraft_launcher_lib
 from storage import load_pending_installations, save_pending_installations
 
@@ -654,6 +656,168 @@ def discover_local_instances(
 	return updated_installations, changed
 
 
+def estimate_installation_total(target: dict, mc_dir: str | Path) -> int:
+	mc_dir = str(mc_dir)
+	version_id = target.get("minecraft_version") or target.get("version_id", "")
+	v_json_path = os.path.join(mc_dir, "versions", version_id, f"{version_id}.json")
+	vdata = None
+	if os.path.isfile(v_json_path):
+		try:
+			with open(v_json_path, "r", encoding="utf-8") as f:
+				vdata = json.load(f)
+		except Exception:
+			pass
+	if not vdata:
+		try:
+			manifest_url = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
+			r = requests.get(manifest_url, timeout=3).json()
+			entry = next((v for v in r.get("versions", []) if v.get("id") == version_id), None)
+			if entry and "url" in entry:
+				vdata = requests.get(entry["url"], timeout=3).json()
+		except Exception:
+			pass
+
+	if not vdata:
+		return 0
+
+	libs_count = len(vdata.get("libraries", []))
+	assets_count = 0
+	asset_info = vdata.get("assetIndex")
+	if asset_info:
+		asset_id = vdata.get("assets", asset_info.get("id", ""))
+		asset_local = os.path.join(mc_dir, "assets", "indexes", f"{asset_id}.json")
+		if os.path.isfile(asset_local):
+			try:
+				with open(asset_local, "r", encoding="utf-8") as f:
+					assets_count = len(json.load(f).get("objects", {}))
+			except Exception:
+				assets_count = 1500
+		else:
+			try:
+				aindex = requests.get(asset_info["url"], timeout=3).json()
+				assets_count = len(aindex.get("objects", {}))
+			except Exception:
+				assets_count = 3500
+
+	runtime_count = 0
+	if "javaVersion" in vdata:
+		comp = vdata["javaVersion"].get("component", "java-runtime-delta")
+		try:
+			plat = minecraft_launcher_lib.runtime._get_jvm_platform_string()
+			v_file = os.path.join(mc_dir, "runtime", comp, plat, ".version")
+			if not os.path.isfile(v_file):
+				runtime_count = 250
+		except Exception:
+			pass
+
+	return libs_count + assets_count + runtime_count
+
+
+class InstallationProgressTracker:
+	def __init__(self, estimated_total: int = 0):
+		self.estimated_total = max(0, estimated_total)
+		self.completed_previous = 0
+		self.current_stage_max = 0
+		self.current_stage_val = 0
+		self.highest_ratio = 0.0
+		self.start_time = None
+		self.history = []
+		self.stage_name = "Setup"
+		self.stage_index = 0
+		self.last_status = "Preparing..."
+		self.last_eta = ""
+
+	def on_status(self, raw_status: str):
+		self.last_status = raw_status
+		lower = raw_status.lower()
+		if "librar" in lower:
+			self.stage_name = "Libraries"
+			self.stage_index = 1
+		elif "asset" in lower:
+			self.stage_name = "Assets"
+			self.stage_index = 2
+		elif "runtime" in lower or "java" in lower:
+			self.stage_name = "Java Runtime"
+			self.stage_index = 3
+
+	def on_max(self, maximum: int):
+		if self.current_stage_max > 0:
+			self.completed_previous += max(self.current_stage_val, self.current_stage_max)
+		self.current_stage_max = max(1, int(maximum) + 1)
+		self.current_stage_val = 0
+
+	def on_progress(self, current: int):
+		now = time.monotonic()
+		if self.start_time is None:
+			self.start_time = now
+
+		self.current_stage_val = max(0, int(current))
+		overall_completed = self.completed_previous + self.current_stage_val
+		effective_total = max(self.estimated_total, self.completed_previous + self.current_stage_max)
+		if effective_total <= 0:
+			effective_total = max(1, overall_completed)
+
+		if self.estimated_total > 0:
+			ratio = overall_completed / effective_total
+		else:
+			stage_ranges = {1: (0.0, 0.20), 2: (0.20, 0.80), 3: (0.80, 0.98)}
+			if self.stage_index in stage_ranges:
+				s_start, s_end = stage_ranges[self.stage_index]
+				stage_pct = self.current_stage_val / max(1, self.current_stage_max)
+				ratio = s_start + (s_end - s_start) * stage_pct
+			else:
+				ratio = self.highest_ratio
+
+		ratio = min(0.99, max(self.highest_ratio, ratio))
+		self.highest_ratio = ratio
+
+		progress_advanced = not self.history or overall_completed > self.history[-1][1]
+		if progress_advanced:
+			self.history.append((now, overall_completed))
+		self.history = [h for h in self.history if now - h[0] <= 4.0]
+
+		eta_text = ""
+		if progress_advanced and len(self.history) >= 2:
+			dt = now - self.history[0][0]
+			df = overall_completed - self.history[0][1]
+			if dt >= 0.6 and df > 0:
+				speed = df / dt
+				remaining = max(0, effective_total - overall_completed)
+				if remaining > 0 and speed > 0:
+					eta_sec = int(round(remaining / speed))
+					if eta_sec < 60:
+						time_str = f"{eta_sec}s"
+					elif eta_sec < 3600:
+						m, s = divmod(eta_sec, 60)
+						time_str = f"{m}m {s:02d}s"
+					else:
+						h, m = divmod(eta_sec, 3600)
+						time_str = f"{h}h {m // 60:02d}m"
+					speed_str = (
+						f"{speed:.0f}"
+						if speed >= 10
+						else f"{speed:.1f}"
+						if speed >= 1
+						else f"{speed:.2f}"
+					)
+					eta_text = f"ETA: {time_str} ({speed_str} files/s)"
+				elif remaining == 0:
+					eta_text = "Finishing..."
+		if not eta_text and not self.last_eta and (now - self.start_time) > 1.5:
+			eta_text = "ETA: calculating..."
+
+		if eta_text:
+			self.last_eta = eta_text
+		pct_text = f"{int(round(ratio * 100))}%"
+		if self.current_stage_max > 1:
+			stage_str = f"Downloading {self.stage_name} ({self.current_stage_val:,}/{self.current_stage_max:,})"
+		else:
+			stage_str = self.last_status
+
+		status_text = f"{stage_str} • {pct_text}"
+		return ratio, status_text, self.last_eta
+
+
 def get_mod_loader(loader_name: str):
 	return minecraft_launcher_lib.mod_loader.get_mod_loader(loader_name.casefold())
 
@@ -753,9 +917,30 @@ async def start_game(
 	)
 	if (settings or {}).get("fullscreen", False):
 		command.append("--fullscreen")
+
+	if os.name == "nt" and command:
+		exe_path = Path(command[0])
+		if exe_path.name.lower() == "java.exe":
+			javaw_path = exe_path.with_name("javaw.exe")
+			if javaw_path.exists():
+				command[0] = str(javaw_path)
+	elif os.name != "nt" and command:
+		try:
+			java_bin = Path(command[0])
+			if java_bin.exists() and not os.access(java_bin, os.X_OK):
+				java_bin.chmod(java_bin.stat().st_mode | 0o755)
+		except Exception:
+			pass
+
 	callback["setStatus"]("Starting Minecraft...")
 	log_file = None
 	process_options = {}
+	if os.name == "nt":
+		# Only use CREATE_NO_WINDOW if the executable is console java.exe (javaw.exe does not need it)
+		# Do NOT use STARTUPINFO with SW_HIDE, because Windows forces SW_HIDE on Minecraft's first game window!
+		if command and Path(command[0]).name.lower() == "java.exe":
+			process_options["creationflags"] = subprocess.CREATE_NO_WINDOW
+
 	if (settings or {}).get("capture_logs", True):
 		log_path = Path(minecraft_directory) / "logs" / "gr8-launcher.log"
 		log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -765,6 +950,7 @@ async def start_game(
 			subprocess.Popen,
 			command,
 			cwd=game_dir,
+			stdin=subprocess.DEVNULL,
 			stdout=subprocess.PIPE,
 			stderr=subprocess.STDOUT,
 			text=True,

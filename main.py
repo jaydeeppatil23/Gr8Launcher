@@ -6,6 +6,7 @@ import re
 import socket
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -31,6 +32,8 @@ from launcher import (
     get_system_memory_mb,
     remove_installed_version,
     start_game,
+    estimate_installation_total,
+    InstallationProgressTracker,
 )
 from storage import (
     DEFAULT_SETTINGS,
@@ -147,6 +150,10 @@ def main(page: ft.Page):
         "target_profile_id": None,
         "status": None,
         "progress": 0,
+        "eta": "",
+        "status_control": None,
+        "progress_control": None,
+        "eta_control": None,
         "animation_running": False,
         "new_installation_button": None,
     }
@@ -160,7 +167,7 @@ def main(page: ft.Page):
 
     page.window.prevent_close = False
     page.window.title_bar_hidden = True
-    page.fonts = {"Mojangles": str(ASSETS_DIR / "font" / "mojangles-v2.otf")}
+    page.fonts = {"mojangles": str(ASSETS_DIR / "font" / "mojangles-v2.otf")}
     account_picture_picker = ft.FilePicker()
     page.services.append(account_picture_picker)
     clipboard_service = ft.Clipboard()
@@ -299,11 +306,16 @@ def main(page: ft.Page):
                 page.run_task(clipboard_service.set, text)
             except Exception:
                 pass
-            try:
-                p = subprocess.Popen(["clip"], stdin=subprocess.PIPE)
-                p.communicate(input=text.encode("utf-16le"))
-            except Exception:
-                pass
+            if os.name == "nt":
+                try:
+                    p = subprocess.Popen(
+                        ["clip"],
+                        stdin=subprocess.PIPE,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                    )
+                    p.communicate(input=text.encode("utf-16le"))
+                except Exception:
+                    pass
             notify(message, ft.Icons.CHECK_CIRCLE_OUTLINE)
 
         def open_url(url: str, message: str = ""):
@@ -1317,8 +1329,20 @@ def main(page: ft.Page):
                     path.mkdir(parents=True, exist_ok=True)
                     if hasattr(os, "startfile"):
                         os.startfile(str(path))
+                    elif sys.platform == "darwin":
+                        subprocess.Popen(
+                            ["open", str(path)],
+                            stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                        )
                     else:
-                        subprocess.Popen(["xdg-open", str(path)])
+                        subprocess.Popen(
+                            ["xdg-open", str(path)],
+                            stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                        )
                 except Exception:
                     pass
 
@@ -1978,6 +2002,13 @@ def main(page: ft.Page):
                 size=12,
                 color=theme["text_secondary"],
                 overflow=ft.TextOverflow.ELLIPSIS,
+                expand=True,
+            )
+            launch_eta = ft.Text(
+                launcher_log_state.get("eta", ""),
+                size=12,
+                color=theme["text_muted"],
+                text_align=ft.TextAlign.RIGHT,
             )
             selected_target = launch_targets.get(launch_selection["key"])
             selected_version_name = ft.Text(
@@ -2389,14 +2420,14 @@ def main(page: ft.Page):
                 except Exception:
                     pass
 
-            def update_launch_progress(status=None, value=None):
+            def update_launch_progress(status=None, value=None, eta=None):
                 status_changed = False
                 if status is not None:
                     status_str = str(status)
                     status_changed = (launcher_log_state.get("status") != status_str)
                     launcher_log_state["status"] = status_str
                     if launcher_log_state["running"]:
-                        if status_str.startswith("Download "):
+                        if status_str.startswith("Download ") or "Download" in status_str:
                             launcher_log_state["downloading"] = True
                         elif status_str in (
                             "Installation complete",
@@ -2404,10 +2435,15 @@ def main(page: ft.Page):
                             "Starting Minecraft...",
                         ):
                             launcher_log_state["downloading"] = False
+                            launcher_log_state["eta"] = ""
                 if value is not None:
                     launcher_log_state["progress"] = value
+                if eta is not None:
+                    launcher_log_state["eta"] = eta
+
                 status_control = launcher_log_state.get("status_control")
                 progress_control = launcher_log_state.get("progress_control")
+                eta_control = launcher_log_state.get("eta_control")
                 is_on_home = active_page.get("name") == "home"
 
                 if status is not None and status_control is not None:
@@ -2422,6 +2458,13 @@ def main(page: ft.Page):
                     if is_on_home:
                         try:
                             progress_control.update()
+                        except Exception:
+                            pass
+                if eta_control is not None and (eta is not None or status_changed):
+                    eta_control.value = launcher_log_state.get("eta", "")
+                    if is_on_home:
+                        try:
+                            eta_control.update()
                         except Exception:
                             pass
 
@@ -2489,43 +2532,97 @@ def main(page: ft.Page):
                 log_file = None
                 output_task = None
 
+                est_total = 0
+                if launcher_log_state["downloading"]:
+                    try:
+                        est_total = await asyncio.to_thread(
+                            estimate_installation_total, target, minecraft_directory
+                        )
+                    except Exception:
+                        est_total = 0
+
+                tracker = InstallationProgressTracker(estimated_total=est_total)
+                last_progress_time = 0.0
+                download_activity = {
+                    "last_event": time.monotonic(),
+                    "indeterminate": False,
+                }
+
                 def report_status(status):
+                    status_str = str(status)
                     loop.call_soon_threadsafe(
-                        append_launcher_logs, [f"[Launcher] {status}"]
+                        append_launcher_logs, [f"[Launcher] {status_str}"]
+                    )
+                    tracker.on_status(status_str)
+                    is_complete = status_str == "Installation complete"
+                    if status_str.startswith("Download "):
+                        download_activity["last_event"] = time.monotonic()
+                    ratio = (
+                        1.0
+                        if is_complete
+                        else tracker.highest_ratio
+                        if tracker.highest_ratio > 0
+                        else None
                     )
                     loop.call_soon_threadsafe(
-                        update_launch_progress, str(status), None
+                        update_launch_progress,
+                        status_str,
+                        ratio,
+                        None if is_complete else tracker.last_eta,
                     )
 
                 def set_progress_maximum(maximum):
-                    launch_progress_state["maximum"] = maximum
-                    loop.call_soon_threadsafe(update_launch_progress, None, 0)
-
-                last_progress_time = 0.0
-                last_progress_val = -1.0
+                    tracker.on_max(maximum)
+                    ratio = tracker.highest_ratio if tracker.highest_ratio > 0 else None
+                    loop.call_soon_threadsafe(
+                        update_launch_progress, None, ratio, tracker.last_eta
+                    )
 
                 def report_progress(current):
-                    nonlocal last_progress_time, last_progress_val
-                    maximum = launch_progress_state["maximum"]
-                    if not maximum:
-                        return
-                    progress = current / maximum
+                    nonlocal last_progress_time
+                    ratio, status_text, eta_text = tracker.on_progress(current)
                     now = time.monotonic()
-                    if (
-                        (now - last_progress_time >= 0.05)
-                        or (progress >= 1.0)
-                        or (abs(progress - last_progress_val) >= 0.01)
-                    ):
+                    download_activity["last_event"] = now
+                    if (now - last_progress_time >= 0.05) or (ratio >= 1.0):
                         last_progress_time = now
-                        last_progress_val = progress
-                        loop.call_soon_threadsafe(update_launch_progress, None, progress)
+                        download_activity["indeterminate"] = False
+                        loop.call_soon_threadsafe(
+                            update_launch_progress, status_text, ratio, eta_text
+                        )
+
+                async def monitor_download_activity():
+                    while (
+                        launcher_log_state["running"]
+                        and launcher_log_state["downloading"]
+                    ):
+                        await asyncio.sleep(0.5)
+                        if (
+                            launcher_log_state["downloading"]
+                            and not download_activity["indeterminate"]
+                            and time.monotonic() - download_activity["last_event"] >= 1.5
+                        ):
+                            progress_control = launcher_log_state.get(
+                                "progress_control"
+                            )
+                            if progress_control is not None:
+                                progress_control.value = None
+                                if active_page.get("name") == "home":
+                                    try:
+                                        progress_control.update()
+                                    except Exception:
+                                        pass
+                                download_activity["indeterminate"] = True
 
                 callback = {
                     "setStatus": report_status,
                     "setMax": set_progress_maximum,
                     "setProgress": report_progress,
                 }
+                progress_monitor_task = None
                 try:
+                    progress_monitor_task = asyncio.create_task(
+                        monitor_download_activity()
+                    )
                     process, log_file = await start_game(
                         target,
                         username,
@@ -2535,6 +2632,9 @@ def main(page: ft.Page):
                         launcher_log_state["cancel_event"],
                     )
                     launcher_log_state["game_started"] = True
+                    launcher_log_state["downloading"] = False
+                    launcher_log_state["eta"] = ""
+                    update_launch_progress("Starting Minecraft...", 1.0, eta="")
                     refresh_launch_button()
                     output_task = asyncio.create_task(
                         asyncio.to_thread(
@@ -2558,20 +2658,27 @@ def main(page: ft.Page):
                         if exit_code == 0
                         else f"Minecraft exited with code {exit_code}.",
                         0,
+                        eta="",
                     )
                     append_launcher_logs(
                         [f"[Launcher] Minecraft exited with code {exit_code}."]
                     )
                 except DownloadCancelled:
-                    update_launch_progress("Version download cancelled.", 0)
+                    update_launch_progress("Version download cancelled.", 0, eta="")
                     append_launcher_logs(["[Launcher] Version download cancelled."])
                 except Exception as error:
                     set_launcher_log_visible(True)
                     if launch_action == "Hide launcher":
                         page.window.visible = True
-                    update_launch_progress(f"Could not launch Minecraft: {error}", 0)
+                    update_launch_progress(f"Could not launch Minecraft: {error}", 0, eta="")
                     append_launcher_logs([f"[Launcher] Launch failed: {error}"])
                 finally:
+                    if progress_monitor_task is not None:
+                        progress_monitor_task.cancel()
+                        try:
+                            await progress_monitor_task
+                        except asyncio.CancelledError:
+                            pass
                     if log_file is not None:
                         log_file.close()
                     launcher_log_state["running"] = False
@@ -4419,8 +4526,18 @@ def main(page: ft.Page):
                                     controls=[
                                         ft.Column(
                                             expand=True,
-                                            spacing=10,
-                                            controls=[launch_status, launch_progress],
+                                            spacing=6,
+                                            controls=[
+                                                ft.Row(
+                                                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                                    controls=[
+                                                        launch_status,
+                                                        launch_eta,
+                                                    ],
+                                                ),
+                                                launch_progress,
+                                            ],
                                         ),
                                         play_button,
                                     ],
@@ -4543,6 +4660,7 @@ def main(page: ft.Page):
             if name == "home":
                 launcher_log_state["status_control"] = launch_status
                 launcher_log_state["progress_control"] = launch_progress
+                launcher_log_state["eta_control"] = launch_eta
                 page.run_task(animate_launcher_log_background)
             elif name == "options":
                 page.run_task(animate_options_background)
