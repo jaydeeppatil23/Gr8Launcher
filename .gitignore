@@ -3,4 +3,5 @@
 __pycache__/
 logs/
 temp.py/
+temp/
 *.log
