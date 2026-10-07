@@ -53,13 +53,13 @@ ASSETS_DIR = Path(__file__).resolve().parent / ".assets"
 THOUGHTS_FILE = ASSETS_DIR / "thoughts.json"
 
 DEFAULT_THOUGHTS = [
-    "Never dig straight down; patience always reveals the safer path.",
-    "The grandest structures always begin with a single, humble block.",
-    "Even the deepest darkness holds bright diamonds if you explore long enough.",
-    "A single torch doesn't just illuminate the room—it keeps the shadows away.",
-    "Your inventory is finite for a reason: carry only what truly matters.",
-    "Every grand world is simply a collection of small, deliberate placements.",
-    "Take your time. The world doesn't rush, and neither should you.",
+    "Don't dig straight down in Minecraft or in life; pause, look ahead, and choose a safer next step.",
+    "Every great Minecraft build begins with one block, and every big change begins with one small action.",
+    "Keep exploring: the diamonds you find in a cave are a reminder that hard seasons can still hold hope.",
+    "Place a torch where it's dark, and offer a little kindness where someone needs encouragement.",
+    "Your Minecraft inventory has limits; make room in life for what matters most.",
+    "A world is built one block at a time, and a good life is shaped by small choices made with care.",
+    "It's okay to wander off the map; unexpected paths can lead to your favorite discoveries.",
 ]
 
 
@@ -171,6 +171,8 @@ def main(page: ft.Page):
     page.window.min_height = 600
     page.window.resizable = True
     page.horizontal_alignment = ft.CrossAxisAlignment.STRETCH
+    page.padding = 0
+    page.spacing = 0
 
     page.window.prevent_close = False
     page.window.title_bar_hidden = True
@@ -222,13 +224,102 @@ def main(page: ft.Page):
             for theme in available_themes
         ]
 
-    def tooltip(msg):
-        return ft.Tooltip(
-            message=msg,
-            bgcolor=theme["bg"],
-            text_style=ft.TextStyle(color=theme["text_primary"]),
-            wait_duration=1000,
-        )
+
+    TAB_BTN_WIDTH = 58
+    TAB_BTN_HEIGHT = 38
+    TAB_GAP = 4
+    TAB_PITCH = TAB_BTN_WIDTH + TAB_GAP
+
+    class NavigationTabs(ft.Container):
+        def __init__(self, tab_names, initial_index, on_tab_select, app_theme, tooltip_func):
+            self.tab_names = tab_names
+            self._selected_index = initial_index
+            self.app_theme = app_theme
+
+            self.tab_highlight = ft.Container(
+                left=initial_index * TAB_PITCH,
+                top=0,
+                width=TAB_BTN_WIDTH,
+                height=TAB_BTN_HEIGHT,
+                border_radius=8,
+                bgcolor=ft.Colors.with_opacity(0.18, app_theme["btn_primary"]),
+                animate_position=ft.Animation(200, ft.AnimationCurve.FAST_OUT_SLOWIN),
+            )
+
+            tab_defs = [
+                ("home", ft.Icons.HOME, "Home"),
+                ("installations", ft.Icons.FILE_DOWNLOAD_OUTLINED, "Profiles"),
+                ("options", ft.Icons.TUNE, "Options"),
+            ]
+
+            self.buttons = []
+            for i, (t_name, t_icon, t_tip) in enumerate(tab_defs):
+                is_active = (i == initial_index)
+                btn = ft.IconButton(
+                    icon=t_icon,
+                    icon_size=23,
+                    width=TAB_BTN_WIDTH,
+                    height=TAB_BTN_HEIGHT,
+                    icon_color=(
+                        app_theme["btn_primary"]
+                        if is_active
+                        else app_theme["text_secondary"]
+                    ),
+                    tooltip=tooltip_func(t_tip),
+                    hover_color=ft.Colors.with_opacity(0.06, app_theme["btn_primary"]),
+                    style=ft.ButtonStyle(
+                        shape=ft.RoundedRectangleBorder(radius=8),
+                        overlay_color=ft.Colors.TRANSPARENT,
+                    ),
+                    on_click=lambda e, name=t_name: on_tab_select(name),
+                )
+                self.buttons.append(btn)
+
+            inner_stack = ft.Stack(
+                controls=[
+                    self.tab_highlight,
+                    ft.Row(
+                        controls=self.buttons,
+                        spacing=TAB_GAP,
+                        alignment=ft.MainAxisAlignment.CENTER,
+                    ),
+                ],
+                width=len(tab_names) * TAB_BTN_WIDTH + (len(tab_names) - 1) * TAB_GAP,
+                height=TAB_BTN_HEIGHT,
+            )
+
+            super().__init__(
+                content=inner_stack,
+                height=TAB_BTN_HEIGHT + 6,
+                border_radius=11,
+                bgcolor=ft.Colors.with_opacity(0.16, app_theme["surface"]),
+                padding=3,
+            )
+
+        @property
+        def selected_index(self):
+            return self._selected_index
+
+        @selected_index.setter
+        def selected_index(self, new_index):
+            if not (0 <= new_index < len(self.tab_names)):
+                return
+            self._selected_index = new_index
+            self.tab_highlight.left = new_index * TAB_PITCH
+            for i, btn in enumerate(self.buttons):
+                btn.icon_color = (
+                    self.app_theme["btn_primary"]
+                    if i == new_index
+                    else self.app_theme["text_secondary"]
+                )
+                try:
+                    btn.update()
+                except Exception:
+                    pass
+            try:
+                self.tab_highlight.update()
+            except Exception:
+                pass
 
     def build_page(theme_select, tab="home"):
         theme = get_theme(theme_select)
@@ -343,16 +434,20 @@ def main(page: ft.Page):
             ft.IconButton(
                 icon=ft.Icons.HORIZONTAL_RULE,
                 on_click=minimize_window,
-                icon_color=theme["text_secondary"],
-                hover_color=ft.Colors.TRANSPARENT,
+                icon_color=theme["text_primary"],
+                hover_color=ft.Colors.with_opacity(
+                    0.14, theme["btn_primary"]
+                ),
                 icon_size=17,
                 style=rounded_button_style,
             ),
             ft.IconButton(
                 icon=ft.Icons.CROP_SQUARE,
                 on_click=maximize_window,
-                icon_color=theme["text_secondary"],
-                hover_color=ft.Colors.TRANSPARENT,
+                icon_color=theme["text_primary"],
+                hover_color=ft.Colors.with_opacity(
+                    0.14, theme["btn_primary"]
+                ),
                 icon_size=17,
                 style=rounded_button_style,
             ),
@@ -360,8 +455,10 @@ def main(page: ft.Page):
                 icon=ft.Icons.CLOSE,
                 on_click=close_window,
                 icon_color=theme["btn_primary"],
-                hover_color=ft.Colors.TRANSPARENT,
-                icon_size=20,
+                hover_color=ft.Colors.with_opacity(
+                    0.14, theme["btn_primary"]
+                ),
+                icon_size=21,
                 style=rounded_button_style,
             ),
         ]
@@ -551,6 +648,7 @@ def main(page: ft.Page):
             bgcolor=theme["bg"],
             # border=ft.Border.all(1, color=theme["border"]),
             border_radius=10,
+            margin=ft.Margin.only(left=10, top=0, right=10, bottom=10),
         )
 
         transition_id = 0
@@ -2212,6 +2310,7 @@ def main(page: ft.Page):
                 ],
             )
             selected_installation_view_ref = {"control": None}
+            selected_version_elements_ref = {"control": None}
 
             def set_launcher_log_visible(visible):
                 launcher_log_state["open"] = visible
@@ -2321,8 +2420,8 @@ def main(page: ft.Page):
                 card_transition_token += 1
                 token = card_transition_token
 
-                view = selected_installation_view_ref["control"]
-                if view is None or launcher_log_state["open"]:
+                elem_box = selected_version_elements_ref.get("control")
+                if elem_box is None or launcher_log_state["open"]:
                     selected_version_name.value = target["name"]
                     selected_version_instance_badge.visible = bool(target.get("is_instance"))
                     selected_version_summary.value = profile_summary(target)
@@ -2334,15 +2433,13 @@ def main(page: ft.Page):
                     return
 
                 try:
-                    view.animate_opacity = ft.Animation(70, ft.AnimationCurve.EASE_OUT)
-                    view.animate_offset = ft.Animation(70, ft.AnimationCurve.EASE_OUT)
-                    view.opacity = 0.55
-                    view.offset = ft.Offset(0, 0.012)
-                    view.update()
+                    elem_box.animate_opacity = ft.Animation(75, ft.AnimationCurve.EASE_OUT)
+                    elem_box.opacity = 0.0
+                    elem_box.update()
                 except Exception:
                     return
 
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(0.075)
                 if card_transition_token != token:
                     return
 
@@ -2352,11 +2449,9 @@ def main(page: ft.Page):
                 selected_version_details.value = get_selected_version_details(target)
 
                 try:
-                    view.animate_opacity = ft.Animation(160, ft.AnimationCurve.EASE_OUT_CUBIC)
-                    view.animate_offset = ft.Animation(160, ft.AnimationCurve.EASE_OUT_CUBIC)
-                    view.opacity = 1.0
-                    view.offset = ft.Offset(0, 0)
-                    view.update()
+                    elem_box.animate_opacity = ft.Animation(150, ft.AnimationCurve.EASE_IN_OUT)
+                    elem_box.opacity = 1.0
+                    elem_box.update()
                 except Exception:
                     pass
 
@@ -2486,21 +2581,21 @@ def main(page: ft.Page):
                 return -1
 
             initial_selection_index = selection_index_of(launch_selection["key"])
-            # Sliding green glow that sits behind the profile rows and glides
-            # to the selected one instead of snapping.
+            # Sliding glow that sits behind the profile rows and glides
+            # to the selected one using an iOS-style animation.
             selection_highlight = ft.Container(
                 left=0,
                 right=0,
                 top=max(initial_selection_index, 0) * SELECTION_ROW_PITCH,
                 height=SELECTION_ROW_HEIGHT,
-                border_radius=6,
-                bgcolor=ft.Colors.with_opacity(0.12, theme["btn_primary"]),
+                border_radius=5,
+                bgcolor=ft.Colors.with_opacity(0.14, theme["btn_primary"]),
                 border=ft.Border.only(
                     left=ft.BorderSide(3, theme["btn_primary"])
                 ),
                 visible=initial_selection_index >= 0,
                 animate_position=ft.Animation(
-                    180, ft.AnimationCurve.EASE_OUT_CUBIC
+                    260, ft.AnimationCurve.FAST_OUT_SLOWIN
                 ),
             )
 
@@ -3947,7 +4042,7 @@ def main(page: ft.Page):
                                             color=theme["text_primary"],
                                         ),
                                         ft.Container(width=8),
-                                        mini_badge("v1.0.0", color=theme["btn_primary"]),
+                                        mini_badge("v1.1.0", color=theme["btn_primary"]),
                                     ],
                                 ),
                                 mini_badge("Stable", color=theme["btn_primary"]),
@@ -4311,12 +4406,28 @@ def main(page: ft.Page):
                 ],
             )
 
+            selected_version_elements = ft.Container(
+                content=ft.Column(
+                    controls=[
+                        selected_version_title_row,
+                        selected_version_summary,
+                        selected_version_details,
+                    ],
+                    spacing=14,
+                    horizontal_alignment=ft.CrossAxisAlignment.START,
+                ),
+                opacity=1.0,
+                animate_opacity=ft.Animation(150, ft.AnimationCurve.EASE_IN_OUT),
+            )
+            selected_version_elements_ref["control"] = selected_version_elements
+
             selected_installation_content = ft.Column(
                 expand=True,
                 alignment=ft.MainAxisAlignment.START,
                 horizontal_alignment=ft.CrossAxisAlignment.START,
                 spacing=14,
-                controls=[ft.Row([open_logs_button],alignment=ft.MainAxisAlignment.END),
+                controls=[
+                    ft.Row([open_logs_button], alignment=ft.MainAxisAlignment.END),
                     ft.Row(
                         spacing=10,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -4325,7 +4436,7 @@ def main(page: ft.Page):
                                 width=40,
                                 height=4,
                                 bgcolor=theme["btn_primary"],
-                                border_radius=2
+                                border_radius=2,
                             ),
                             ft.Text(
                                 "SELECTED PROFILE",
@@ -4334,17 +4445,14 @@ def main(page: ft.Page):
                                 color=theme["text_secondary"],
                             ),
                             ft.Container(
-                            expand=True,
+                                expand=True,
                                 height=4,
                                 bgcolor=theme["btn_primary"],
-                                border_radius=2
+                                border_radius=2,
                             ),
-                            
                         ],
                     ),
-                    selected_version_title_row,
-                    selected_version_summary,
-                    selected_version_details,
+                    selected_version_elements,
                 ],
             )
             selected_installation_view = ft.Container(
@@ -4352,10 +4460,6 @@ def main(page: ft.Page):
                 top=0,
                 right=0,
                 bottom=0,
-                opacity=1.0,
-                offset=ft.Offset(0, 0),
-                animate_opacity=ft.Animation(160, ft.AnimationCurve.EASE_OUT_CUBIC),
-                animate_offset=ft.Animation(160, ft.AnimationCurve.EASE_OUT_CUBIC),
                 bgcolor=ft.Colors.with_opacity(0.72, theme["surface"]),
                 padding=28,
                 content=(
@@ -4841,8 +4945,7 @@ def main(page: ft.Page):
 
         tab_names = ["home", "installations", "options"]
 
-        def on_tab_change(e):
-            selected_tab = tab_names[e.control.selected_index]
+        def on_tab_select(selected_tab):
             current_tab = (
                 current_page
                 if current_page in tab_names
@@ -4915,57 +5018,52 @@ def main(page: ft.Page):
             if tab in tab_names
             else ("options" if tab.startswith("options") else "installations")
         )
-        tabs_buttons = ft.Tabs(
-            length=len(tab_names),
-            selected_index=tab_names.index(root_tab),
-            on_change=on_tab_change,
-            content=ft.Column(
-                expand=True,
-                controls=[
-                    ft.TabBar(overlay_color=ft.Colors.TRANSPARENT,
-                        divider_color=ft.Colors.TRANSPARENT,
-                        indicator_color=theme["btn_primary_active"],
-                        label_color=theme["btn_primary"],
-                        unselected_label_color=theme["text_secondary"],
-                        tabs=[
-                            ft.Tab(icon=ft.Icons.HOME, tooltip=tooltip("Home")),
-                            ft.Tab(
-                                icon=ft.Icons.FILE_DOWNLOAD_OUTLINED,
-                                tooltip=tooltip("Profiles"),
-                            ),
-                            ft.Tab(icon=ft.Icons.TUNE, tooltip=tooltip("Options")),
-                        ],
-                    ),
-                ],
-            ),
+        tabs_buttons = NavigationTabs(
+            tab_names=tab_names,
+            initial_index=tab_names.index(root_tab),
+            on_tab_select=on_tab_select,
+            app_theme=theme,
+            tooltip_func=tooltip,
         )
+
+        title_wrap = prepare_intro(
+            ft.Container(
+                content=ft.Row(controls=title_controls, spacing=0, tight=True),
+                padding=ft.Padding.only(left=15),
+                on_click=start_title_animation,
+            )
+        )
+        tabs_pop_wrap = prepare_intro(
+            ft.Container(
+                content=tabs_buttons,
+                alignment=ft.Alignment.CENTER,
+            )
+        )
+        func_buttons_wrap = prepare_intro(
+            ft.Container(
+                padding=ft.Padding.only(left=8),
+                border=ft.Border.only(
+                    left=ft.BorderSide(1, color=theme["border"])
+                ),
+                content=ft.Row(controls=func_buttons, spacing=0, tight=True),
+            )
+        )
+
+        NAV_SIDE_WIDTH = 200
 
         navbar_content = ft.Container(
             content=ft.Row(
                 controls=[
-                    title_wrap := prepare_intro(
-                        ft.Container(
-                            content=ft.Row(controls=title_controls, spacing=0),
-                            padding=ft.Padding.only(left=10),
-                            on_click=start_title_animation,
-                        )
+                    ft.Container(
+                        content=title_wrap,
+                        width=NAV_SIDE_WIDTH,
+                        alignment=ft.Alignment.CENTER_LEFT,
                     ),
-                    tabs_pop_wrap := prepare_intro(
-                        ft.Container(
-                            content=ft.Row(
-                                controls=[tabs_buttons],
-                                alignment=ft.MainAxisAlignment.SPACE_AROUND,
-                            ),
-                        )
-                    ),
-                    func_buttons_wrap := prepare_intro(
-                        ft.Container(
-                            padding=ft.Padding.only(left=5),
-                            border=ft.Border.only(
-                                left=ft.BorderSide(1, color=theme["border"])
-                            ),
-                            content=ft.Row(controls=func_buttons, spacing=0),
-                        )
+                    tabs_pop_wrap,
+                    ft.Container(
+                        content=func_buttons_wrap,
+                        width=NAV_SIDE_WIDTH,
+                        alignment=ft.Alignment.CENTER_RIGHT,
                     ),
                 ],
                 spacing=0,
@@ -4973,14 +5071,15 @@ def main(page: ft.Page):
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             bgcolor=ft.Colors.TRANSPARENT,
+            padding=ft.Padding.only(top=10, bottom=10, left=10, right=10),
         )
 
-        navbar = ft.WindowDragArea(content=navbar_content, expand=True)
+        navbar = ft.WindowDragArea(content=navbar_content)
 
         navigate(tab)  # default page shown on load
 
         page.add(
-            ft.Container(navbar, padding=0),
+            navbar,
             content_area,
         )
         # Kick off the ripple entrance now that the first frame is committed.
