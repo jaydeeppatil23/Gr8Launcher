@@ -2,6 +2,6 @@
 .data/
 __pycache__/
 logs/
-temp.py/
+temp.py
 temp/
 *.log
