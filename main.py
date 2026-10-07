@@ -104,6 +104,11 @@ def main(page: ft.Page):
     version_catalog, _ = get_local_version_catalog()
     latest_release_id = load_latest_release_id()
     online_available = False
+    try:
+        with socket.create_connection(("1.1.1.1", 443), timeout=0.25):
+            online_available = True
+    except OSError:
+        online_available = False
     handled_external_profile_ids = load_handled_external_profile_ids()
     installations, handled_external_profile_ids, imports_changed = (
         import_external_installations(
@@ -133,6 +138,8 @@ def main(page: ft.Page):
     refresh_state = {"running": False}
     connectivity_known = {"value": False}
     notification_state = {"show": None, "pending": None, "epoch": 0}
+    # Startup ripple: controls registered here start hidden and pop in one by one.
+    intro_state = {"pending": True, "running": False, "targets": []}
     options_background_state = {"animation_running": False}
     danger_zone_state = {"expanded": False}
     launcher_log_state = {
@@ -473,10 +480,65 @@ def main(page: ft.Page):
 
         notification_state["show"] = show_notification
 
+        # ---- animation overhaul: startup ripple & navigation transitions ----
+        def prepare_intro(control):
+            """Hide a control so the startup ripple can reveal it with a pop."""
+            if not intro_state["pending"]:
+                return control
+            control.opacity = 0
+            control.scale = 0.92
+            control.offset = ft.Offset(0, 0.06)
+            control.animate_opacity = ft.Animation(340, ft.AnimationCurve.EASE_OUT_CUBIC)
+            control.animate_scale = ft.Animation(460, ft.AnimationCurve.EASE_OUT_BACK)
+            control.animate_offset = ft.Animation(460, ft.AnimationCurve.EASE_OUT_BACK)
+            intro_state["targets"].append(control)
+            return control
+
+        def reveal_intro(control):
+            control.opacity = 1
+            control.scale = 1.0
+            control.offset = ft.Offset(0, 0)
+
+        async def play_intro_ripple():
+            """Reveal every registered control one by one for a ripple entrance."""
+            if not intro_state["pending"]:
+                return
+            intro_state["pending"] = False
+            intro_state["running"] = True
+            raw_targets = list(intro_state["targets"])
+            # Reorder navbar targets to the front so the ripple cascades from top to bottom
+            navbar_set = set()
+            try:
+                navbar_set.update([title_wrap, tabs_pop_wrap, func_buttons_wrap])
+            except Exception:
+                pass
+            targets = [t for t in raw_targets if t in navbar_set] + [
+                t for t in raw_targets if t not in navbar_set
+            ]
+            await asyncio.sleep(0.12)
+            try:
+                for control in targets:
+                    reveal_intro(control)
+                    try:
+                        control.update()
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.045)
+            finally:
+                # Safety net: nothing may stay hidden, even if a control got detached.
+                for control in targets:
+                    reveal_intro(control)
+                try:
+                    page.update()
+                except Exception:
+                    pass
+                intro_state["running"] = False
+
         # ---- content area: this is what swaps when you navigate ----
         page_content = ft.Container(
             expand=True,
-            animate_opacity=ft.Animation(70, ft.AnimationCurve.EASE_IN_OUT),
+            opacity=1.0,
+            animate_opacity=ft.Animation(160, ft.AnimationCurve.EASE_IN),
         )
 
         content_area = ft.Container(
@@ -496,9 +558,10 @@ def main(page: ft.Page):
 
         async def transition_page(name, content, request_id):
             nonlocal tab
+            page_content.animate_opacity = ft.Animation(90, ft.AnimationCurve.EASE_OUT)
             page_content.opacity = 0
             page.update()
-            await asyncio.sleep(0.07)
+            await asyncio.sleep(0.08)
 
             if request_id != transition_id:
                 return
@@ -510,7 +573,10 @@ def main(page: ft.Page):
                 tab = "options"
             else:
                 tab = "installations"
-            tabs_buttons.selected_index = tab_names.index(tab)
+            previous_tab_index = tabs_buttons.selected_index
+            new_tab_index = tab_names.index(tab)
+            tabs_buttons.selected_index = new_tab_index
+            page_content.animate_opacity = ft.Animation(160, ft.AnimationCurve.EASE_IN)
             page_content.opacity = 1
             page.update()
 
@@ -675,7 +741,7 @@ def main(page: ft.Page):
                 "value": not bool((existing_profile.get("name") or "").strip())
             }
             name_field = ft.TextField(
-                label="Installation Name",
+                label="Profile Name",
                 value=existing_profile.get("name", ""),
                 hint_text="Defaults to the selected version",
                 border_color=theme["border"],
@@ -936,7 +1002,7 @@ def main(page: ft.Page):
                         name = (
                             existing_profile.get("version_id")
                             or existing_profile.get("minecraft_version")
-                            or "Minecraft installation"
+                            or "Minecraft profile"
                         )
 
                     saved_profile = dict(existing_profile)
@@ -959,13 +1025,13 @@ def main(page: ft.Page):
                         installations[:] = updated_installations
                         navigate("installations")
                         return
-                    set_form_error("Could not save installation data.")
+                    set_form_error("Could not save profile data.")
                     page.update()
                     return
 
                 if not online_available:
                     set_form_error(
-                        "No internet connection. Try creating the installation again when online."
+                        "No internet connection. Try creating the profile again when online."
                     )
                     page.update()
                     return
@@ -1010,7 +1076,7 @@ def main(page: ft.Page):
                     )
                     if conflicting_profile:
                         notify(
-                            f"{target_version_id} already has a configured installation.",
+                            f"{target_version_id} already has a configured profile.",
                             ft.Icons.INFO_OUTLINE,
                         )
 
@@ -1045,7 +1111,7 @@ def main(page: ft.Page):
                                 ],
                             ),
                             content=ft.Text(
-                                f"An installation for '{target_version_id}' is already configured in Gr8 Launcher ('{conflicting_profile['name']}').\n\n"
+                                f"A profile for '{target_version_id}' is already configured in Gr8 Launcher ('{conflicting_profile['name']}').\n\n"
                                 "Creating another standard configuration for the same version will just launch into the same shared environment.\n\n"
                                 "To create a new environment with separate worlds, texture packs, and settings, make it a Separate Instance.",
                                 color=theme["text_primary"],
@@ -1140,7 +1206,7 @@ def main(page: ft.Page):
                     installations[:] = updated_installations
                     navigate("installations")
                     return
-                set_form_error("Could not save installation data.")
+                set_form_error("Could not save profile data.")
                 page.update()
 
             update_editor_fields()
@@ -1179,16 +1245,16 @@ def main(page: ft.Page):
                                     controls=[
                                         ft.IconButton(
                                             icon=ft.Icons.ARROW_BACK,
-                                            tooltip=tooltip("Back to installations"),
+                                            tooltip=tooltip("Back to profiles"),
                                             icon_color=theme["text_secondary"],
                                             style=rounded_button_style,
                                             on_click=lambda e: navigate("installations"),
                                         ),
                                         ft.Text(
                                             (
-                                                "Edit Installation"
+                                                "Edit Profile"
                                                 if profile
-                                                else "New Installation"
+                                                else "New Profile"
                                             ),
                                             size=22,
                                             weight=ft.FontWeight.BOLD,
@@ -1229,7 +1295,7 @@ def main(page: ft.Page):
                                     on_click=lambda e: navigate("installations"),
                                 ),
                                 ft.Button(
-                                    "Save Installation",
+                                    "Save Profile",
                                     bgcolor=theme["btn_primary"],
                                     color=theme["btn_primary_text"],
                                     style=rounded_button_style,
@@ -1272,7 +1338,7 @@ def main(page: ft.Page):
                 if profile and is_active_launch_version(
                     get_profile_version_id(profile), profile_id
                 ):
-                    notify("This installation is busy launching.", ft.Icons.INFO_OUTLINE)
+                    notify("This profile is busy launching.", ft.Icons.INFO_OUTLINE)
                     return
             if name == "configure_installed" and is_active_launch_version(profile_id):
                 notify("This version is busy installing or launching.", ft.Icons.INFO_OUTLINE)
@@ -1370,7 +1436,7 @@ def main(page: ft.Page):
                 if is_active_launch_version(
                     get_profile_version_id(profile), profile_id
                 ):
-                    notify("This installation is busy launching.", ft.Icons.INFO_OUTLINE)
+                    notify("This profile is busy launching.", ft.Icons.INFO_OUTLINE)
                     return
 
                 is_inst = bool(profile.get("is_instance"))
@@ -1625,7 +1691,7 @@ def main(page: ft.Page):
                         tight=True,
                         controls=[
                             ft.Text(
-                                f"'{version_id}' is saved on your disk in Minecraft's versions folder, but is not configured as a profile in Gr8 Launcher.",
+                                f"'{version_id}' is saved on your disk in Minecraft's versions folder, but is not configured as a profile in the launcher.",
                                 size=13,
                                 color=theme["text_primary"],
                             ),
@@ -1663,7 +1729,7 @@ def main(page: ft.Page):
                     handled_external_profile_ids,
                     latest_release_id,
                 ):
-                    dialog.content = ft.Text("Could not update Gr8 Launcher profiles.")
+                    dialog.content = ft.Text("Could not update Launcher profiles.")
                     page.update()
                     return
                 if not remove_installed_version(version_id):
@@ -1746,7 +1812,7 @@ def main(page: ft.Page):
                     if target_profile:
                         notify(f"Removed '{target_profile['name']}'.", ft.Icons.DELETE_OUTLINE)
                 else:
-                    dialog.content = ft.Text("Could not save installation changes.")
+                    dialog.content = ft.Text("Could not save profile changes.")
                     page.update()
 
             launch_targets = {}
@@ -1997,7 +2063,7 @@ def main(page: ft.Page):
                 or (
                     f"Selected {launch_targets[launch_selection['key']]['name']}"
                     if launch_selection["key"] in launch_targets
-                    else "Choose an installation to play."
+                    else "Choose a profile to play."
                 ),
                 size=12,
                 color=theme["text_secondary"],
@@ -2012,11 +2078,12 @@ def main(page: ft.Page):
             )
             selected_target = launch_targets.get(launch_selection["key"])
             selected_version_name = ft.Text(
-                selected_target["name"] if selected_target else "Choose an installation",
+                selected_target["name"] if selected_target else "Choose a profile",
                 size=25,
                 weight=ft.FontWeight.BOLD,
                 color=theme["text_primary"],
                 overflow=ft.TextOverflow.ELLIPSIS,
+                font_family="mojangles"
             )
             selected_version_instance_badge = ft.Container(
                 content=ft.Text(
@@ -2050,7 +2117,7 @@ def main(page: ft.Page):
 
             def get_selected_version_details(target):
                 if target is None:
-                    return "No installation selected."
+                    return "No profile selected."
                 install_state = (
                     "Installed"
                     if target["version_id"] in local_version_ids
@@ -2247,8 +2314,56 @@ def main(page: ft.Page):
                     )
                 )
 
+            card_transition_token = 0
+
+            async def animate_card_selection(target):
+                nonlocal card_transition_token
+                card_transition_token += 1
+                token = card_transition_token
+
+                view = selected_installation_view_ref["control"]
+                if view is None or launcher_log_state["open"]:
+                    selected_version_name.value = target["name"]
+                    selected_version_instance_badge.visible = bool(target.get("is_instance"))
+                    selected_version_summary.value = profile_summary(target)
+                    selected_version_details.value = get_selected_version_details(target)
+                    try:
+                        page.update()
+                    except Exception:
+                        pass
+                    return
+
+                try:
+                    view.animate_opacity = ft.Animation(70, ft.AnimationCurve.EASE_OUT)
+                    view.animate_offset = ft.Animation(70, ft.AnimationCurve.EASE_OUT)
+                    view.opacity = 0.55
+                    view.offset = ft.Offset(0, 0.012)
+                    view.update()
+                except Exception:
+                    return
+
+                await asyncio.sleep(0.05)
+                if card_transition_token != token:
+                    return
+
+                selected_version_name.value = target["name"]
+                selected_version_instance_badge.visible = bool(target.get("is_instance"))
+                selected_version_summary.value = profile_summary(target)
+                selected_version_details.value = get_selected_version_details(target)
+
+                try:
+                    view.animate_opacity = ft.Animation(160, ft.AnimationCurve.EASE_OUT_CUBIC)
+                    view.animate_offset = ft.Animation(160, ft.AnimationCurve.EASE_OUT_CUBIC)
+                    view.opacity = 1.0
+                    view.offset = ft.Offset(0, 0)
+                    view.update()
+                except Exception:
+                    pass
+
             def select_launch_target(key):
                 if launcher_log_state["running"]:
+                    return
+                if launch_selection["key"] == key:
                     return
                 launch_selection["key"] = key
                 save_profile_options(
@@ -2257,37 +2372,23 @@ def main(page: ft.Page):
                     profile_picture_state["path"],
                 )
                 selected_target = launch_targets[key]
-                selected_version_name.value = selected_target["name"]
-                selected_version_instance_badge.visible = bool(selected_target.get("is_instance"))
-                selected_version_summary.value = profile_summary(selected_target)
-                selected_version_details.value = get_selected_version_details(
-                    selected_target
-                )
                 for row_key, row, marker, is_installed in selection_rows:
                     is_selected = row_key == key
-                    row.bgcolor = (
-                        ft.Colors.with_opacity(0.12, theme["btn_primary"])
-                        if is_selected
-                        else ft.Colors.TRANSPARENT
-                    )
-                    row.border = ft.Border.only(
-                        left=ft.BorderSide(
-                            3,
-                            theme["btn_primary"]
-                            if is_selected
-                            else ft.Colors.TRANSPARENT,
-                        )
-                    )
                     if is_installed:
                         marker.color = (
                             theme["btn_primary"]
                             if is_selected
                             else theme["text_muted"]
                         )
+                highlighted_index = selection_index_of(key)
+                selection_highlight.visible = highlighted_index >= 0
+                if highlighted_index >= 0:
+                    selection_highlight.top = highlighted_index * SELECTION_ROW_PITCH
                 refresh_launch_button()
-                launch_status.value = f"Selected {launch_targets[key]['name']}"
+                launch_status.value = f"Selected {selected_target['name']}"
                 launcher_log_state["status"] = launch_status.value
                 page.update()
+                page.run_task(animate_card_selection, selected_target)
 
             def build_launch_row(key, target, icon):
                 is_selected = launch_selection["key"] == key
@@ -2306,17 +2407,13 @@ def main(page: ft.Page):
                     height=38,
                     disabled=launcher_log_state["running"],
                     opacity=0.5 if launcher_log_state["running"] else 1,
-                    bgcolor=(
-                        ft.Colors.with_opacity(0.12, theme["btn_primary"])
-                        if is_selected
-                        else ft.Colors.TRANSPARENT
-                    ),
+                    # The selection glow lives in `selection_highlight` so it can
+                    # slide smoothly between rows instead of snapping.
+                    bgcolor=ft.Colors.TRANSPARENT,
                     border=ft.Border.only(
                         left=ft.BorderSide(
                             3,
-                            theme["btn_primary"]
-                            if is_selected
-                            else ft.Colors.TRANSPARENT,
+                            ft.Colors.TRANSPARENT,
                         )
                     ),
                     border_radius=6,
@@ -2377,6 +2474,35 @@ def main(page: ft.Page):
 
             if launch_selection["key"] not in launch_targets:
                 launch_selection["key"] = ""
+
+            SELECTION_ROW_HEIGHT = 38
+            SELECTION_ROW_GAP = 3
+            SELECTION_ROW_PITCH = SELECTION_ROW_HEIGHT + SELECTION_ROW_GAP
+
+            def selection_index_of(key):
+                for index, row_entry in enumerate(selection_rows):
+                    if row_entry[0] == key:
+                        return index
+                return -1
+
+            initial_selection_index = selection_index_of(launch_selection["key"])
+            # Sliding green glow that sits behind the profile rows and glides
+            # to the selected one instead of snapping.
+            selection_highlight = ft.Container(
+                left=0,
+                right=0,
+                top=max(initial_selection_index, 0) * SELECTION_ROW_PITCH,
+                height=SELECTION_ROW_HEIGHT,
+                border_radius=6,
+                bgcolor=ft.Colors.with_opacity(0.12, theme["btn_primary"]),
+                border=ft.Border.only(
+                    left=ft.BorderSide(3, theme["btn_primary"])
+                ),
+                visible=initial_selection_index >= 0,
+                animate_position=ft.Animation(
+                    180, ft.AnimationCurve.EASE_OUT_CUBIC
+                ),
+            )
 
             launch_progress_state = {"maximum": 0}
 
@@ -2485,7 +2611,7 @@ def main(page: ft.Page):
 
                 target = launch_targets.get(launch_selection["key"])
                 if target is None:
-                    launch_status.value = "Select a version from the sidebar first."
+                    launch_status.value = "Select a profile from the sidebar first."
                     page.update()
                     return
 
@@ -2901,7 +3027,7 @@ def main(page: ft.Page):
                         padding=ft.Padding.symmetric(vertical=24, horizontal=20),
                         alignment=ft.Alignment.CENTER,
                         content=ft.Text(
-                            "No local installations or instances found",
+                            "No local profiles or instances found",
                             color=theme["text_muted"],
                             size=13,
                         ),
@@ -3426,10 +3552,10 @@ def main(page: ft.Page):
                         extra_content=theme_palette_preview,
                     ),
                     build_setting_container(
-                        "Show Installation Directory",
-                        "Display the game directory path in the selected version card on the home page.",
+                        "Show Profile Directory",
+                        "Display the game directory path in the selected profile card on the home page.",
                         control=build_themed_switch(
-                            label="Show installation directory",
+                            label="Show profile directory",
                             value=settings.get("show_installation_directory", True),
                             on_change=lambda e: persist_setting(
                                 "show_installation_directory", e.control.value
@@ -4202,7 +4328,7 @@ def main(page: ft.Page):
                                 border_radius=2
                             ),
                             ft.Text(
-                                "SELECTED INSTALLATION",
+                                "SELECTED PROFILE",
                                 size=11,
                                 weight=ft.FontWeight.BOLD,
                                 color=theme["text_secondary"],
@@ -4226,6 +4352,10 @@ def main(page: ft.Page):
                 top=0,
                 right=0,
                 bottom=0,
+                opacity=1.0,
+                offset=ft.Offset(0, 0),
+                animate_opacity=ft.Animation(160, ft.AnimationCurve.EASE_OUT_CUBIC),
+                animate_offset=ft.Animation(160, ft.AnimationCurve.EASE_OUT_CUBIC),
                 bgcolor=ft.Colors.with_opacity(0.72, theme["surface"]),
                 padding=28,
                 content=(
@@ -4258,7 +4388,7 @@ def main(page: ft.Page):
             selected_installation_view_ref["control"] = selected_installation_view
 
             new_installation_button = ft.TextButton(
-                "New installation",
+                "New Profile",
                 icon=ft.Icons.ADD,
                 icon_color={
                     ft.ControlState.DEFAULT: theme["btn_primary_text"],
@@ -4269,7 +4399,7 @@ def main(page: ft.Page):
                     or launcher_log_state["running"]
                 ),
                 tooltip=(
-                    "Cannot create new installation while a version is installing or launching."
+                    "Cannot create new profile while a version is installing or launching."
                     if launcher_log_state["running"]
                     else None
                 ),
@@ -4453,9 +4583,9 @@ def main(page: ft.Page):
                                 expand=True,
                                 spacing=8,
                                 controls=[
-                                    ft.Container(
+                                    profiles_header := ft.Container(
                                         ft.Text(
-                                            "VERSIONS",
+                                            "PROFILES",
                                             size=12,
                                             weight=ft.FontWeight.BOLD,
                                             color=theme["text_secondary"],
@@ -4464,13 +4594,24 @@ def main(page: ft.Page):
                                         alignment=ft.Alignment.CENTER,
                                     ),
                                     ft.Column(
-                                        controls=version_rows,
-                                        spacing=3,
+                                        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
                                         scroll=ft.ScrollMode.HIDDEN,
                                         expand=True,
+                                        controls=[
+                                            ft.Stack(
+                                                controls=[
+                                                    selection_highlight,
+                                                    ft.Column(
+                                                        controls=version_rows,
+                                                        spacing=3,
+                                                        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                                                    ),
+                                                ]
+                                            )
+                                        ],
                                     ),
-                                    ft.Button(
-                                        "Manage Installations",
+                                    manage_profiles_button := ft.Button(
+                                        "Manage Profiles",
                                         icon=ft.Icons.SETTINGS,
                                         bgcolor=theme["btn_primary"],
                                         color=theme["btn_primary_text"],
@@ -4478,7 +4619,7 @@ def main(page: ft.Page):
                                         style=rounded_button_style,
                                         on_click=lambda e: navigate("installations"),
                                     ),
-                                    ft.Container(
+                                    sidebar_divider := ft.Container(
                                         height=1,
                                         bgcolor=theme["border"],
                                         margin=ft.Margin.symmetric(vertical=4),
@@ -4496,7 +4637,7 @@ def main(page: ft.Page):
                                 horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
                                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                 controls=[
-                                ft.Row(
+                                welcome_row := ft.Row(
                                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                     controls=[
@@ -4520,7 +4661,7 @@ def main(page: ft.Page):
                                     ],
                                 ),
                                 selected_installation_card,
-                                ft.Row(
+                                home_status_row := ft.Row(
                                     spacing=24,
                                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                     controls=[
@@ -4567,7 +4708,7 @@ def main(page: ft.Page):
                                             left=4, top=4, bottom=0
                                         ),
                                         content=ft.Text(
-                                            "INSTALLED VERSIONS",
+                                            "INSTALLED PROFILES",
                                             size=12,
                                             color=theme["text_secondary"],
                                             weight=ft.FontWeight.BOLD,
@@ -4624,6 +4765,19 @@ def main(page: ft.Page):
                 "options_launcher": launcher_subpage,
                 "options_about": about_subpage,
             }
+
+            # Startup ripple: register the home sections in visual order so
+            # they pop in one by one after the first paint.
+            prepare_intro(profiles_header)
+            prepare_intro(selection_highlight)
+            for version_row in version_rows:
+                prepare_intro(version_row)
+            prepare_intro(manage_profiles_button)
+            prepare_intro(sidebar_divider)
+            prepare_intro(account_card)
+            prepare_intro(welcome_row)
+            prepare_intro(selected_installation_card)
+            prepare_intro(home_status_row)
 
             if name == "new_installation":
                 pages[name] = build_installation_editor()
@@ -4715,7 +4869,7 @@ def main(page: ft.Page):
                     color=(
                         theme["btn_primary"]
                         if character == "8"
-                        else theme["text_secondary"]
+                        else theme["text_primary"]
                     ),
                 ),
                 offset=ft.Offset(0, 0),
@@ -4777,7 +4931,7 @@ def main(page: ft.Page):
                             ft.Tab(icon=ft.Icons.HOME, tooltip=tooltip("Home")),
                             ft.Tab(
                                 icon=ft.Icons.FILE_DOWNLOAD_OUTLINED,
-                                tooltip=tooltip("Installations"),
+                                tooltip=tooltip("Profiles"),
                             ),
                             ft.Tab(icon=ft.Icons.TUNE, tooltip=tooltip("Options")),
                         ],
@@ -4789,21 +4943,29 @@ def main(page: ft.Page):
         navbar_content = ft.Container(
             content=ft.Row(
                 controls=[
-                    ft.Container(
-                        content=ft.Row(controls=title_controls, spacing=0),
-                        padding=ft.Padding.only(left=10),
-                        on_click=start_title_animation,
+                    title_wrap := prepare_intro(
+                        ft.Container(
+                            content=ft.Row(controls=title_controls, spacing=0),
+                            padding=ft.Padding.only(left=10),
+                            on_click=start_title_animation,
+                        )
                     ),
-                    ft.Row(
-                        controls=[tabs_buttons],
-                        alignment=ft.MainAxisAlignment.SPACE_AROUND,
+                    tabs_pop_wrap := prepare_intro(
+                        ft.Container(
+                            content=ft.Row(
+                                controls=[tabs_buttons],
+                                alignment=ft.MainAxisAlignment.SPACE_AROUND,
+                            ),
+                        )
                     ),
-                    ft.Container(
-                        padding=ft.Padding.only(left=5),
-                        border=ft.Border.only(
-                            left=ft.BorderSide(1, color=theme["border"])
-                        ),
-                        content=ft.Row(controls=func_buttons, spacing=0),
+                    func_buttons_wrap := prepare_intro(
+                        ft.Container(
+                            padding=ft.Padding.only(left=5),
+                            border=ft.Border.only(
+                                left=ft.BorderSide(1, color=theme["border"])
+                            ),
+                            content=ft.Row(controls=func_buttons, spacing=0),
+                        )
                     ),
                 ],
                 spacing=0,
@@ -4821,6 +4983,8 @@ def main(page: ft.Page):
             ft.Container(navbar, padding=0),
             content_area,
         )
+        # Kick off the ripple entrance now that the first frame is committed.
+        page.run_task(play_intro_ripple)
 
     async def refresh_version_catalog():
         nonlocal latest_release_id, online_available
@@ -4845,19 +5009,42 @@ def main(page: ft.Page):
             )
             online_available = True
             connectivity_known["value"] = True
-            if not was_online:
-                page.controls.clear()
-                build_page(selected_theme["name"], active_page["name"])
+            new_inst_btn = launcher_log_state.get("new_installation_button")
+            if new_inst_btn is not None:
+                new_inst_btn.disabled = False
+                try:
+                    new_inst_btn.update()
+                except Exception:
+                    pass
             if was_known and not was_online:
                 notify("Internet connection restored.", ft.Icons.WIFI)
+                if active_page.get("name") not in ("home", None):
+                    while intro_state.get("running"):
+                        await asyncio.sleep(0.05)
+                    page.controls.clear()
+                    build_page(selected_theme["name"], active_page["name"])
             return
 
         online_available = False
         connectivity_known["value"] = True
-        if was_online:
-            page.controls.clear()
-            build_page(selected_theme["name"], active_page["name"])
-        if not was_known or was_online:
+        new_inst_btn = launcher_log_state.get("new_installation_button")
+        if new_inst_btn is not None:
+            new_inst_btn.disabled = True
+            try:
+                new_inst_btn.update()
+            except Exception:
+                pass
+        if was_known and was_online:
+            notify(
+                "No internet connection. Installed versions remain available.",
+                ft.Icons.WIFI_OFF,
+            )
+            if active_page.get("name") not in ("home", None):
+                while intro_state.get("running"):
+                    await asyncio.sleep(0.05)
+                page.controls.clear()
+                build_page(selected_theme["name"], active_page["name"])
+        elif not was_known:
             notify(
                 "No internet connection. Installed versions remain available.",
                 ft.Icons.WIFI_OFF,
@@ -4879,8 +5066,18 @@ def main(page: ft.Page):
             elif not connected and online_available:
                 online_available = False
                 connectivity_known["value"] = True
-                page.controls.clear()
-                build_page(selected_theme["name"], active_page["name"])
+                new_inst_btn = launcher_log_state.get("new_installation_button")
+                if new_inst_btn is not None:
+                    new_inst_btn.disabled = True
+                    try:
+                        new_inst_btn.update()
+                    except Exception:
+                        pass
+                if active_page.get("name") not in ("home", None):
+                    while intro_state.get("running"):
+                        await asyncio.sleep(0.05)
+                    page.controls.clear()
+                    build_page(selected_theme["name"], active_page["name"])
                 notify(
                     "No internet connection. Installed versions remain available.",
                     ft.Icons.WIFI_OFF,
