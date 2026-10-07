@@ -101,8 +101,8 @@ def main(page: ft.Page):
     profile_picture_state = {
         "path": saved_picture_path if saved_picture_path and Path(saved_picture_path).is_file() else ""
     }
-    version_catalog, _ = get_local_version_catalog()
-    latest_release_id = load_latest_release_id()
+    version_catalog, local_latest_release = get_local_version_catalog()
+    latest_release_id = load_latest_release_id() or local_latest_release
     online_available = False
     try:
         with socket.create_connection(("1.1.1.1", 443), timeout=0.25):
@@ -137,6 +137,7 @@ def main(page: ft.Page):
     active_page = {"name": "home"}
     refresh_state = {"running": False}
     connectivity_known = {"value": False}
+    navigation_state = {"navigate": None}
     notification_state = {"show": None, "pending": None, "epoch": 0}
     # Startup ripple: controls registered here start hidden and pop in one by one.
     intro_state = {"pending": True, "running": False, "targets": []}
@@ -4943,6 +4944,8 @@ def main(page: ft.Page):
             current_page = name
             page.run_task(transition_page, name, pages[name], transition_id)
 
+        navigation_state["navigate"] = navigate
+
         tab_names = ["home", "installations", "options"]
 
         def on_tab_select(selected_tab):
@@ -5092,11 +5095,12 @@ def main(page: ft.Page):
 
         was_online = online_available
         was_known = connectivity_known["value"]
+        old_latest_release_id = latest_release_id
         refresh_state["running"] = True
         try:
             versions, latest, is_online = await asyncio.to_thread(get_version_catalog)
         except Exception:
-            versions, latest, is_online = get_local_version_catalog()
+            versions, latest = get_local_version_catalog()
             is_online = False
 
         refresh_state["running"] = False
@@ -5122,6 +5126,15 @@ def main(page: ft.Page):
                         await asyncio.sleep(0.05)
                     page.controls.clear()
                     build_page(selected_theme["name"], active_page["name"])
+            if active_page.get("name") == "home" and (
+                not old_latest_release_id
+                or old_latest_release_id != latest
+                or (was_known and not was_online)
+            ):
+                while intro_state.get("pending") or intro_state.get("running"):
+                    await asyncio.sleep(0.05)
+                if navigation_state.get("navigate") and active_page.get("name") == "home":
+                    navigation_state["navigate"]("home", force=True)
             return
 
         online_available = False

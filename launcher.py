@@ -130,7 +130,18 @@ def get_local_version_catalog() -> tuple[list[dict], str | None]:
 		return [], None
 
 	releases = [version for version in versions if version.get("type") == "release"]
-	latest = max(releases, key=lambda version: version["releaseTime"], default=None)
+	vanilla_releases = [
+		version
+		for version in releases
+		if not any(
+			mod in version.get("id", "").lower()
+			for mod in ("fabric", "forge", "quilt", "neoforge", "optifine")
+		)
+	]
+	candidate_releases = vanilla_releases if vanilla_releases else releases
+	latest = max(
+		candidate_releases, key=lambda version: version["releaseTime"], default=None
+	)
 	return versions, latest["id"] if latest else None
 
 
