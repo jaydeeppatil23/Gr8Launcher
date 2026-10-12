@@ -38,8 +38,8 @@ A sleek, lightweight, and modern Minecraft launcher built with Python and [Flet]
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/jaydeeppatil23/Gr8_Launcher_dev.git
-   cd Gr8_Launcher_dev
+   git clone https://github.com/jaydeeppatil23/Gr8Launcher.git
+   cd Gr8Launcher
    ```
 
 2. **Install dependencies**:
