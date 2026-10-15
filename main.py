@@ -256,10 +256,15 @@ def main(page: ft.Page):
             self.buttons = []
             for i, (t_name, t_icon, t_tip) in enumerate(tab_defs):
                 is_active = (i == initial_index)
+                btn_width = (
+                    TAB_BTN_WIDTH + TAB_GAP // 2
+                    if i == 0 or i == len(tab_defs) - 1
+                    else TAB_BTN_WIDTH + TAB_GAP
+                )
                 btn = ft.IconButton(
                     icon=t_icon,
                     icon_size=23,
-                    width=TAB_BTN_WIDTH,
+                    width=btn_width,
                     height=TAB_BTN_HEIGHT,
                     icon_color=(
                         app_theme["btn_primary"]
@@ -271,6 +276,10 @@ def main(page: ft.Page):
                     style=ft.ButtonStyle(
                         shape=ft.RoundedRectangleBorder(radius=8),
                         overlay_color=ft.Colors.TRANSPARENT,
+                        mouse_cursor={
+                            ft.ControlState.DISABLED: ft.MouseCursor.BASIC,
+                            ft.ControlState.DEFAULT: ft.MouseCursor.CLICK,
+                        },
                     ),
                     on_click=lambda e, name=t_name: on_tab_select(name),
                 )
@@ -281,7 +290,7 @@ def main(page: ft.Page):
                     self.tab_highlight,
                     ft.Row(
                         controls=self.buttons,
-                        spacing=TAB_GAP,
+                        spacing=0,
                         alignment=ft.MainAxisAlignment.CENTER,
                     ),
                 ],
@@ -325,7 +334,15 @@ def main(page: ft.Page):
     def build_page(theme_select, tab="home"):
         theme = get_theme(theme_select)
         page.bgcolor = get_pagecolor()
-        rounded_button_style = ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8))
+        clickable_mouse_cursor = {
+            ft.ControlState.DISABLED: ft.MouseCursor.BASIC,
+            ft.ControlState.DEFAULT: ft.MouseCursor.CLICK,
+        }
+        window_button_style = ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8))
+        rounded_button_style = ft.ButtonStyle(
+            shape=ft.RoundedRectangleBorder(radius=8),
+            mouse_cursor=clickable_mouse_cursor,
+        )
 
         def build_themed_switch(label: str, value: bool, on_change=None):
             return ft.Switch(
@@ -440,7 +457,7 @@ def main(page: ft.Page):
                     0.14, theme["btn_primary"]
                 ),
                 icon_size=17,
-                style=rounded_button_style,
+                style=window_button_style,
             ),
             ft.IconButton(
                 icon=ft.Icons.CROP_SQUARE,
@@ -450,7 +467,7 @@ def main(page: ft.Page):
                     0.14, theme["btn_primary"]
                 ),
                 icon_size=17,
-                style=rounded_button_style,
+                style=window_button_style,
             ),
             ft.IconButton(
                 icon=ft.Icons.CLOSE,
@@ -460,7 +477,7 @@ def main(page: ft.Page):
                     0.14, theme["btn_primary"]
                 ),
                 icon_size=21,
-                style=rounded_button_style,
+                style=window_button_style,
             ),
         ]
 
@@ -1220,7 +1237,8 @@ def main(page: ft.Page):
                                 ft.TextButton(
                                     "Cancel",
                                     style=ft.ButtonStyle(
-                                        color=theme["text_secondary"]
+                                        color=theme["text_secondary"],
+                                        mouse_cursor=clickable_mouse_cursor,
                                     ),
                                     on_click=lambda e: close_already_installed_dialog(
                                         already_installed_dialog
@@ -1390,6 +1408,7 @@ def main(page: ft.Page):
                                     style=ft.ButtonStyle(
                                         color=theme["text_secondary"],
                                         shape=ft.RoundedRectangleBorder(radius=8),
+                                        mouse_cursor=clickable_mouse_cursor,
                                     ),
                                     on_click=lambda e: navigate("installations"),
                                 ),
@@ -1634,7 +1653,8 @@ def main(page: ft.Page):
                                 "Cancel",
                                 on_click=lambda e: close_delete_dialog(dialog),
                                 style=ft.ButtonStyle(
-                                    color=theme["text_secondary"]
+                                    color=theme["text_secondary"],
+                                    mouse_cursor=clickable_mouse_cursor,
                                 ),
                             ),
                             ft.Button(
@@ -1726,7 +1746,8 @@ def main(page: ft.Page):
                                 "Cancel",
                                 on_click=lambda e: close_delete_dialog(dialog),
                                 style=ft.ButtonStyle(
-                                    color=theme["text_secondary"]
+                                    color=theme["text_secondary"],
+                                    mouse_cursor=clickable_mouse_cursor,
                                 ),
                             ),
                             ft.Button(
@@ -1760,7 +1781,10 @@ def main(page: ft.Page):
                         ft.TextButton(
                             "Cancel",
                             on_click=lambda e: close_delete_dialog(dialog),
-                            style=ft.ButtonStyle(color=theme["text_secondary"]),
+                            style=ft.ButtonStyle(
+                                color=theme["text_secondary"],
+                                mouse_cursor=clickable_mouse_cursor,
+                            ),
                         ),
                         ft.Button(
                             "Delete version",
@@ -2156,6 +2180,10 @@ def main(page: ft.Page):
                 ),
             )
             account_card.on_hover = lambda e, c=account_card: on_account_card_hover(e, c)
+            account_card_wrap = ft.GestureDetector(
+                mouse_cursor=ft.MouseCursor.CLICK,
+                content=account_card,
+            )
 
             launch_status = ft.Text(
                 launcher_log_state["status"]
@@ -2276,13 +2304,18 @@ def main(page: ft.Page):
                 tooltip=tooltip("Close Logs"),
                 icon_color=theme["text_secondary"],
                 visible=launcher_log_state["open"],
+                style=ft.ButtonStyle(mouse_cursor=clickable_mouse_cursor),
                 on_click=lambda e: return_to_selected_installation(),
             )
             open_logs_button = ft.TextButton(
                 "Open logs",
                 icon=ft.Icons.TERMINAL,
                 visible=not launcher_log_state["open"],
-                style=ft.ButtonStyle(color=theme["text_secondary"],overlay_color=ft.Colors.TRANSPARENT),
+                style=ft.ButtonStyle(
+                    color=theme["text_secondary"],
+                    overlay_color=ft.Colors.TRANSPARENT,
+                    mouse_cursor=clickable_mouse_cursor,
+                ),
                 on_click=lambda e: set_launcher_log_visible(True),
             )
             launcher_log_panel = ft.Column(
@@ -2468,7 +2501,7 @@ def main(page: ft.Page):
                     profile_picture_state["path"],
                 )
                 selected_target = launch_targets[key]
-                for row_key, row, marker, is_installed in selection_rows:
+                for row_key, row, marker, is_installed, *_ in selection_rows:
                     is_selected = row_key == key
                     if is_installed:
                         marker.color = (
@@ -2486,6 +2519,10 @@ def main(page: ft.Page):
                 page.update()
                 page.run_task(animate_card_selection, selected_target)
 
+            SELECTION_ROW_HEIGHT = 38
+            SELECTION_ROW_GAP = 3
+            SELECTION_ROW_PITCH = SELECTION_ROW_HEIGHT + SELECTION_ROW_GAP
+
             def build_launch_row(key, target, icon):
                 is_selected = launch_selection["key"] == key
                 is_installed = target["version_id"] in local_version_ids
@@ -2500,7 +2537,7 @@ def main(page: ft.Page):
                     tooltip="Installed" if is_installed else "Not installed",
                 )
                 row = ft.Container(
-                    height=38,
+                    height=SELECTION_ROW_PITCH,
                     disabled=launcher_log_state["running"],
                     opacity=0.5 if launcher_log_state["running"] else 1,
                     # The selection glow lives in `selection_highlight` so it can
@@ -2513,9 +2550,16 @@ def main(page: ft.Page):
                         )
                     ),
                     border_radius=6,
-                    padding=ft.Padding.symmetric(horizontal=8, vertical=0),
+                    padding=ft.Padding.only(
+                        left=8,
+                        right=8,
+                        top=0,
+                        bottom=SELECTION_ROW_GAP,
+                    ),
+                    alignment=ft.Alignment.CENTER_LEFT,
                     on_click=lambda e: select_launch_target(key),
                     content=ft.Row(
+                        height=SELECTION_ROW_HEIGHT,
                         controls=[
                             ft.Icon(icon, color=theme["text_secondary"], size=18),
                             ft.Text(
@@ -2542,8 +2586,16 @@ def main(page: ft.Page):
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                 )
-                selection_rows.append((key, row, installation_marker, is_installed))
-                return row
+                row_wrapper = ft.GestureDetector(
+                    mouse_cursor=(
+                        ft.MouseCursor.BASIC
+                        if launcher_log_state["running"]
+                        else ft.MouseCursor.CLICK
+                    ),
+                    content=row,
+                )
+                selection_rows.append((key, row, installation_marker, is_installed, row_wrapper))
+                return row_wrapper
 
             version_rows = []
             if "latest-release" in launch_targets:
@@ -2570,10 +2622,6 @@ def main(page: ft.Page):
 
             if launch_selection["key"] not in launch_targets:
                 launch_selection["key"] = ""
-
-            SELECTION_ROW_HEIGHT = 38
-            SELECTION_ROW_GAP = 3
-            SELECTION_ROW_PITCH = SELECTION_ROW_HEIGHT + SELECTION_ROW_GAP
 
             def selection_index_of(key):
                 for index, row_entry in enumerate(selection_rows):
@@ -2637,6 +2685,13 @@ def main(page: ft.Page):
                     or (is_running and not is_downloading)
                     or (not is_running and not launch_is_ready())
                 )
+                if is_running:
+                    button.style.mouse_cursor = {
+                        ft.ControlState.DISABLED: ft.MouseCursor.PROGRESS,
+                        ft.ControlState.DEFAULT: ft.MouseCursor.PROGRESS,
+                    }
+                else:
+                    button.style.mouse_cursor = clickable_mouse_cursor
                 try:
                     button.update()
                 except Exception:
@@ -2739,6 +2794,8 @@ def main(page: ft.Page):
                     row = item[1]
                     row.disabled = True
                     row.opacity = 0.5
+                    if len(item) > 4 and item[4] is not None:
+                        item[4].mouse_cursor = ft.MouseCursor.BASIC
                 log_back_button.visible = launcher_log_state["open"]
                 launcher_log_state["progress"] = None
                 launcher_log_state["status"] = "Preparing Minecraft..."
@@ -2923,6 +2980,8 @@ def main(page: ft.Page):
                         row = item[1]
                         row.disabled = False
                         row.opacity = 1
+                        if len(item) > 4 and item[4] is not None:
+                            item[4].mouse_cursor = ft.MouseCursor.CLICK
                     if launch_action != "Close launcher":
                         page.update()
                         navigate(
@@ -2970,6 +3029,7 @@ def main(page: ft.Page):
                         ft.ControlState.DISABLED: theme["text_muted"],
                     },
                     shape=ft.RoundedRectangleBorder(radius=8),
+                    mouse_cursor=clickable_mouse_cursor,
                     text_style=ft.TextStyle(
                         weight=ft.FontWeight.BOLD,
                         size=15,
@@ -3340,14 +3400,28 @@ def main(page: ft.Page):
                 container.update()
 
             def build_option_card(category):
-                card = ft.Container(
+                return ft.Button(
                     width=170,
                     height=130,
-                    bgcolor=theme["surface"],
-                    border=ft.Border.all(1, color=theme["border"]),
-                    border_radius=14,
-                    ink=True,
-                    alignment=ft.Alignment.CENTER,
+                    style=ft.ButtonStyle(
+                        bgcolor={
+                            ft.ControlState.HOVERED: theme.get("card_hover", theme["card"]),
+                            ft.ControlState.DEFAULT: theme["surface"],
+                        },
+                        side={
+                            ft.ControlState.HOVERED: ft.BorderSide(1, color=theme["btn_primary"]),
+                            ft.ControlState.DEFAULT: ft.BorderSide(1, color=theme["border"]),
+                        },
+                        shape=ft.RoundedRectangleBorder(radius=14),
+                        elevation=0,
+                        shadow_color=ft.Colors.TRANSPARENT,
+                        overlay_color={
+                            ft.ControlState.PRESSED: ft.Colors.with_opacity(0.1, theme["btn_primary"]),
+                            ft.ControlState.DEFAULT: ft.Colors.TRANSPARENT,
+                        },
+                        padding=0,
+                        mouse_cursor=clickable_mouse_cursor,
+                    ),
                     on_click=lambda e, opt_id=category["id"]: navigate(opt_id),
                     content=ft.Column(
                         alignment=ft.MainAxisAlignment.CENTER,
@@ -3368,8 +3442,6 @@ def main(page: ft.Page):
                         ],
                     ),
                 )
-                card.on_hover = lambda e, c=card: on_setting_card_hover(e, c)
-                return card
 
             options_categories = [
                 {
@@ -3553,6 +3625,7 @@ def main(page: ft.Page):
                                                 icon=ft.Icons.RESTORE,
                                                 tooltip="Reset this page to defaults",
                                                 icon_color=theme["text_secondary"],
+                                                style=ft.ButtonStyle(mouse_cursor=clickable_mouse_cursor),
                                                 on_click=on_reset,
                                             )
                                         ]
@@ -3858,7 +3931,11 @@ def main(page: ft.Page):
             remove_account_picture_button = ft.TextButton(
                 "Remove picture",
                 disabled=not bool(profile_picture_state["path"]),
-                style=ft.ButtonStyle(color=theme["text_secondary"],overlay_color=ft.Colors.TRANSPARENT),
+                style=ft.ButtonStyle(
+                    color=theme["text_secondary"],
+                    overlay_color=ft.Colors.TRANSPARENT,
+                    mouse_cursor=clickable_mouse_cursor,
+                ),
                 on_click=clear_account_picture,
             )
             remove_account_picture_button_ref["control"] = (
@@ -4068,7 +4145,7 @@ def main(page: ft.Page):
             about_hero_card.on_hover = lambda e, c=about_hero_card: on_card_hover(e, c)
 
             # 2. Creator & Links Card (Unified, clean)
-            discord_id_pill = ft.Container(
+            discord_id_pill_card = ft.Container(
                 bgcolor=theme["card"],
                 border=ft.Border.all(1, color=theme["border"]),
                 border_radius=8,
@@ -4103,7 +4180,11 @@ def main(page: ft.Page):
                     ],
                 ),
             )
-            discord_id_pill.on_hover = lambda e, c=discord_id_pill: on_card_hover(e, c)
+            discord_id_pill_card.on_hover = lambda e, c=discord_id_pill_card: on_card_hover(e, c)
+            discord_id_pill = ft.GestureDetector(
+                mouse_cursor=ft.MouseCursor.CLICK,
+                content=discord_id_pill_card,
+            )
 
             creator_social_card = ft.Container(
                 bgcolor=theme["surface"],
@@ -4522,6 +4603,7 @@ def main(page: ft.Page):
                         ft.ControlState.DISABLED: ft.BorderSide(1, theme["border"]),
                     },
                     shape=ft.RoundedRectangleBorder(radius=8),
+                    mouse_cursor=clickable_mouse_cursor,
                 ),
                 on_click=lambda e: navigate("new_installation"),
             )
@@ -4665,7 +4747,10 @@ def main(page: ft.Page):
                             spacing=10,
                             tight=True,
                             controls=[
-                                danger_zone_header,
+                                ft.GestureDetector(
+                                    mouse_cursor=ft.MouseCursor.CLICK,
+                                    content=danger_zone_header,
+                                ),
                                 danger_zone_content,
                             ],
                         ),
@@ -4708,7 +4793,7 @@ def main(page: ft.Page):
                                                     selection_highlight,
                                                     ft.Column(
                                                         controls=version_rows,
-                                                        spacing=3,
+                                                        spacing=0,
                                                         horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
                                                     ),
                                                 ]
@@ -4729,7 +4814,7 @@ def main(page: ft.Page):
                                     #     bgcolor=theme["border"],
                                     #     margin=ft.Margin.symmetric(vertical=4),
                                     # ),
-                                    account_card,
+                                    account_card_wrap,
                                 ],
                             ),
                         ),
@@ -4879,7 +4964,7 @@ def main(page: ft.Page):
                 prepare_intro(version_row)
             prepare_intro(manage_profiles_button)
             # prepare_intro(sidebar_divider)
-            prepare_intro(account_card)
+            prepare_intro(account_card_wrap)
             prepare_intro(welcome_row)
             prepare_intro(selected_installation_card)
             prepare_intro(home_status_row)
