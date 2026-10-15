@@ -2108,16 +2108,16 @@ def main(page: ft.Page):
                     if is_hovered
                     else theme["card"]
                 )
-                container.border = ft.Border.all(
-                    1,
-                    color=theme["btn_primary"] if is_hovered else theme["border"],
-                )
+                # container.border = ft.Border.all(
+                #     1,
+                #     color=theme["btn_primary"] if is_hovered else theme["border"],
+                # )
                 container.update()
 
             account_card = ft.Container(
                 width=210,
                 bgcolor=theme["card"],
-                border=ft.Border.all(1, color=theme["border"]),
+                # border=ft.Border.all(1, color=theme["border"]),
                 border_radius=12,
                 padding=ft.Padding.symmetric(horizontal=8, vertical=8),
                 ink=True,
@@ -4724,11 +4724,11 @@ def main(page: ft.Page):
                                         style=rounded_button_style,
                                         on_click=lambda e: navigate("installations"),
                                     ),
-                                    sidebar_divider := ft.Container(
-                                        height=1,
-                                        bgcolor=theme["border"],
-                                        margin=ft.Margin.symmetric(vertical=4),
-                                    ),
+                                    # sidebar_divider := ft.Container(
+                                    #     height=1,
+                                    #     bgcolor=theme["border"],
+                                    #     margin=ft.Margin.symmetric(vertical=4),
+                                    # ),
                                     account_card,
                                 ],
                             ),
@@ -4878,7 +4878,7 @@ def main(page: ft.Page):
             for version_row in version_rows:
                 prepare_intro(version_row)
             prepare_intro(manage_profiles_button)
-            prepare_intro(sidebar_divider)
+            # prepare_intro(sidebar_divider)
             prepare_intro(account_card)
             prepare_intro(welcome_row)
             prepare_intro(selected_installation_card)
