@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import os
 import random
@@ -13,6 +14,9 @@ import uuid
 import warnings
 import webbrowser
 from pathlib import Path
+
+from PIL import Image
+import skins
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -47,6 +51,7 @@ from storage import (
     save_profile_options,
     save_settings,
     save_theme_choice,
+    get_account_pictures_dir,
 )
 
 ASSETS_DIR = Path(__file__).resolve().parent / ".assets"
@@ -94,9 +99,7 @@ def main(page: ft.Page):
     )
     player_name_state = {"value": profile_options["player_name"]}
     launch_selection = {"key": profile_options["last_selected_button"]}
-    profile_pictures_directory = (
-        Path(__file__).resolve().parent / ".data" / "account_pictures"
-    )
+    profile_pictures_directory = get_account_pictures_dir()
     saved_picture_path = profile_options["profile_picture_path"]
     profile_picture_state = {
         "path": saved_picture_path if saved_picture_path and Path(saved_picture_path).is_file() else ""
@@ -250,6 +253,7 @@ def main(page: ft.Page):
             tab_defs = [
                 ("home", ft.Icons.HOME, "Home"),
                 ("installations", ft.Icons.FILE_DOWNLOAD_OUTLINED, "Profiles"),
+                ("skins", ft.Icons.CHECKROOM, "Skins"),
                 ("options", ft.Icons.TUNE, "Options"),
             ]
 
@@ -416,6 +420,7 @@ def main(page: ft.Page):
                 padding=ft.Padding.symmetric(horizontal=8, vertical=4),
                 wait_duration=350,
             )
+        launcher_log_state["tooltip_func"] = tooltip
 
         def copy_to_clipboard(text: str, message: str = "Copied to clipboard!"):
             try:
@@ -546,39 +551,57 @@ def main(page: ft.Page):
         )
 
         async def animate_notification(message, icon, epoch):
-            notification_text.value = message
-            notification_icon.name = icon
-            notification_timer.value = 0
-            notification_banner.visible = True
-            notification_banner.opacity = 0
-            notification_banner.offset = ft.Offset(1, -1)
-            page.update()
-            await asyncio.sleep(0.05)
-            if notification_state["epoch"] != epoch:
-                return
-            notification_banner.opacity = 1
-            notification_banner.offset = ft.Offset(0, 0)
-            page.update()
-            loop = asyncio.get_running_loop()
-            started_at = loop.time()
-            while True:
-                await asyncio.sleep(1 / 30)
+            try:
+                notification_text.value = message
+                notification_icon.name = icon
+                notification_timer.value = 0
+                notification_banner.visible = True
+                notification_banner.opacity = 0
+                notification_banner.offset = ft.Offset(1, -1)
+                try:
+                    page.update()
+                except Exception:
+                    return
+                await asyncio.sleep(0.05)
                 if notification_state["epoch"] != epoch:
                     return
-                elapsed = loop.time() - started_at
-                notification_timer.value = min(1, elapsed / 5)
-                notification_timer.update()
-                if elapsed >= 5:
-                    break
-            if notification_state["epoch"] != epoch:
+                notification_banner.opacity = 1
+                notification_banner.offset = ft.Offset(0, 0)
+                try:
+                    page.update()
+                except Exception:
+                    return
+                loop = asyncio.get_running_loop()
+                started_at = loop.time()
+                while True:
+                    await asyncio.sleep(1 / 30)
+                    if notification_state["epoch"] != epoch:
+                        return
+                    elapsed = loop.time() - started_at
+                    notification_timer.value = min(1, elapsed / 5)
+                    try:
+                        notification_timer.update()
+                    except Exception:
+                        return
+                    if elapsed >= 5:
+                        break
+                if notification_state["epoch"] != epoch:
+                    return
+                notification_banner.opacity = 0
+                notification_banner.offset = ft.Offset(1, -1)
+                try:
+                    page.update()
+                except Exception:
+                    return
+                await asyncio.sleep(0.5)
+                if notification_state["epoch"] == epoch:
+                    notification_banner.visible = False
+                    try:
+                        page.update()
+                    except Exception:
+                        return
+            except Exception:
                 return
-            notification_banner.opacity = 0
-            notification_banner.offset = ft.Offset(1, -1)
-            page.update()
-            await asyncio.sleep(0.5)
-            if notification_state["epoch"] == epoch:
-                notification_banner.visible = False
-                page.update()
 
         def show_notification():
             pending = notification_state.get("pending")
@@ -3895,9 +3918,20 @@ def main(page: ft.Page):
                             ),
                         ),
                     ),
+                    build_setting_container(
+                        "Custom Skins",
+                        "Load player skins in-game using the skin network Java agent.",
+                        control=build_themed_switch(
+                            label="Enable in-game skins",
+                            value=settings.get("enable_custom_skins", True),
+                            on_change=lambda e: persist_setting(
+                                "enable_custom_skins", e.control.value
+                            ),
+                        ),
+                    ),
                 ],
                 on_reset=lambda e: reset_settings_fields(
-                    ("window_width", "window_height", "fullscreen"), "Game"
+                    ("window_width", "window_height", "fullscreen", "enable_custom_skins"), "Game"
                 ),
             )
 
@@ -4757,7 +4791,358 @@ def main(page: ft.Page):
                     )
                 ]
 
+            def build_skins_view():
+                active_skin_data = skins.load_active_skin_choice()
+                skin_model_state = {"value": active_skin_data.get("model", "classic")}
+                skin_view_state = {"value": "front"}
+
+                status_dot = ft.Container(
+                    width=8,
+                    height=8,
+                    border_radius=4,
+                    bgcolor=theme["text_secondary"],
+                )
+                status_text = ft.Text(
+                    "Default Skin",
+                    size=12,
+                    color=theme["text_secondary"],
+                )
+                player_label = ft.Text(
+                    player_name_state["value"].strip() or "Offline Player",
+                    size=18,
+                    weight=ft.FontWeight.BOLD,
+                    color=theme["text_primary"],
+                )
+
+                def get_effective_skin_bytes() -> bytes:
+                    uname = player_name_state["value"].strip()
+                    if uname:
+                        cache_file = skins.get_skins_dir() / f"ely_{uname.lower()}.png"
+                        if cache_file.is_file():
+                            try:
+                                return cache_file.read_bytes()
+                            except OSError:
+                                pass
+                    return skins.get_default_skin_bytes(skin_model_state["value"])
+
+                def render_current_character() -> bytes:
+                    raw = get_effective_skin_bytes()
+                    return skins.render_character_bytes(
+                        raw,
+                        view=skin_view_state["value"],
+                        model=skin_model_state["value"],
+                        scale=10,
+                    )
+
+                skin_image = ft.Image(
+                    src=render_current_character(),
+                    fit=ft.BoxFit.CONTAIN,
+                    width=160,
+                    height=320,
+                    filter_quality=ft.FilterQuality.NONE,
+                )
+
+                def update_preview():
+                    skin_image.src = render_current_character()
+                    try:
+                        skin_image.update()
+                    except Exception:
+                        pass
+
+                active_pill_style = ft.ButtonStyle(
+                    bgcolor={
+                        ft.ControlState.DEFAULT: theme["btn_primary"],
+                        ft.ControlState.DISABLED: theme["surface"],
+                    },
+                    color={
+                        ft.ControlState.DEFAULT: theme.get("btn_primary_text", "#FFFFFF"),
+                        ft.ControlState.DISABLED: theme.get("text_muted", theme["text_secondary"]),
+                    },
+                    side={
+                        ft.ControlState.DEFAULT: ft.BorderSide(0, ft.Colors.TRANSPARENT),
+                        ft.ControlState.DISABLED: ft.BorderSide(1, color=theme["border"]),
+                    },
+                    shape=ft.RoundedRectangleBorder(radius=8),
+                    mouse_cursor=clickable_mouse_cursor,
+                    padding=ft.Padding.symmetric(horizontal=16, vertical=10),
+                )
+                inactive_pill_style = ft.ButtonStyle(
+                    bgcolor={
+                        ft.ControlState.HOVERED: theme.get("card_hover", theme["card"]),
+                        ft.ControlState.DEFAULT: theme["card"],
+                        ft.ControlState.DISABLED: theme["surface"],
+                    },
+                    color={
+                        ft.ControlState.DEFAULT: theme["text_secondary"],
+                        ft.ControlState.DISABLED: theme.get("text_muted", theme["text_secondary"]),
+                    },
+                    side={
+                        ft.ControlState.HOVERED: ft.BorderSide(1, color=theme["btn_primary"]),
+                        ft.ControlState.DEFAULT: ft.BorderSide(1, color=theme["border"]),
+                        ft.ControlState.DISABLED: ft.BorderSide(1, color=theme["border"]),
+                    },
+                    shape=ft.RoundedRectangleBorder(radius=8),
+                    mouse_cursor=clickable_mouse_cursor,
+                    padding=ft.Padding.symmetric(horizontal=16, vertical=10),
+                )
+
+                def set_view(view_name):
+                    skin_view_state["value"] = view_name
+                    is_front = view_name == "front"
+                    view_front_btn.style = active_pill_style if is_front else inactive_pill_style
+                    view_back_btn.style = active_pill_style if not is_front else inactive_pill_style
+                    try:
+                        view_front_btn.update()
+                        view_back_btn.update()
+                    except Exception:
+                        pass
+                    update_preview()
+
+                view_front_btn = ft.Button(
+                    "Front",
+                    style=active_pill_style,
+                    on_click=lambda e: set_view("front"),
+                )
+                view_back_btn = ft.Button(
+                    "Back",
+                    style=inactive_pill_style,
+                    on_click=lambda e: set_view("back"),
+                )
+
+                def set_model(model_name):
+                    skin_model_state["value"] = model_name
+                    is_classic = model_name == "classic"
+                    model_classic_btn.style = active_pill_style if is_classic else inactive_pill_style
+                    model_slim_btn.style = active_pill_style if not is_classic else inactive_pill_style
+                    try:
+                        model_classic_btn.update()
+                        model_slim_btn.update()
+                    except Exception:
+                        pass
+                    skins.save_active_skin_choice("ely", model=model_name)
+                    update_preview()
+
+                is_init_classic = skin_model_state["value"] == "classic"
+                model_classic_btn = ft.Button(
+                    "Classic (Steve)",
+                    style=active_pill_style if is_init_classic else inactive_pill_style,
+                    on_click=lambda e: set_model("classic"),
+                )
+                model_slim_btn = ft.Button(
+                    "Slim (Alex)",
+                    style=inactive_pill_style if is_init_classic else active_pill_style,
+                    on_click=lambda e: set_model("slim"),
+                )
+
+                async def sync_skin_network(force=False):
+                    uname = player_name_state["value"].strip()
+                    if not uname:
+                        status_dot.bgcolor = theme["text_secondary"]
+                        status_text.value = "Default Skin"
+                        page.update()
+                        return
+
+                    if not online_available and force:
+                        notify("Cannot check for updated skin while offline.", ft.Icons.WIFI_OFF)
+                        return
+
+                    if not online_available:
+                        raw = get_effective_skin_bytes()
+                        if raw and raw != skins.get_default_skin_bytes(skin_model_state["value"]):
+                            status_dot.bgcolor = ft.Colors.GREEN_400
+                            status_text.value = "Skin Active (Offline)"
+                        else:
+                            status_dot.bgcolor = theme["text_secondary"]
+                            status_text.value = "Default Skin"
+                        update_preview()
+                        try:
+                            status_dot.update()
+                            status_text.update()
+                        except Exception:
+                            pass
+                        return
+
+                    status_text.value = "Checking skin..."
+                    status_dot.bgcolor = ft.Colors.AMBER_400
+                    try:
+                        status_text.update()
+                        status_dot.update()
+                    except Exception:
+                        pass
+
+                    skin_bytes, detected_model = await asyncio.to_thread(
+                        skins.fetch_ely_skin, uname, force_refresh=force, timeout=6.0
+                    )
+                    if skin_bytes:
+                        status_dot.bgcolor = ft.Colors.GREEN_400
+                        status_text.value = "Skin Active"
+                        set_model(detected_model)
+                    else:
+                        status_dot.bgcolor = theme["text_secondary"]
+                        status_text.value = "Default Skin"
+                        update_preview()
+                    try:
+                        status_dot.update()
+                        status_text.update()
+                    except Exception:
+                        pass
+
+                page.run_task(sync_skin_network, False)
+
+                def handle_refresh(e):
+                    if not online_available:
+                        notify("Cannot refresh skin while offline.", ft.Icons.WIFI_OFF)
+                        return
+                    notify("Checking for updated skin...", ft.Icons.REFRESH)
+                    page.run_task(sync_skin_network, True)
+
+                refresh_skin_btn = ft.Button(
+                    "Refresh",
+                    icon=ft.Icons.REFRESH,
+                    style=inactive_pill_style,
+                    disabled=not online_available,
+                    tooltip=tooltip("Internet connection required to refresh") if not online_available else None,
+                    on_click=handle_refresh,
+                )
+                manage_skin_btn = ft.Button(
+                    "Manage Skin Online",
+                    icon=ft.Icons.OPEN_IN_NEW,
+                    style=active_pill_style,
+                    disabled=not online_available,
+                    tooltip=tooltip("Internet connection required") if not online_available else None,
+                    on_click=lambda e: open_url("https://ely.by/skins", "Opening skin manager..."),
+                )
+                launcher_log_state["skin_refresh_button"] = refresh_skin_btn
+                launcher_log_state["skin_manage_button"] = manage_skin_btn
+                launcher_log_state["skin_sync_task"] = sync_skin_network
+
+                left_preview_card = ft.Container(
+                    width=320,
+                    padding=24,
+                    bgcolor=theme["surface"],
+                    border=ft.Border.all(1, color=theme["border"]),
+                    border_radius=16,
+                    alignment=ft.Alignment.CENTER,
+                    content=ft.Column(
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        spacing=20,
+                        controls=[
+                            ft.Container(
+                                content=skin_image,
+                                alignment=ft.Alignment.CENTER,
+                                padding=ft.Padding.only(top=10, bottom=10),
+                            ),
+                            ft.Row(
+                                alignment=ft.MainAxisAlignment.CENTER,
+                                spacing=10,
+                                controls=[
+                                    view_front_btn,
+                                    view_back_btn,
+                                ],
+                            ),
+                        ],
+                    ),
+                )
+
+                right_settings_card = ft.Container(
+                    width=460,
+                    padding=28,
+                    bgcolor=theme["surface"],
+                    border=ft.Border.all(1, color=theme["border"]),
+                    border_radius=16,
+                    content=ft.Column(
+                        spacing=22,
+                        controls=[
+                            ft.Column(
+                                spacing=6,
+                                controls=[
+                                    ft.Text("PLAYER", size=11, weight=ft.FontWeight.BOLD, color=theme["text_secondary"]),
+                                    player_label,
+                                    ft.Row(
+                                        spacing=8,
+                                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                        controls=[status_dot, status_text],
+                                    ),
+                                    ft.Container(height=6),
+                                    ft.Row(
+                                        spacing=10,
+                                        controls=[
+                                            refresh_skin_btn,
+                                            manage_skin_btn,
+                                        ],
+                                    ),
+                                ],
+                            ),
+                            ft.Divider(color=ft.Colors.with_opacity(0.12, theme["border"])),
+                            ft.Column(
+                                spacing=8,
+                                controls=[
+                                    ft.Text("CHARACTER MODEL", size=11, weight=ft.FontWeight.BOLD, color=theme["text_secondary"]),
+                                    ft.Row(
+                                        spacing=10,
+                                        controls=[
+                                            model_classic_btn,
+                                            model_slim_btn,
+                                        ],
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                )
+
+                footer_credit = ft.Container(
+                    content=ft.Text(
+                        "Skin network powered by Ely.by",
+                        size=11,
+                        color=ft.Colors.with_opacity(0.5, theme["text_secondary"]),
+                        text_align=ft.TextAlign.CENTER,
+                    ),
+                    alignment=ft.Alignment.CENTER,
+                    padding=ft.Padding.only(top=14),
+                )
+
+                skins_orb1, skins_orb2 = create_ambient_gradient_orbs()
+                page.run_task(
+                    animate_ambient_gradient_orbs,
+                    skins_orb1,
+                    skins_orb2,
+                    lambda: active_page.get("name") == "skins",
+                )
+
+                return ft.Stack(
+                    expand=True,
+                    alignment=ft.Alignment.CENTER,
+                    controls=[
+                        skins_orb1,
+                        skins_orb2,
+                        ft.Container(
+                            alignment=ft.Alignment.CENTER,
+                            padding=ft.Padding.symmetric(horizontal=20, vertical=16),
+                            content=ft.Column(
+                                alignment=ft.MainAxisAlignment.CENTER,
+                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                                scroll=ft.ScrollMode.AUTO,
+                                controls=[
+                                    ft.Row(
+                                        alignment=ft.MainAxisAlignment.CENTER,
+                                        vertical_alignment=ft.CrossAxisAlignment.START,
+                                        spacing=24,
+                                        controls=[
+                                            left_preview_card,
+                                            right_settings_card,
+                                        ],
+                                    ),
+                                    footer_credit,
+                                ],
+                            ),
+                        ),
+                    ],
+                )
+
             pages = {
+                "skins": build_skins_view(),
                 "home": ft.Row(
                     expand=True,
                     spacing=0,
@@ -5000,6 +5385,8 @@ def main(page: ft.Page):
                     "version_id": version["version_id"],
                 }
                 pages[name] = build_installation_editor(profile, name_only=True)
+            elif name == "skins":
+                pages[name] = build_skins_view()
 
             if name == "home":
                 launcher_log_state["status_control"] = launch_status
@@ -5031,7 +5418,7 @@ def main(page: ft.Page):
 
         navigation_state["navigate"] = navigate
 
-        tab_names = ["home", "installations", "options"]
+        tab_names = ["home", "installations", "skins", "options"]
 
         def on_tab_select(selected_tab):
             current_tab = (
@@ -5197,24 +5584,25 @@ def main(page: ft.Page):
             )
             online_available = True
             connectivity_known["value"] = True
-            new_inst_btn = launcher_log_state.get("new_installation_button")
-            if new_inst_btn is not None:
-                new_inst_btn.disabled = False
-                try:
-                    new_inst_btn.update()
-                except Exception:
-                    pass
+            for btn_key in ("new_installation_button", "skin_refresh_button", "skin_manage_button"):
+                b = launcher_log_state.get(btn_key)
+                if b is not None:
+                    b.disabled = False
+                    if btn_key.startswith("skin_"):
+                        b.tooltip = None
+                    try:
+                        b.update()
+                    except Exception:
+                        pass
             if was_known and not was_online:
                 notify("Internet connection restored.", ft.Icons.WIFI)
-                if active_page.get("name") not in ("home", None):
-                    while intro_state.get("running"):
-                        await asyncio.sleep(0.05)
-                    page.controls.clear()
-                    build_page(selected_theme["name"], active_page["name"])
+                if active_page.get("name") == "skins":
+                    skin_sync = launcher_log_state.get("skin_sync_task")
+                    if skin_sync is not None:
+                        page.run_task(skin_sync, False)
             if active_page.get("name") == "home" and (
                 not old_latest_release_id
                 or old_latest_release_id != latest
-                or (was_known and not was_online)
             ):
                 while intro_state.get("pending") or intro_state.get("running"):
                     await asyncio.sleep(0.05)
@@ -5224,23 +5612,27 @@ def main(page: ft.Page):
 
         online_available = False
         connectivity_known["value"] = True
-        new_inst_btn = launcher_log_state.get("new_installation_button")
-        if new_inst_btn is not None:
-            new_inst_btn.disabled = True
-            try:
-                new_inst_btn.update()
-            except Exception:
-                pass
+        tooltip_fn = launcher_log_state.get("tooltip_func")
+        for btn_key in ("new_installation_button", "skin_refresh_button", "skin_manage_button"):
+            b = launcher_log_state.get(btn_key)
+            if b is not None:
+                b.disabled = True
+                if btn_key.startswith("skin_"):
+                    tip_msg = "Internet connection required"
+                    b.tooltip = tooltip_fn(tip_msg) if tooltip_fn else tip_msg
+                try:
+                    b.update()
+                except Exception:
+                    pass
+        if active_page.get("name") == "skins":
+            skin_sync = launcher_log_state.get("skin_sync_task")
+            if skin_sync is not None:
+                page.run_task(skin_sync, False)
         if was_known and was_online:
             notify(
                 "No internet connection. Installed versions remain available.",
                 ft.Icons.WIFI_OFF,
             )
-            if active_page.get("name") not in ("home", None):
-                while intro_state.get("running"):
-                    await asyncio.sleep(0.05)
-                page.controls.clear()
-                build_page(selected_theme["name"], active_page["name"])
         elif not was_known:
             notify(
                 "No internet connection. Installed versions remain available.",
@@ -5263,18 +5655,22 @@ def main(page: ft.Page):
             elif not connected and online_available:
                 online_available = False
                 connectivity_known["value"] = True
-                new_inst_btn = launcher_log_state.get("new_installation_button")
-                if new_inst_btn is not None:
-                    new_inst_btn.disabled = True
-                    try:
-                        new_inst_btn.update()
-                    except Exception:
-                        pass
-                if active_page.get("name") not in ("home", None):
-                    while intro_state.get("running"):
-                        await asyncio.sleep(0.05)
-                    page.controls.clear()
-                    build_page(selected_theme["name"], active_page["name"])
+                tooltip_fn = launcher_log_state.get("tooltip_func")
+                for btn_key in ("new_installation_button", "skin_refresh_button", "skin_manage_button"):
+                    b = launcher_log_state.get(btn_key)
+                    if b is not None:
+                        b.disabled = True
+                        if btn_key.startswith("skin_"):
+                            tip_msg = "Internet connection required"
+                            b.tooltip = tooltip_fn(tip_msg) if tooltip_fn else tip_msg
+                        try:
+                            b.update()
+                        except Exception:
+                            pass
+                if active_page.get("name") == "skins":
+                    skin_sync = launcher_log_state.get("skin_sync_task")
+                    if skin_sync is not None:
+                        page.run_task(skin_sync, False)
                 notify(
                     "No internet connection. Installed versions remain available.",
                     ft.Icons.WIFI_OFF,

@@ -1,2 +1,4 @@
 flet
 minecraft-launcher-lib
+pillow
+requests

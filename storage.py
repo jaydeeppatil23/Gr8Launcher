@@ -1,14 +1,84 @@
 import json
+import os
+import shutil
 from pathlib import Path
+
+import minecraft_launcher_lib
 
 from colors import DEFAULT_THEME
 
+LEGACY_DATA_DIR = Path(__file__).resolve().parent / ".data"
 
-THEME_FILE = Path(__file__).resolve().parent / ".data" / "theme.txt"
-INSTALLATIONS_FILE = Path(__file__).resolve().parent / ".data" / "installations.json"
-PROFILE_OPTIONS_FILE = Path(__file__).resolve().parent / ".data" / "profile_n_options.json"
-SETTINGS_FILE = Path(__file__).resolve().parent / ".data" / "settings.json"
-PENDING_INSTALLATIONS_FILE = Path(__file__).resolve().parent / ".data" / "pending_installations.json"
+
+def get_data_dir() -> Path:
+    """Returns the persistent launcher data directory inside .minecraft/gr8launcher across all OSes.
+    Automatically migrates any legacy .data folder from the application directory on first run.
+    """
+    mc_dir = Path(minecraft_launcher_lib.utils.get_minecraft_directory())
+    data_dir = mc_dir / "gr8launcher"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    migrate_legacy_data(LEGACY_DATA_DIR, data_dir)
+    return data_dir
+
+
+def migrate_legacy_data(legacy_dir: Path, target_dir: Path) -> None:
+    """Safely migrates files and directories from the legacy .data folder to target_dir.
+    Moves files if target does not already have them, and removes legacy_dir once empty.
+    """
+    if not legacy_dir.is_dir():
+        return
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for item in list(legacy_dir.iterdir()):
+            dest = target_dir / item.name
+            if item.is_file():
+                if not dest.exists():
+                    shutil.move(str(item), str(dest))
+                else:
+                    try:
+                        item.unlink()
+                    except OSError:
+                        pass
+            elif item.is_dir():
+                if not dest.exists():
+                    shutil.move(str(item), str(dest))
+                else:
+                    for subitem in list(item.iterdir()):
+                        subdest = dest / subitem.name
+                        if not subdest.exists():
+                            shutil.move(str(subitem), str(subdest))
+                        else:
+                            try:
+                                if subitem.is_file():
+                                    subitem.unlink()
+                                elif subitem.is_dir():
+                                    shutil.rmtree(str(subitem), ignore_errors=True)
+                            except OSError:
+                                pass
+                    try:
+                        item.rmdir()
+                    except OSError:
+                        pass
+
+        if legacy_dir.is_dir() and not any(legacy_dir.iterdir()):
+            legacy_dir.rmdir()
+    except Exception as error:
+        print(f"Notice: Legacy data migration encountered an issue: {error}")
+
+
+def get_account_pictures_dir() -> Path:
+    directory = get_data_dir() / "account_pictures"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+DATA_DIR = get_data_dir()
+THEME_FILE = DATA_DIR / "theme.txt"
+INSTALLATIONS_FILE = DATA_DIR / "installations.json"
+PROFILE_OPTIONS_FILE = DATA_DIR / "profile_n_options.json"
+SETTINGS_FILE = DATA_DIR / "settings.json"
+PENDING_INSTALLATIONS_FILE = DATA_DIR / "pending_installations.json"
+ACCOUNT_PICTURES_DIR = get_account_pictures_dir()
 
 DEFAULT_SETTINGS: dict[str, object] = {
     "ram_mb": 4096,
@@ -20,6 +90,7 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "capture_logs": True,
     "show_installation_directory": True,
     "enable_orbs": True,
+    "enable_custom_skins": True,
 }
 
 
@@ -46,6 +117,7 @@ def load_settings() -> dict[str, object]:
         "capture_logs",
         "show_installation_directory",
         "enable_orbs",
+        "enable_custom_skins",
     ):
         value = saved.get(key)
         if isinstance(value, bool):
@@ -194,19 +266,25 @@ def load_profile_options() -> dict[str, str]:
     if not isinstance(player_name, str) or not player_name:
         try:
             player_name = (
-                Path(__file__).resolve().parent / ".data" / "player_name.txt"
+                DATA_DIR / "player_name.txt"
             ).read_text(encoding="utf-8").strip()
         except (OSError, UnicodeError):
             player_name = ""
 
+    picture_path = options.get("profile_picture_path", "")
+    if isinstance(picture_path, str) and picture_path:
+        pic = Path(picture_path)
+        if not pic.is_file():
+            candidate = ACCOUNT_PICTURES_DIR / pic.name
+            if candidate.is_file():
+                picture_path = str(candidate)
+    else:
+        picture_path = ""
+
     return {
         "player_name": player_name if isinstance(player_name, str) else "",
         "last_selected_button": str(options.get("last_selected_button", "")),
-        "profile_picture_path": (
-            options.get("profile_picture_path", "")
-            if isinstance(options.get("profile_picture_path", ""), str)
-            else ""
-        ),
+        "profile_picture_path": picture_path,
     }
 
 

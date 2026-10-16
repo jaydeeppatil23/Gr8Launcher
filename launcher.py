@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -13,6 +14,10 @@ from pathlib import Path
 import requests
 import minecraft_launcher_lib
 from storage import load_pending_installations, save_pending_installations
+from skins import (
+	prepare_skin_launch,
+	sync_playerdata_uuids,
+)
 
 
 minecraft_directory = minecraft_launcher_lib.utils.get_minecraft_directory()
@@ -898,9 +903,12 @@ async def start_game(
 	callback["setStatus"]("Building launch command...")
 	game_dir = str(target.get("game_directory") or minecraft_directory)
 	Path(game_dir).mkdir(parents=True, exist_ok=True)
+	offline_uuid = generate_offline_uuid(username)
+	active_uuid = offline_uuid
+	skin_server_instance = None
 	launch_options = {
 		"username": username,
-		"uuid": generate_offline_uuid(username),
+		"uuid": offline_uuid,
 		"token": "",
 		"launcherName": "Gr8 Launcher",
 		"launcherVersion": "1.0",
@@ -917,6 +925,15 @@ async def start_game(
 			f"-Xmx{int((settings or {}).get('ram_mb', 4096))}M",
 		],
 	}
+	if (settings or {}).get("enable_custom_skins", True):
+		active_uuid, skin_jvm_args, skin_server_instance = prepare_skin_launch(
+			username=username,
+			game_dir=game_dir,
+			minecraft_dir=minecraft_directory,
+			is_online=online_available,
+		)
+		launch_options["jvmArguments"].extend(skin_jvm_args)
+	launch_options["uuid"] = active_uuid
 	java_path = str((settings or {}).get("java_path", "")).strip()
 	if java_path:
 		launch_options["executablePath"] = java_path
@@ -974,4 +991,19 @@ async def start_game(
 		if log_file is not None:
 			log_file.close()
 		raise
+
+	def _sync_on_exit():
+		try:
+			process.wait()
+			if skin_server_instance is not None:
+				skin_server_instance.stop()
+			if active_uuid != offline_uuid:
+				sync_playerdata_uuids(game_dir, active_uuid, offline_uuid)
+				if game_dir != str(minecraft_directory):
+					sync_playerdata_uuids(minecraft_directory, active_uuid, offline_uuid)
+		except Exception:
+			pass
+
+	threading.Thread(target=_sync_on_exit, daemon=True).start()
+
 	return process, log_file
