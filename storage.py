@@ -261,4 +261,118 @@ def save_pending_installations(version_ids: set[str]) -> bool:
         except OSError:
             pass
         return False
+
+CONTENT_FILE = Path(__file__).resolve().parent / ".data" / "installed_content.json"
+
+
+def load_installed_content() -> dict[str, list[dict[str, object]]]:
+    """Return installed-content records keyed by installation id."""
+    try:
+        document = json.loads(CONTENT_FILE.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(document, dict):
+        return {}
+    cleaned: dict[str, list[dict[str, object]]] = {}
+    for install_id, entries in document.items():
+        if not isinstance(install_id, str) or not isinstance(entries, list):
+            continue
+        valid_entries = [
+            entry
+            for entry in entries
+            if isinstance(entry, dict)
+        ]
+        if valid_entries:
+            cleaned[install_id] = valid_entries
+    return cleaned
+
+
+def save_installed_content(
+    content: dict[str, list[dict[str, object]]],
+) -> bool:
+    """Atomically persist installed-content records keyed by installation id."""
+    temporary_file = CONTENT_FILE.with_suffix(".tmp")
+    try:
+        CONTENT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temporary_file.write_text(
+            json.dumps(content, indent=2), encoding="utf-8"
+        )
+        temporary_file.replace(CONTENT_FILE)
+    except (OSError, TypeError, ValueError):
+        try:
+            temporary_file.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+    return True
+
+
+def add_installed_content(
+    install_id: str, entry: dict[str, object]
+) -> bool:
+    """Append a content entry for an installation and persist."""
+    content = load_installed_content()
+    entries = content.setdefault(install_id, [])
+    # Avoid duplicate entries for the same project+version+filename.
+    for existing in entries:
+        if (
+            isinstance(existing, dict)
+            and existing.get("project_id") == entry.get("project_id")
+            and existing.get("version_id") == entry.get("version_id")
+            and existing.get("filename") == entry.get("filename")
+        ):
+            existing.update(entry)
+            return save_installed_content(content)
+    entries.append(entry)
+    return save_installed_content(content)
+
+
+def remove_installed_content(
+    install_id: str, project_id: str, version_id: str, filename: str
+) -> bool:
+    """Remove a matching content entry for an installation and persist."""
+    content = load_installed_content()
+    entries = content.get(install_id, [])
+    if not isinstance(entries, list):
+        return False
+    updated = [
+        entry
+        for entry in entries
+        if not (
+            isinstance(entry, dict)
+            and entry.get("project_id") == project_id
+            and entry.get("version_id") == version_id
+            and entry.get("filename") == filename
+        )
+    ]
+    if len(updated) == len(entries):
+        return False
+    content[install_id] = updated
+    if not content[install_id]:
+        del content[install_id]
+    return save_installed_content(content)
+
+
+def set_content_enabled(
+    install_id: str, project_id: str, version_id: str, filename: str, enabled: bool
+) -> bool:
+    """Toggle the enabled flag of a tracked content entry and persist."""
+    content = load_installed_content()
+    entries = content.get(install_id, [])
+    if not isinstance(entries, list):
+        return False
+    changed = False
+    for entry in entries:
+        if (
+            isinstance(entry, dict)
+            and entry.get("project_id") == project_id
+            and entry.get("version_id") == version_id
+            and entry.get("filename") == filename
+        ):
+            entry["enabled"] = bool(enabled)
+            changed = True
+    if not changed:
+        return False
+    return save_installed_content(content)
+
     return True

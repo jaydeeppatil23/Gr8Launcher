@@ -975,3 +975,155 @@ async def start_game(
 			log_file.close()
 		raise
 	return process, log_file
+
+
+# ---------------------------------------------------------------------------
+# Mod / resource pack / shader pack content management
+#
+# Fabric / Forge / NeoForge / Quilt automatically load every .jar placed in
+# the game directory's ``mods/`` folder, and Minecraft itself reads
+# ``resourcepacks/`` and ``shaderpacks/``.  Placing downloaded files into the
+# correct folder of the installation's game directory is therefore sufficient
+# -- no launch-command changes are required.  Disabled mods are renamed to
+# ``.jar.disabled`` so loaders ignore them while keeping the file available.
+
+
+def get_content_folder(game_dir: str | Path, category: str) -> Path:
+    """Return the target folder for a content category, creating it if needed."""
+    valid = {"mod": "mods", "resourcepack": "resourcepacks", "shader": "shaderpacks"}
+    if category not in valid:
+        raise ValueError(f"Unsupported content category: {category!r}")
+    folder = Path(game_dir) / valid[category]
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def list_installed_content(game_dir: str | Path) -> list[dict[str, object]]:
+    """Scan the game directory for installed mods, resource packs and shaders.
+
+    Returns a list of dicts with keys: ``category``, ``filename``, ``enabled``,
+    ``size`` and ``path``.  ``enabled`` is ``False`` for mods renamed to
+    ``.jar.disabled``.
+    """
+    game_dir = Path(game_dir)
+    if not game_dir.is_dir():
+        return []
+
+    results: list[dict[str, object]] = []
+    # (category, folder, extensions that count as enabled)
+    scans = [
+        ("mod", game_dir / "mods", (".jar",)),
+        ("resourcepack", game_dir / "resourcepacks", (".zip", ".jar")),
+        ("shader", game_dir / "shaderpacks", (".zip", ".jar")),
+    ]
+    for category, folder, enabled_exts in scans:
+        if not folder.is_dir():
+            continue
+        try:
+            entries = sorted(folder.iterdir(), key=lambda p: p.name.lower())
+        except OSError:
+            continue
+        for path in entries:
+            if not path.is_file():
+                continue
+            name = path.name
+            disabled = name.endswith(".disabled")
+            base_name = name[:-len(".disabled")] if disabled else name
+            # A disabled resourcepack/shaderpack is just ignored by listing it
+            # normally; only mods use the .disabled convention here.
+            enabled = (not disabled) and base_name.lower().endswith(enabled_exts)
+            try:
+                size = path.stat().st_size
+            except OSError:
+                size = 0
+            results.append(
+                {
+                    "category": category,
+                    "filename": base_name,
+                    "actual_filename": name,
+                    "enabled": enabled,
+                    "size": size,
+                    "path": str(path),
+                }
+            )
+    results.sort(key=lambda item: (str(item["category"]), str(item["filename"]).lower()))
+    return results
+
+
+def install_content_file(
+    game_dir: str | Path,
+    category: str,
+    source_path: str | Path,
+    *,
+    filename: str | None = None,
+) -> bool:
+    """Copy a downloaded content file into the appropriate game-directory folder."""
+    game_dir = Path(game_dir)
+    folder = get_content_folder(game_dir, category)
+    src = Path(source_path)
+    if not src.is_file():
+        return False
+    target_name = filename or src.name
+    target = folder / target_name
+    try:
+        shutil.copyfile(src, target)
+        # Preserve read permissions; do not set executable.
+        return target.is_file()
+    except OSError:
+        return False
+
+
+def remove_content_file(
+    game_dir: str | Path, category: str, filename: str
+) -> bool:
+    """Delete a content file from the appropriate game-directory folder."""
+    try:
+        folder = get_content_folder(game_dir, category)
+    except ValueError:
+        return False
+    # Remove both the active file and any .disabled variant.
+    candidates = [folder / filename, folder / (filename + ".disabled")]
+    removed = False
+    for candidate in candidates:
+        try:
+            if candidate.is_file() or candidate.is_symlink():
+                candidate.unlink()
+                removed = True
+        except OSError:
+            pass
+    return removed
+
+
+def set_content_enabled(
+    game_dir: str | Path, category: str, filename: str, enabled: bool
+) -> bool:
+    """Enable or disable a mod by renaming ``.jar`` <-> ``.jar.disabled``.
+
+    Resource packs and shader packs are always considered enabled when present;
+    this function only affects mods (``.jar`` files).
+    """
+    if category != "mod":
+        # Resource packs / shader packs have no per-file enable toggle in the
+        # game folder; Minecraft's options.txt handles their activation.
+        return True
+    try:
+        folder = get_content_folder(game_dir, category)
+    except ValueError:
+        return False
+    active = folder / filename
+    disabled = folder / (filename + ".disabled")
+    try:
+        if enabled:
+            if disabled.is_file():
+                disabled.replace(active)
+            elif not active.is_file():
+                return False
+        else:
+            if active.is_file():
+                active.replace(disabled)
+            elif not disabled.is_file():
+                return False
+        return True
+    except OSError:
+        return False
+
