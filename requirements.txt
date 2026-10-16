@@ -1,3 +1,4 @@
 flet
 minecraft-launcher-lib
 python-modrinth
+python-dateutil
