@@ -1487,27 +1487,41 @@ def main(page: ft.Page):
                 border_radius=8,
             )
 
-            category_tabs = ft.Tabs(
-                selected_index=0,
-                animation_duration=300,
+            category_tabs = ft.SegmentedButton(
+                selected=["mod"],
                 on_change=lambda e: page.run_task(refresh_content_view),
-                length=3,
-                content=[
-                    ft.Tab(label="Mods", icon=ft.Icons.CONSTRUCTION),
-                    ft.Tab(label="Resource Packs", icon=ft.Icons.PALETTE),
-                    ft.Tab(label="Shader Packs", icon=ft.Icons.BRIGHTNESS_7),
+                segments=[
+                    ft.Segment(
+                        value="mod", label="Mods", icon=ft.Icons.CONSTRUCTION
+                    ),
+                    ft.Segment(
+                        value="resourcepack",
+                        label="Resource Packs",
+                        icon=ft.Icons.PALETTE,
+                    ),
+                    ft.Segment(
+                        value="shader",
+                        label="Shader Packs",
+                        icon=ft.Icons.BRIGHTNESS_7,
+                    ),
                 ],
                 expand=True,
             )
 
-            view_tabs = ft.Tabs(
-                selected_index=0,
-                animation_duration=300,
+            view_tabs = ft.SegmentedButton(
+                selected=["installed"],
                 on_change=lambda e: page.run_task(refresh_content_view),
-                length=2,
-                content=[
-                    ft.Tab(label="Installed", icon=ft.Icons.INVENTORY_2_OUTLINED),
-                    ft.Tab(label="Browse Modrinth", icon=ft.Icons.STORE),
+                segments=[
+                    ft.Segment(
+                        value="installed",
+                        label="Installed",
+                        icon=ft.Icons.INVENTORY_2_OUTLINED,
+                    ),
+                    ft.Segment(
+                        value="browse",
+                        label="Browse Modrinth",
+                        icon=ft.Icons.STORE,
+                    ),
                 ],
                 expand=True,
             )
@@ -1578,12 +1592,11 @@ def main(page: ft.Page):
                 await refresh_content_view()
 
             async def refresh_content_view(e=None):
-                categories = ["mod", "resourcepack", "shader"]
-                content_state["category"] = categories[
-                    min(category_tabs.selected_index, len(categories) - 1)
-                ]
+                content_state["category"] = (
+                    category_tabs.selected[0] if category_tabs.selected else "mod"
+                )
                 content_state["view"] = (
-                    "installed" if view_tabs.selected_index == 0 else "browse"
+                    view_tabs.selected[0] if view_tabs.selected else "installed"
                 )
                 if content_state["view"] == "installed":
                     await load_installed_view()
