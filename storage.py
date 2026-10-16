@@ -123,6 +123,9 @@ def load_settings() -> dict[str, object]:
         if isinstance(value, bool):
             settings[key] = value
 
+    if "active_skin" in saved and isinstance(saved["active_skin"], dict):
+        settings["active_skin"] = saved["active_skin"]
+
     if settings["launch_action"] not in (
         "Hide launcher",
         "Keep launcher open",

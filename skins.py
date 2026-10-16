@@ -24,7 +24,7 @@ from pathlib import Path
 from PIL import Image
 import requests
 
-from storage import get_data_dir
+from storage import get_data_dir, load_settings, save_settings
 
 ASSETS_DIR = Path(__file__).resolve().parent / ".assets"
 DEFAULT_STEVE_PATH = ASSETS_DIR / "skins" / "default_steve.png"
@@ -612,14 +612,31 @@ SKIN_CONFIG_FILE = get_skins_dir() / "active_skin.json"
 
 
 def load_active_skin_choice() -> dict[str, str]:
-    """Loads active skin configuration (skin_type: 'ely' | 'custom' | 'default', model, custom_path)."""
+    """Loads active skin configuration (skin_type: 'ely' | 'custom' | 'default', model, custom_path).
+    Automatically self-heals from settings.json if active_skin.json was deleted.
+    """
     default_config = {
         "skin_type": "ely",
         "model": "classic",
         "custom_path": "",
     }
     if not SKIN_CONFIG_FILE.is_file():
+        # Check settings.json for backup configuration if skins folder was deleted
+        try:
+            settings = load_settings()
+            if "active_skin" in settings and isinstance(settings["active_skin"], dict):
+                backup = settings["active_skin"]
+                cfg = {
+                    "skin_type": str(backup.get("skin_type", "ely")),
+                    "model": "slim" if backup.get("model") == "slim" else "classic",
+                    "custom_path": str(backup.get("custom_path", "")),
+                }
+                save_active_skin_choice(cfg["skin_type"], model=cfg["model"], custom_path=cfg["custom_path"])
+                return cfg
+        except Exception:
+            pass
         return default_config
+
     try:
         data = json.loads(SKIN_CONFIG_FILE.read_text(encoding="utf-8"))
         if isinstance(data, dict):
@@ -634,13 +651,22 @@ def load_active_skin_choice() -> dict[str, str]:
 
 
 def save_active_skin_choice(skin_type: str, model: str = "classic", custom_path: str = "") -> bool:
-    """Saves active skin choice to .minecraft/gr8launcher/skins/active_skin.json."""
+    """Saves active skin choice to .minecraft/gr8launcher/skins/active_skin.json and mirrors to settings.json."""
     temporary_file = SKIN_CONFIG_FILE.with_suffix(".tmp")
     data = {
         "skin_type": skin_type if skin_type in ("ely", "custom", "default") else "ely",
         "model": "slim" if model == "slim" else "classic",
         "custom_path": custom_path,
     }
+
+    # Mirror into settings.json as persistent safety backup
+    try:
+        settings = load_settings()
+        settings["active_skin"] = data
+        save_settings(settings)
+    except Exception:
+        pass
+
     try:
         SKIN_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
         temporary_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -654,9 +680,76 @@ def save_active_skin_choice(skin_type: str, model: str = "classic", custom_path:
         return False
 
 
+def prune_skin_cache(max_cached_skins: int = 150, max_age_days: int = 14) -> int:
+    """Automatically cleans up old and unused multiplayer skins from .minecraft/gr8launcher/skins.
+    Protects the active player's skin and configuration files.
+    Returns the number of pruned files.
+    """
+    skins_dir = get_skins_dir()
+    if not skins_dir.is_dir():
+        return 0
+
+    now = time.time()
+    max_age_seconds = max_age_days * 86400
+
+    # Get active player name to protect their skin files
+    protected_prefixes = {"active_skin", "ely_metadata", "default_classic", "default_slim"}
+    try:
+        from storage import PROFILE_OPTIONS_FILE
+        if PROFILE_OPTIONS_FILE.is_file():
+            pdata = json.loads(PROFILE_OPTIONS_FILE.read_text(encoding="utf-8"))
+            active_name = pdata.get("player_name", "").strip().lower()
+            if active_name:
+                protected_prefixes.add(f"ely_{active_name}")
+    except Exception:
+        pass
+
+    # Collect other player cache files
+    candidate_files: list[tuple[float, Path]] = []
+    for item in skins_dir.iterdir():
+        if not item.is_file():
+            continue
+        stem = item.stem.lower()
+        if any(stem == p or stem.startswith(p) for p in protected_prefixes):
+            continue
+
+        try:
+            mtime = item.stat().st_mtime
+            candidate_files.append((mtime, item))
+        except OSError:
+            pass
+
+    pruned = 0
+    # 1. Delete expired files (> max_age_days old)
+    remaining: list[tuple[float, Path]] = []
+    for mtime, fpath in candidate_files:
+        if now - mtime > max_age_seconds:
+            try:
+                fpath.unlink(missing_ok=True)
+                pruned += 1
+            except OSError:
+                pass
+        else:
+            remaining.append((mtime, fpath))
+
+    # 2. Enforce max_cached_skins cap (LRU: sort by oldest mtime first)
+    max_files = max_cached_skins * 2
+    if len(remaining) > max_files:
+        remaining.sort(key=lambda x: x[0])
+        excess = len(remaining) - max_files
+        for _, fpath in remaining[:excess]:
+            try:
+                fpath.unlink(missing_ok=True)
+                pruned += 1
+            except OSError:
+                pass
+
+    return pruned
+
+
 class LocalSkinServer:
-    """A lightweight local HTTP server running on 127.0.0.1 that serves cached player skins
-    to authlib-injector when playing offline, completely bypassing external network checks.
+    """A lightweight multi-threaded local HTTP server running on 127.0.0.1 that serves cached player skins
+    to authlib-injector and Minecraft client with zero external latency and non-blocking I/O.
     """
     def __init__(
         self,
@@ -671,15 +764,29 @@ class LocalSkinServer:
         self.skin_png_path = Path(skin_png_path)
         self.model = model
         self.skin_hash = skin_hash
+        self.cached_bytes: bytes | None = None
+        self._negative_cache: dict[str, float] = {}
+        self._cache_lock = threading.Lock()
+
+        # Pre-process active skin into memory once
+        try:
+            if self.skin_png_path.is_file():
+                raw_bytes = self.skin_png_path.read_bytes()
+                with Image.open(io.BytesIO(raw_bytes)) as im:
+                    im_rgba = ensure_64x64(im)
+                    buf = io.BytesIO()
+                    im_rgba.save(buf, format="PNG")
+                    self.cached_bytes = buf.getvalue()
+        except Exception:
+            self.cached_bytes = None
+
         if not self.skin_hash:
-            try:
-                if self.skin_png_path.is_file():
-                    self.skin_hash = hashlib.sha1(self.skin_png_path.read_bytes()).hexdigest()
-            except Exception:
-                pass
-            if not self.skin_hash:
+            if self.cached_bytes:
+                self.skin_hash = hashlib.sha1(self.cached_bytes).hexdigest()
+            else:
                 self.skin_hash = self.uuid_str.replace("-", "")
-        self.server: http.server.HTTPServer | None = None
+
+        self.server: http.server.ThreadingHTTPServer | None = None
         self.thread: threading.Thread | None = None
         self.port: int = 0
 
@@ -691,7 +798,6 @@ class LocalSkinServer:
                 pass  # Suppress console logging
 
             def do_GET(self):
-                print(f"[LocalSkinServer] Request: {self.path}", flush=True)
                 parsed = urllib.parse.urlparse(self.path)
                 p = parsed.path.rstrip("/")
                 if not p or p == "/api/authlib-injector":
@@ -761,27 +867,38 @@ class LocalSkinServer:
                     else:
                         req_name = p.split("/")[-1].replace(".png", "").strip()
 
+                    # 1. Active player skin (served straight from pre-cached memory)
                     if not req_name or req_name.lower() == outer.username.lower():
-                        if outer.skin_png_path.is_file():
-                            data = outer.skin_png_path.read_bytes()
+                        data = outer.cached_bytes
+                        if data is None and outer.skin_png_path.is_file():
                             try:
-                                with Image.open(io.BytesIO(data)) as im:
-                                    im_rgba = ensure_64x64(im)
-                                    buf = io.BytesIO()
-                                    im_rgba.save(buf, format="PNG")
-                                    data = buf.getvalue()
-                            except Exception:
+                                data = outer.skin_png_path.read_bytes()
+                            except OSError:
                                 pass
+                        if data:
                             self.send_response(200)
                             self.send_header("Content-Type", "image/png")
                             self.send_header("Content-Length", str(len(data)))
                             self.end_headers()
                             self.wfile.write(data)
                             return
-                    else:
-                        # Multiplayer: requested skin for another player on the server
-                        user_cache = get_skins_dir() / f"ely_{req_name.lower()}.png"
-                        if user_cache.is_file():
+
+                    # 2. Other player skins on multiplayer server
+                    req_clean = req_name.lower()
+
+                    # Check negative cache to prevent stalling server on non-existent usernames
+                    now = time.time()
+                    with outer._cache_lock:
+                        last_failed = outer._negative_cache.get(req_clean, 0)
+                        if now - last_failed < 60.0:
+                            self.send_response(404)
+                            self.end_headers()
+                            return
+
+                    # Check disk cache
+                    user_cache = get_skins_dir() / f"ely_{req_clean}.png"
+                    if user_cache.is_file():
+                        try:
                             data = user_cache.read_bytes()
                             self.send_response(200)
                             self.send_header("Content-Type", "image/png")
@@ -789,30 +906,42 @@ class LocalSkinServer:
                             self.end_headers()
                             self.wfile.write(data)
                             return
-                        # Try fetching from Ely.by
-                        try:
-                            skin_bytes, _ = fetch_ely_skin(req_name, timeout=2.0)
-                            if skin_bytes:
-                                self.send_response(200)
-                                self.send_header("Content-Type", "image/png")
-                                self.send_header("Content-Length", str(len(skin_bytes)))
-                                self.end_headers()
-                                self.wfile.write(skin_bytes)
-                                return
-                        except Exception:
+                        except OSError:
                             pass
-                        # Fallback: check Minotar (Mojang premium account skin for cracked servers)
-                        try:
-                            resp = requests.get(f"https://minotar.net/skin/{req_name}", timeout=2.0)
-                            if resp.status_code == 200 and len(resp.content) > 100:
-                                self.send_response(200)
-                                self.send_header("Content-Type", "image/png")
-                                self.send_header("Content-Length", str(len(resp.content)))
-                                self.end_headers()
-                                self.wfile.write(resp.content)
-                                return
-                        except Exception:
-                            pass
+
+                    # Try fetching from Ely.by
+                    try:
+                        skin_bytes, _ = fetch_ely_skin(req_name, timeout=1.8)
+                        if skin_bytes:
+                            self.send_response(200)
+                            self.send_header("Content-Type", "image/png")
+                            self.send_header("Content-Length", str(len(skin_bytes)))
+                            self.end_headers()
+                            self.wfile.write(skin_bytes)
+                            return
+                    except Exception:
+                        pass
+
+                    # Fallback: check Minotar (Mojang premium account skin for cracked servers)
+                    try:
+                        resp = requests.get(f"https://minotar.net/skin/{req_name}", timeout=1.5)
+                        if resp.status_code == 200 and len(resp.content) > 100:
+                            try:
+                                user_cache.write_bytes(resp.content)
+                            except OSError:
+                                pass
+                            self.send_response(200)
+                            self.send_header("Content-Type", "image/png")
+                            self.send_header("Content-Length", str(len(resp.content)))
+                            self.end_headers()
+                            self.wfile.write(resp.content)
+                            return
+                    except Exception:
+                        pass
+
+                    # Record negative cache so we don't spam requests repeatedly
+                    with outer._cache_lock:
+                        outer._negative_cache[req_clean] = now
 
                     self.send_response(404)
                     self.end_headers()
@@ -837,7 +966,7 @@ class LocalSkinServer:
                 self.send_response(404)
                 self.end_headers()
 
-        self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.port = self.server.server_port
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -879,7 +1008,7 @@ def prepare_skin_launch(
     if not jar_path or not jar_path.is_file():
         return active_uuid, jvm_args, None
 
-    can_reach_remote = is_online and is_skin_server_reachable(timeout=0.6)
+    can_reach_remote = is_online and is_skin_server_reachable(timeout=0.5)
 
     # Clean legacy non-hash cache file from Minecraft's assets/skins so client never gets poisoned
     try:
@@ -899,11 +1028,13 @@ def prepare_skin_launch(
     cached_skin = get_skins_dir() / f"ely_{clean_name.lower()}.png"
     cached_meta_user = get_skins_dir() / f"ely_{clean_name.lower()}.json"
     cached_ely_uuid = None
+    last_fetched_at = 0.0
 
     if cached_meta_user.is_file():
         try:
             m = json.loads(cached_meta_user.read_text(encoding="utf-8"))
             cached_ely_uuid = m.get("uuid")
+            last_fetched_at = float(m.get("fetched_at", 0))
             if skin_type == "ely":
                 active_model = m.get("model", active_model)
         except Exception:
@@ -920,23 +1051,27 @@ def prepare_skin_launch(
                 pass
     else:
         # Default to Ely.by skin synchronization
-        if can_reach_remote:
+        # If cache was deleted or older than 5 minutes, sync from Ely.by
+        is_fresh = (time.time() - last_fetched_at < 300) and cached_skin.is_file()
+        if can_reach_remote and (not cached_skin.is_file() or not is_fresh):
             try:
                 skin_bytes, fresh_model = fetch_ely_skin(clean_name, force_refresh=True, timeout=2.5)
                 if skin_bytes:
                     active_model = fresh_model
+                    # Reload cached UUID from updated meta file
+                    if cached_meta_user.is_file():
+                        try:
+                            m = json.loads(cached_meta_user.read_text(encoding="utf-8"))
+                            cached_ely_uuid = m.get("uuid", cached_ely_uuid)
+                        except Exception:
+                            pass
             except Exception as error:
                 print(f"Notice: pre-launch Ely.by skin sync: {error}")
 
-        if not cached_skin.is_file():
-            try:
-                cached_skin.write_bytes(get_default_skin_bytes(active_model))
-            except OSError:
-                pass
         active_skin_file = cached_skin
 
     if can_reach_remote:
-        ely_uuid = get_ely_uuid(clean_name, timeout=3.0) or cached_ely_uuid
+        ely_uuid = cached_ely_uuid or get_ely_uuid(clean_name, timeout=1.8)
         if ely_uuid:
             active_uuid = ely_uuid
             sync_playerdata_uuids(game_dir, offline_uuid, ely_uuid)
@@ -959,6 +1094,9 @@ def prepare_skin_launch(
         skin_hash=skin_hash,
     )
     port = local_server.start()
+
+    # Clean up stale multiplayer skins in background (LRU cache management)
+    threading.Thread(target=prune_skin_cache, daemon=True).start()
 
     if can_reach_remote:
         meta_json = get_cached_metadata()
