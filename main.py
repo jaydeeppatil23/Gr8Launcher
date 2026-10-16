@@ -1475,6 +1475,9 @@ def main(page: ft.Page):
                 "loader": "Vanilla",
             }
 
+            # ==================================================================
+            # UI controls
+            # ==================================================================
             install_dropdown = ft.Dropdown(
                 label="Installation",
                 hint_text="Select a profile",
@@ -1491,19 +1494,13 @@ def main(page: ft.Page):
                 selected=["mod"],
                 on_change=lambda e: page.run_task(refresh_content_view),
                 segments=[
-                    ft.Segment(
-                        value="mod", label="Mods", icon=ft.Icons.CONSTRUCTION
-                    ),
+                    ft.Segment(value="mod", label="Mods", icon=ft.Icons.CONSTRUCTION),
                     ft.Segment(
                         value="resourcepack",
                         label="Resource Packs",
                         icon=ft.Icons.PALETTE,
                     ),
-                    ft.Segment(
-                        value="shader",
-                        label="Shader Packs",
-                        icon=ft.Icons.BRIGHTNESS_7,
-                    ),
+                    ft.Segment(value="shader", label="Shader Packs", icon=ft.Icons.BRIGHTNESS_7),
                 ],
                 expand=True,
             )
@@ -1517,11 +1514,7 @@ def main(page: ft.Page):
                         label="Installed",
                         icon=ft.Icons.INVENTORY_2_OUTLINED,
                     ),
-                    ft.Segment(
-                        value="browse",
-                        label="Browse Modrinth",
-                        icon=ft.Icons.STORE,
-                    ),
+                    ft.Segment(value="browse", label="Browse Modrinth", icon=ft.Icons.STORE),
                 ],
                 expand=True,
             )
@@ -1538,22 +1531,225 @@ def main(page: ft.Page):
                 border_radius=8,
             )
 
-            search_btn = ft.IconButton(
-                icon=ft.Icons.SEARCH,
-                tooltip="Search",
+            search_btn = ft.Button(
+                content=ft.Row(
+                    controls=[ft.Icon(ft.Icons.SEARCH, size=16), ft.Text("Search", size=13)],
+                    spacing=6,
+                    tight=True,
+                ),
+                style=ft.ButtonStyle(
+                    bgcolor=theme["btn_primary"],
+                    color=theme["btn_primary_text"],
+                    shape=ft.RoundedRectangleBorder(radius=8),
+                    padding=ft.Padding.symmetric(horizontal=16, vertical=8),
+                ),
                 on_click=lambda e: page.run_task(do_search),
             )
 
-            installed_list = ft.Column(expand=True, scroll=ft.ScrollMode.AUTO, spacing=8)
-            browse_list = ft.Column(expand=True, scroll=ft.ScrollMode.AUTO, spacing=8)
+            installed_list = ft.Column(expand=True, scroll=ft.ScrollMode.AUTO, spacing=10)
+            browse_list = ft.Column(expand=True, scroll=ft.ScrollMode.AUTO, spacing=10)
 
             status_text = ft.Text("", size=12, color=theme["text_secondary"])
-            progress_bar = ft.ProgressBar(value=0, visible=False, bar_height=6)
+            progress_bar = ft.ProgressBar(value=0, visible=False, bar_height=5)
 
             content_area = ft.Container(expand=True)
+            view_header = ft.Text(
+                "Installed",
+                size=12,
+                weight=ft.FontWeight.BOLD,
+                color=theme["text_secondary"],
+            )
 
-            # ---- handlers ----
+            # ==================================================================
+            # Installed mod card
+            # ==================================================================
+            def build_installed_card(f, info):
+                filename = f.get("filename", "")
+                size = f.get("size", 0)
+                size_str = f"{size // 1024} KB" if size else ""
+                version = info.get("version_number", "")
+                enabled = bool(f.get("enabled", True))
+                category = f.get("category", "mod")
 
+                cat_icon = {
+                    "mod": ft.Icons.CONSTRUCTION,
+                    "resourcepack": ft.Icons.PALETTE,
+                    "shader": ft.Icons.BRIGHTNESS_7,
+                }.get(category, ft.Icons.FILE)
+
+                cat_color = {
+                    "mod": theme["btn_primary"],
+                    "resourcepack": ft.Colors.PURPLE_400,
+                    "shader": ft.Colors.ORANGE_400,
+                }.get(category, theme["btn_primary"])
+
+                return ft.Container(
+                    bgcolor=theme["card"],
+                    border=ft.Border.all(1, theme["border"]),
+                    border_radius=10,
+                    padding=ft.Padding.symmetric(horizontal=14, vertical=12),
+                    clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+                    content=ft.Row(
+                        spacing=12,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        controls=[
+                            ft.Container(
+                                bgcolor=ft.Colors.with_opacity(0.12, cat_color),
+                                border_radius=8,
+                                padding=8,
+                                content=ft.Icon(cat_icon, size=18, color=cat_color),
+                            ),
+                            ft.Column(
+                                spacing=4,
+                                expand=True,
+                                controls=[
+                                    ft.Row(
+                                        spacing=8,
+                                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                        controls=[
+                                            ft.Text(
+                                                filename,
+                                                size=14,
+                                                weight=ft.FontWeight.W_600,
+                                                color=theme["text_primary"],
+                                                no_wrap=True,
+                                                overflow=ft.TextOverflow.ELLIPSIS,
+                                            ),
+                                            ft.Container(
+                                                bgcolor=ft.Colors.with_opacity(0.10, theme["text_secondary"]),
+                                                border_radius=6,
+                                                padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+                                                content=ft.Text(
+                                                    (version or "Unknown"),
+                                                    size=10,
+                                                    weight=ft.FontWeight.W_500,
+                                                    color=theme["text_secondary"],
+                                                ),
+                                            ),
+                                        ],
+                                    ),
+                                    ft.Row(
+                                        spacing=6,
+                                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                        controls=[
+                                            ft.Text(
+                                                size_str,
+                                                size=11,
+                                                color=theme["text_muted"],
+                                            ),
+                                            ft.Text(
+                                                "•",
+                                                size=11,
+                                                color=theme["text_muted"],
+                                            ),
+                                            ft.Text(
+                                                category.title(),
+                                                size=11,
+                                                color=cat_color,
+                                                weight=ft.FontWeight.W_500,
+                                            ),
+                                        ],
+                                    ),
+                                ],
+                            ),
+                            ft.Row(
+                                spacing=8,
+                                controls=[
+                                    ft.Checkbox(
+                                        value=enabled,
+                                        tooltip="Enable / disable",
+                                        visible=(category == "mod"),
+                                        active_color=theme["btn_primary"],
+                                        on_change=(
+                                            lambda e, fn=filename: page.run_task(
+                                                toggle_enabled, fn, e.control.value
+                                            )
+                                            if category == "mod"
+                                            else None
+                                        ),
+                                    ),
+                                    ft.IconButton(
+                                        icon=ft.Icons.DELETE_OUTLINE,
+                                        tooltip="Remove",
+                                        icon_color=theme["text_secondary"],
+                                        on_click=lambda e, fn=filename: page.run_task(
+                                            remove_file, fn
+                                        ),
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                )
+
+            # ==================================================================
+            # Browse result card
+            # ==================================================================
+            def build_search_result_card(project, version_dropdown, install_btn):
+                desc = (project.description or "")[:140]
+                return ft.Container(
+                    bgcolor=theme["card"],
+                    border=ft.Border.all(1, theme["border"]),
+                    border_radius=10,
+                    padding=ft.Padding.symmetric(horizontal=14, vertical=12),
+                    clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+                    content=ft.Column(
+                        spacing=10,
+                        controls=[
+                            ft.Row(
+                                spacing=8,
+                                vertical_alignment=ft.CrossAxisAlignment.START,
+                                controls=[
+                                    ft.Text(
+                                        project.title,
+                                        size=15,
+                                        weight=ft.FontWeight.BOLD,
+                                        color=theme["text_primary"],
+                                        expand=True,
+                                        no_wrap=False,
+                                    ),
+                                    ft.Container(
+                                        bgcolor=ft.Colors.with_opacity(0.10, theme["text_secondary"]),
+                                        border_radius=6,
+                                        padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+                                        content=ft.Text(
+                                            f"{project.downloads:,} dl",
+                                            size=10,
+                                            weight=ft.FontWeight.W_500,
+                                            color=theme["text_secondary"],
+                                        ),
+                                    ),
+                                ],
+                            ),
+                            ft.Text(
+                                desc,
+                                size=12,
+                                color=theme["text_secondary"],
+                                no_wrap=False,
+                                max_lines=2,
+                                overflow=ft.TextOverflow.ELLIPSIS,
+                            ),
+                            ft.Row(
+                                spacing=10,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                controls=[
+                                    ft.Text(
+                                        f"Loader: {content_state['loader']}  •  MC: {content_state['mc_version'] or 'any'}",
+                                        size=11,
+                                        color=theme["text_muted"],
+                                        expand=True,
+                                    ),
+                                    version_dropdown,
+                                    install_btn,
+                                ],
+                            ),
+                        ],
+                    ),
+                )
+
+            # ==================================================================
+            # Handlers
+            # ==================================================================
             async def refresh_install_dropdown(e=None):
                 options = []
                 for inst in installations:
@@ -1640,77 +1836,69 @@ def main(page: ft.Page):
 
                 if not files:
                     installed_list.controls = [
-                        ft.Text(
-                            f"No {CATEGORY_LABELS[category].lower()} installed yet.",
-                            color=theme["text_secondary"],
+                        ft.Container(
+                            bgcolor=theme["surface"],
+                            border_radius=12,
+                            padding=40,
+                            alignment=ft.Alignment.CENTER,
+                            content=ft.Column(
+                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                                spacing=12,
+                                controls=[
+                                    ft.Icon(
+                                        ft.Icons.INBOX_OUTLINED,
+                                        size=48,
+                                        color=theme["text_muted"],
+                                    ),
+                                    ft.Text(
+                                        f"No {CATEGORY_LABELS[category].lower()} installed yet.",
+                                        size=14,
+                                        color=theme["text_secondary"],
+                                        weight=ft.FontWeight.W_500,
+                                    ),
+                                    ft.Text(
+                                        "Browse Modrinth to install content.",
+                                        size=12,
+                                        color=theme["text_muted"],
+                                    ),
+                                ],
+                            ),
                         )
                     ]
                     return
 
                 for f in files:
                     filename = f.get("filename", "")
-                    size = f.get("size", 0)
-                    size_str = f"{size // 1024} KB" if size else ""
                     info = tracked.get(filename, {}) or {}
-                    version = info.get("version_number", "")
-                    enabled = bool(f.get("enabled", True))
-
-                    row = ft.Row(
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        spacing=8,
-                        controls=[
-                            ft.Checkbox(
-                                value=enabled,
-                                tooltip="Enable / disable this mod",
-                                visible=(category == "mod"),
-                                on_change=(
-                                    lambda e, fn=filename: page.run_task(
-                                        toggle_enabled, fn, e.control.value
-                                    )
-                                    if category == "mod"
-                                    else None
-                                ),
-                            ),
-                            ft.Text(
-                                filename,
-                                size=13,
-                                weight=ft.FontWeight.W_500,
-                                color=theme["text_primary"],
-                                expand=True,
-                                no_wrap=False,
-                            ),
-                            ft.Text(
-                                f"{version}  •  {size_str}".strip(" •"),
-                                size=11,
-                                color=theme["text_secondary"],
-                                width=150,
-                            ),
-                            ft.IconButton(
-                                icon=ft.Icons.DELETE_OUTLINE,
-                                tooltip="Remove",
-                                icon_color=theme["text_secondary"],
-                                on_click=lambda e, fn=filename: page.run_task(
-                                    remove_file, fn
-                                ),
-                            ),
-                        ],
-                    )
                     installed_list.controls.append(
-                        ft.Container(
-                            padding=10,
-                            bgcolor=ft.Colors.with_opacity(0.06, theme["surface"]),
-                            border_radius=8,
-                            border=ft.Border.all(1, theme["border"]),
-                            content=row,
-                        )
+                        build_installed_card(f, info)
                     )
 
             async def load_browse_view():
                 """Placeholder for the Modrinth browse view."""
                 browse_list.controls = [
-                    ft.Text(
-                        "Enter a search above to browse Modrinth.",
-                        color=theme["text_secondary"],
+                    ft.Container(
+                        bgcolor=theme["surface"],
+                        border_radius=12,
+                        padding=40,
+                        alignment=ft.Alignment.CENTER,
+                        content=ft.Column(
+                            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                            spacing=12,
+                            controls=[
+                                ft.Icon(
+                                    ft.Icons.STORE,
+                                    size=48,
+                                    color=theme["text_muted"],
+                                ),
+                                ft.Text(
+                                    "Search Modrinth to find content.",
+                                    size=14,
+                                    color=theme["text_secondary"],
+                                    weight=ft.FontWeight.W_500,
+                                ),
+                            ],
+                        ),
                     )
                 ]
 
@@ -1721,16 +1909,23 @@ def main(page: ft.Page):
                 mc_version = content_state["mc_version"]
                 loader = content_state["loader"]
                 browse_list.controls = [
-                    ft.Row(
-                        controls=[
-                            ft.ProgressRing(width=16, height=16, stroke_width=2),
-                            ft.Text(
-                                "Searching Modrinth...",
-                                size=13,
-                                color=theme["text_secondary"],
-                            ),
-                        ],
-                        spacing=10,
+                    ft.Container(
+                        bgcolor=theme["surface"],
+                        border_radius=12,
+                        padding=40,
+                        alignment=ft.Alignment.CENTER,
+                        content=ft.Row(
+                            controls=[
+                                ft.ProgressRing(width=20, height=20, stroke_width=2.5),
+                                ft.Text(
+                                    "Searching Modrinth...",
+                                    size=13,
+                                    color=theme["text_secondary"],
+                                ),
+                            ],
+                            spacing=10,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
                     )
                 ]
                 page.update()
@@ -1759,113 +1954,87 @@ def main(page: ft.Page):
                 browse_list.controls = []
                 if not projects:
                     browse_list.controls = [
-                        ft.Text(
-                            "No matching projects found.",
-                            color=theme["text_secondary"],
+                        ft.Container(
+                            bgcolor=theme["surface"],
+                            border_radius=12,
+                            padding=40,
+                            alignment=ft.Alignment.CENTER,
+                            content=ft.Column(
+                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                                spacing=12,
+                                controls=[
+                                    ft.Icon(
+                                        ft.Icons.SEARCH_OFF,
+                                        size=48,
+                                        color=theme["text_muted"],
+                                    ),
+                                    ft.Text(
+                                        "No matching projects found.",
+                                        size=14,
+                                        color=theme["text_secondary"],
+                                        weight=ft.FontWeight.W_500,
+                                    ),
+                                ],
+                            ),
                         )
                     ]
                     page.update()
                     return
 
                 for project in projects:
-                    browse_list.controls.append(
-                        await build_search_result_row(project)
+                    version_dropdown = ft.Dropdown(
+                        label="Version",
+                        width=150,
+                        border_color=theme["border"],
+                        focused_border_color=theme["btn_primary"],
+                        color=theme["text_primary"],
+                        label_style=ft.TextStyle(color=theme["text_secondary"], size=12),
+                        fill_color=theme["card"],
+                        border_radius=8,
                     )
+                    install_btn = ft.Button(
+                        content=ft.Text("Install", size=12),
+                        visible=False,
+                        style=ft.ButtonStyle(
+                            bgcolor=theme["btn_primary"],
+                            color=theme["btn_primary_text"],
+                            shape=ft.RoundedRectangleBorder(radius=8),
+                            padding=ft.Padding.symmetric(horizontal=14, vertical=8),
+                        ),
+                        on_click=lambda e, p=project, vd=version_dropdown: page.run_task(
+                            confirm_install, p, vd
+                        ),
+                    )
+                    browse_list.controls.append(
+                        build_search_result_card(project, version_dropdown, install_btn)
+                    )
+
+                    async def load_versions(p=project, vd=version_dropdown, ib=install_btn):
+                        try:
+                            client = ModrinthClient()
+                            versions = await client.get_project_versions(
+                                p.project_id,
+                                game_version=content_state["mc_version"] or None,
+                                loader=(
+                                    content_state["loader"]
+                                    if content_state["loader"] != "Vanilla"
+                                    else None
+                                ),
+                                limit=15,
+                            )
+                        except Exception:
+                            versions = []
+                        vd.options = [
+                            ft.DropdownOption(key=v.version_id, text=v.version_number or v.name)
+                            for v in versions
+                        ]
+                        if versions:
+                            vd.value = versions[0].version_id
+                            ib.visible = True
+                        page.update()
+
+                    page.run_task(load_versions)
                 page.update()
-
-            async def build_search_result_row(project: ContentProject):
-                """Build a single search-result row with an install button."""
-                version_dropdown = ft.Dropdown(
-                    label="Version",
-                    width=170,
-                    border_color=theme["border"],
-                    focused_border_color=theme["btn_primary"],
-                    color=theme["text_primary"],
-                    label_style=ft.TextStyle(color=theme["text_secondary"], size=12),
-                    fill_color=theme["card"],
-                    border_radius=8,
-                )
-                install_btn = ft.Button(
-                    content=ft.Text("Install", size=12),
-                    visible=False,
-                    on_click=lambda e, p=project, vd=version_dropdown: page.run_task(
-                        confirm_install, p, vd
-                    ),
-                )
-
-                async def load_versions():
-                    try:
-                        client = ModrinthClient()
-                        versions = await client.get_project_versions(
-                            project.project_id,
-                            game_version=content_state["mc_version"] or None,
-                            loader=(
-                                content_state["loader"]
-                                if content_state["loader"] != "Vanilla"
-                                else None
-                            ),
-                            limit=15,
-                        )
-                    except Exception:
-                        versions = []
-                    version_dropdown.options = [
-                        ft.DropdownOption(key=v.version_id, text=v.version_number or v.name)
-                        for v in versions
-                    ]
-                    if versions:
-                        version_dropdown.value = versions[0].version_id
-                        install_btn.visible = True
-                    page.update()
-
-                page.run_task(load_versions)
-
-                desc = (project.description or "")[:120]
-                return ft.Container(
-                    padding=12,
-                    bgcolor=ft.Colors.with_opacity(0.06, theme["surface"]),
-                    border_radius=10,
-                    border=ft.Border.all(1, theme["border"]),
-                    content=ft.Column(
-                        spacing=8,
-                        controls=[
-                            ft.Row(
-                                spacing=10,
-                                vertical_alignment=ft.CrossAxisAlignment.START,
-                                controls=[
-                                    ft.Text(
-                                        project.title,
-                                        size=14,
-                                        weight=ft.FontWeight.BOLD,
-                                        color=theme["text_primary"],
-                                        expand=True,
-                                    ),
-                                    ft.Text(
-                                        f"{project.downloads:,} dl",
-                                        size=11,
-                                        color=theme["text_secondary"],
-                                    ),
-                                ],
-                            ),
-                            ft.Text(
-                                desc, size=12, color=theme["text_secondary"], no_wrap=False
-                            ),
-                            ft.Row(
-                                spacing=10,
-                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                controls=[
-                                    ft.Text(
-                                        f"Loader: {content_state['loader']}  •  MC: {content_state['mc_version'] or 'any'}",
-                                        size=11,
-                                        color=theme["text_secondary"],
-                                        expand=True,
-                                    ),
-                                    version_dropdown,
-                                    install_btn,
-                                ],
-                            ),
-                        ],
-                    ),
-                )
 
             async def toggle_enabled(filename, enabled):
                 """Enable/disable a mod (renames .jar <-> .jar.disabled)."""
@@ -1995,57 +2164,87 @@ def main(page: ft.Page):
                 )
                 page.update()
 
-            # ---- layout assembly ----
+            # ==================================================================
+            # Layout assembly
+            # ==================================================================
             install_dropdown.on_change = lambda e: page.run_task(
                 select_installation, e.control.value
             )
 
-            view_header = ft.Text(
-                "Installed",
-                size=12,
-                weight=ft.FontWeight.BOLD,
-                color=theme["text_secondary"],
-            )
-
             page_column = ft.Column(
                 expand=True,
-                spacing=16,
+                spacing=18,
                 controls=[
-                    ft.Text(
-                        "Content Manager",
-                        size=22,
-                        weight=ft.FontWeight.BOLD,
-                        color=theme["text_primary"],
+                    ft.Container(
+                        padding=ft.Padding.only(bottom=8),
+                        content=ft.Column(
+                            spacing=8,
+                            controls=[
+                                ft.Row(
+                                    spacing=10,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                    controls=[
+                                        ft.Icon(
+                                            ft.Icons.CONSTRUCTION,
+                                            color=theme["btn_primary"],
+                                            size=20,
+                                        ),
+                                        ft.Text(
+                                            "Content Manager",
+                                            size=22,
+                                            weight=ft.FontWeight.BOLD,
+                                            color=theme["text_primary"],
+                                        ),
+                                    ],
+                                ),
+                                ft.Text(
+                                    "Install mods, resource packs and shader packs "
+                                    "from Modrinth into the selected installation's game directory.",
+                                    size=13,
+                                    color=theme["text_secondary"],
+                                    no_wrap=False,
+                                ),
+                                ft.Divider(height=1, color=theme["border"]),
+                            ],
+                        ),
                     ),
-                    ft.Text(
-                        "Install mods, resource packs and shader packs from Modrinth "
-                        "into the selected installation's game directory.",
-                        size=13,
-                        color=theme["text_secondary"],
-                    ),
-                    ft.Divider(height=1, color=theme["border"]),
                     ft.Row(
                         spacing=12,
                         controls=[install_dropdown, category_tabs],
                         expand=True,
                     ),
-                    view_tabs,
                     ft.Row(
                         spacing=8,
-                        controls=[search_field, search_btn],
+                        controls=[view_tabs, search_field, search_btn],
+                        expand=True,
                     ),
                     ft.Container(
                         expand=True,
                         bgcolor=theme["surface"],
-                        border_radius=10,
+                        border_radius=12,
                         border=ft.Border.all(1, theme["border"]),
                         padding=10,
+                        clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
                         content=ft.Column(
                             expand=True,
-                            spacing=8,
+                            spacing=10,
                             controls=[
-                                view_header,
-                                content_area,
+                                ft.Row(
+                                    spacing=8,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                    controls=[
+                                        ft.Text(
+                                            view_header.value or "Installed",
+                                            size=12,
+                                            weight=ft.FontWeight.BOLD,
+                                            color=theme["text_secondary"],
+                                        ),
+                                    ],
+                                ),
+                                ft.Container(
+                                    expand=True,
+                                    content=content_area,
+                                ),
                             ],
                         ),
                     ),
