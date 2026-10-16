@@ -4,4 +4,7 @@ __pycache__/
 logs/
 temp.py
 temp/
+.agents/
+skills-lock.json
 *.log
+tools/**/build/

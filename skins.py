@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 import socket
+import sys
 import threading
 import time
 import urllib.parse
@@ -149,6 +150,39 @@ def ensure_authlib_injector(progress_callback=None) -> Path | None:
         except OSError:
             pass
     return jar_path if jar_path.is_file() else None
+
+
+def get_skin_bridge_jar_path() -> Path:
+    """Returns the target path for gr8-skin-bridge.jar."""
+    return get_tools_dir() / "gr8-skin-bridge.jar"
+
+
+def ensure_skin_bridge() -> Path | None:
+    """Ensures gr8-skin-bridge.jar exists locally and is valid."""
+    target_jar = get_skin_bridge_jar_path()
+    if target_jar.is_file() and target_jar.stat().st_size > 10_000:
+        return target_jar
+
+    local_proj_jar = Path(__file__).resolve().parent / "tools" / "gr8-skin-bridge" / "gr8-skin-bridge.jar"
+    if local_proj_jar.is_file():
+        try:
+            target_jar.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(local_proj_jar, target_jar)
+            return target_jar
+        except OSError:
+            pass
+
+    try:
+        build_script = Path(__file__).resolve().parent / "tools" / "gr8-skin-bridge" / "build_bridge.py"
+        if build_script.is_file():
+            import subprocess
+            subprocess.run([sys.executable, str(build_script)], capture_output=True, timeout=15)
+            if target_jar.is_file():
+                return target_jar
+    except Exception as error:
+        print(f"Notice: could not auto-build gr8-skin-bridge: {error}")
+
+    return target_jar if target_jar.is_file() else None
 
 
 def validate_skin_file(file_path: Path | str) -> tuple[bool, str, tuple[int, int] | None]:
@@ -624,11 +658,27 @@ class LocalSkinServer:
     """A lightweight local HTTP server running on 127.0.0.1 that serves cached player skins
     to authlib-injector when playing offline, completely bypassing external network checks.
     """
-    def __init__(self, username: str, uuid_str: str, skin_png_path: Path, model: str = "classic"):
+    def __init__(
+        self,
+        username: str,
+        uuid_str: str,
+        skin_png_path: Path,
+        model: str = "classic",
+        skin_hash: str = "",
+    ):
         self.username = username
         self.uuid_str = uuid_str
         self.skin_png_path = Path(skin_png_path)
         self.model = model
+        self.skin_hash = skin_hash
+        if not self.skin_hash:
+            try:
+                if self.skin_png_path.is_file():
+                    self.skin_hash = hashlib.sha1(self.skin_png_path.read_bytes()).hexdigest()
+            except Exception:
+                pass
+            if not self.skin_hash:
+                self.skin_hash = self.uuid_str.replace("-", "")
         self.server: http.server.HTTPServer | None = None
         self.thread: threading.Thread | None = None
         self.port: int = 0
@@ -641,6 +691,7 @@ class LocalSkinServer:
                 pass  # Suppress console logging
 
             def do_GET(self):
+                print(f"[LocalSkinServer] Request: {self.path}", flush=True)
                 parsed = urllib.parse.urlparse(self.path)
                 p = parsed.path.rstrip("/")
                 if not p or p == "/api/authlib-injector":
@@ -670,7 +721,7 @@ class LocalSkinServer:
                         "profileName": outer.username,
                         "textures": {
                             "SKIN": {
-                                "url": f"http://127.0.0.1:{outer.port}/textures/{outer.username}.png",
+                                "url": f"http://127.0.0.1:{outer.port}/textures/{outer.username}/{outer.skin_hash}.png",
                                 "metadata": {"model": outer.model},
                             }
                         },
@@ -700,13 +751,71 @@ class LocalSkinServer:
                     self.wfile.write(body)
                     return
 
-                if (p.startswith("/textures") or p.endswith(".png")) and outer.skin_png_path.is_file():
-                    data = outer.skin_png_path.read_bytes()
-                    self.send_response(200)
-                    self.send_header("Content-Type", "image/png")
-                    self.send_header("Content-Length", str(len(data)))
+                if p.startswith("/textures") or p.endswith(".png"):
+                    parts = [seg for seg in p.split("/") if seg]
+                    req_name = ""
+                    if len(parts) >= 3 and parts[0] == "textures":
+                        req_name = parts[1].strip()
+                    elif len(parts) >= 2 and parts[0] == "textures":
+                        req_name = parts[1].replace(".png", "").strip()
+                    else:
+                        req_name = p.split("/")[-1].replace(".png", "").strip()
+
+                    if not req_name or req_name.lower() == outer.username.lower():
+                        if outer.skin_png_path.is_file():
+                            data = outer.skin_png_path.read_bytes()
+                            try:
+                                with Image.open(io.BytesIO(data)) as im:
+                                    im_rgba = ensure_64x64(im)
+                                    buf = io.BytesIO()
+                                    im_rgba.save(buf, format="PNG")
+                                    data = buf.getvalue()
+                            except Exception:
+                                pass
+                            self.send_response(200)
+                            self.send_header("Content-Type", "image/png")
+                            self.send_header("Content-Length", str(len(data)))
+                            self.end_headers()
+                            self.wfile.write(data)
+                            return
+                    else:
+                        # Multiplayer: requested skin for another player on the server
+                        user_cache = get_skins_dir() / f"ely_{req_name.lower()}.png"
+                        if user_cache.is_file():
+                            data = user_cache.read_bytes()
+                            self.send_response(200)
+                            self.send_header("Content-Type", "image/png")
+                            self.send_header("Content-Length", str(len(data)))
+                            self.end_headers()
+                            self.wfile.write(data)
+                            return
+                        # Try fetching from Ely.by
+                        try:
+                            skin_bytes, _ = fetch_ely_skin(req_name, timeout=2.0)
+                            if skin_bytes:
+                                self.send_response(200)
+                                self.send_header("Content-Type", "image/png")
+                                self.send_header("Content-Length", str(len(skin_bytes)))
+                                self.end_headers()
+                                self.wfile.write(skin_bytes)
+                                return
+                        except Exception:
+                            pass
+                        # Fallback: check Minotar (Mojang premium account skin for cracked servers)
+                        try:
+                            resp = requests.get(f"https://minotar.net/skin/{req_name}", timeout=2.0)
+                            if resp.status_code == 200 and len(resp.content) > 100:
+                                self.send_response(200)
+                                self.send_header("Content-Type", "image/png")
+                                self.send_header("Content-Length", str(len(resp.content)))
+                                self.end_headers()
+                                self.wfile.write(resp.content)
+                                return
+                        except Exception:
+                            pass
+
+                    self.send_response(404)
                     self.end_headers()
-                    self.wfile.write(data)
                     return
 
                 self.send_response(404)
@@ -753,14 +862,11 @@ def prepare_skin_launch(
     """Prepares the skin environment for Minecraft launch.
     Returns: (active_uuid, jvm_arguments, local_skin_server_instance)
 
-    - If online and Ely.by is reachable:
-        Configures the official Ely.by auth server with cached prefetched metadata
-        (completely preventing UnknownHostException startup crashes).
-    - If offline with a cached skin:
-        Starts LocalSkinServer on 127.0.0.1 to serve the player's cached skin locally
-        so their custom skin renders in-game with zero internet connection required.
-    - If offline without any cached skin:
-        Gracefully falls back to standard offline mode without javaagent, avoiding errors.
+    - Starts LocalSkinServer on 127.0.0.1 to serve custom and multiplayer skins locally
+      with zero internet latency and instant texture decoding.
+    - Connects authlib-injector to Ely.by if online, or to LocalSkinServer if offline.
+    - Attaches gr8-skin-bridge.jar companion agent to dynamically populate GameProfile
+      properties and bypass domain restrictions on cracked/offline multiplayer servers.
     """
     clean_name = username.strip()
     offline_digest = hashlib.md5(f"OfflinePlayer:{clean_name}".encode("utf-8")).digest()
@@ -775,17 +881,59 @@ def prepare_skin_launch(
 
     can_reach_remote = is_online and is_skin_server_reachable(timeout=0.6)
 
+    # Clean legacy non-hash cache file from Minecraft's assets/skins so client never gets poisoned
+    try:
+        if len(clean_name) >= 2:
+            legacy_cache = Path(minecraft_dir) / "assets" / "skins" / clean_name[:2] / clean_name
+            if legacy_cache.is_file():
+                legacy_cache.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    # Resolve active skin choice from active_skin.json
+    active_choice = load_active_skin_choice()
+    skin_type = active_choice.get("skin_type", "ely")
+    active_model = active_choice.get("model", "classic")
+    custom_path = active_choice.get("custom_path", "")
+
     cached_skin = get_skins_dir() / f"ely_{clean_name.lower()}.png"
     cached_meta_user = get_skins_dir() / f"ely_{clean_name.lower()}.json"
     cached_ely_uuid = None
-    cached_model = "classic"
+
     if cached_meta_user.is_file():
         try:
             m = json.loads(cached_meta_user.read_text(encoding="utf-8"))
             cached_ely_uuid = m.get("uuid")
-            cached_model = m.get("model", "classic")
+            if skin_type == "ely":
+                active_model = m.get("model", active_model)
         except Exception:
             pass
+
+    if skin_type == "custom" and custom_path and Path(custom_path).is_file():
+        active_skin_file = Path(custom_path)
+    elif skin_type == "default":
+        active_skin_file = get_skins_dir() / f"default_{active_model}.png"
+        if not active_skin_file.is_file():
+            try:
+                active_skin_file.write_bytes(get_default_skin_bytes(active_model))
+            except OSError:
+                pass
+    else:
+        # Default to Ely.by skin synchronization
+        if can_reach_remote:
+            try:
+                skin_bytes, fresh_model = fetch_ely_skin(clean_name, force_refresh=True, timeout=2.5)
+                if skin_bytes:
+                    active_model = fresh_model
+            except Exception as error:
+                print(f"Notice: pre-launch Ely.by skin sync: {error}")
+
+        if not cached_skin.is_file():
+            try:
+                cached_skin.write_bytes(get_default_skin_bytes(active_model))
+            except OSError:
+                pass
+        active_skin_file = cached_skin
 
     if can_reach_remote:
         ely_uuid = get_ely_uuid(clean_name, timeout=3.0) or cached_ely_uuid
@@ -795,6 +943,24 @@ def prepare_skin_launch(
             if str(game_dir) != str(minecraft_dir):
                 sync_playerdata_uuids(minecraft_dir, offline_uuid, ely_uuid)
 
+    # Compute content SHA1 hash of the active skin file
+    try:
+        active_bytes = active_skin_file.read_bytes() if active_skin_file.is_file() else get_default_skin_bytes(active_model)
+    except OSError:
+        active_bytes = get_default_skin_bytes(active_model)
+    skin_hash = hashlib.sha1(active_bytes).hexdigest()
+
+    # Start LocalSkinServer to serve local and multiplayer skins
+    local_server = LocalSkinServer(
+        username=clean_name,
+        uuid_str=active_uuid,
+        skin_png_path=active_skin_file,
+        model=active_model,
+        skin_hash=skin_hash,
+    )
+    port = local_server.start()
+
+    if can_reach_remote:
         meta_json = get_cached_metadata()
         meta_b64 = base64.b64encode(meta_json.encode("utf-8")).decode("ascii")
         jvm_args.append(f"-javaagent:{jar_path}={ELY_BY_AUTH_SERVER}")
@@ -802,23 +968,7 @@ def prepare_skin_launch(
         jvm_args.append(f"-Dorg.to2mbn.authlibinjector.config.prefetched={meta_b64}")
         jvm_args.append("-Dauthlibinjector.noShowServerName=true")
         jvm_args.append("-Dauthlibinjector.side=client")
-
-    elif cached_skin.is_file():
-        skin_uuid = cached_ely_uuid or active_uuid
-        active_uuid = skin_uuid
-        if active_uuid != offline_uuid:
-            sync_playerdata_uuids(game_dir, offline_uuid, active_uuid)
-            if str(game_dir) != str(minecraft_dir):
-                sync_playerdata_uuids(minecraft_dir, offline_uuid, active_uuid)
-
-        local_server = LocalSkinServer(
-            username=clean_name,
-            uuid_str=active_uuid,
-            skin_png_path=cached_skin,
-            model=cached_model,
-        )
-        port = local_server.start()
-
+    else:
         local_meta = json.dumps({
             "meta": {
                 "serverName": "Gr8LauncherOffline",
@@ -829,15 +979,20 @@ def prepare_skin_launch(
             "skinDomains": ["127.0.0.1", "localhost", "ely.by", ".ely.by"],
         })
         meta_b64 = base64.b64encode(local_meta.encode("utf-8")).decode("ascii")
-
         jvm_args.append(f"-javaagent:{jar_path}=http://127.0.0.1:{port}")
         jvm_args.append(f"-Dauthlibinjector.yggdrasil.prefetched={meta_b64}")
         jvm_args.append(f"-Dorg.to2mbn.authlibinjector.config.prefetched={meta_b64}")
         jvm_args.append("-Dauthlibinjector.noShowServerName=true")
         jvm_args.append("-Dauthlibinjector.side=client")
-    else:
-        active_uuid = offline_uuid
 
-    return active_uuid, jvm_args, local_server
+    # Attach gr8-skin-bridge companion agent with skin hash
+    bridge_jar = ensure_skin_bridge()
+    if bridge_jar and bridge_jar.is_file():
+        jvm_args.append(f"-javaagent:{bridge_jar}=port={port},user={clean_name},model={active_model},hash={skin_hash}")
+        jvm_args.append(f"-Dgr8skin.port={port}")
+        jvm_args.append(f"-Dgr8skin.user={clean_name}")
+        jvm_args.append(f"-Dgr8skin.model={active_model}")
+        jvm_args.append(f"-Dgr8skin.hash={skin_hash}")
+        jvm_args.append("-Dfabric.debug.disableClassPathIsolation=true")
 
     return active_uuid, jvm_args, local_server
