@@ -1463,6 +1463,593 @@ def main(page: ft.Page):
                 ],
             )
 
+        def build_content_page():
+            """Build the Modrinth content manager page (mods / resource packs / shader packs)."""
+
+            content_state = {
+                "install_id": None,
+                "category": "mod",
+                "view": "installed",
+                "game_dir": minecraft_directory,
+                "mc_version": "",
+                "loader": "Vanilla",
+            }
+
+            install_dropdown = ft.Dropdown(
+                label="Installation",
+                hint_text="Select a profile",
+                expand=True,
+                border_color=theme["border"],
+                focused_border_color=theme["btn_primary"],
+                color=theme["text_primary"],
+                label_style=ft.TextStyle(color=theme["text_secondary"], size=13),
+                fill_color=theme["card"],
+                border_radius=8,
+            )
+
+            category_tabs = ft.Tabs(
+                selected_index=0,
+                animation_duration=300,
+                on_change=lambda e: page.run_task(refresh_content_view),
+                length=3,
+                content=[
+                    ft.Tab(label="Mods", icon=ft.Icons.CONSTRUCTION),
+                    ft.Tab(label="Resource Packs", icon=ft.Icons.PALETTE),
+                    ft.Tab(label="Shader Packs", icon=ft.Icons.BRIGHTNESS_7),
+                ],
+                expand=True,
+            )
+
+            view_tabs = ft.Tabs(
+                selected_index=0,
+                animation_duration=300,
+                on_change=lambda e: page.run_task(refresh_content_view),
+                length=2,
+                content=[
+                    ft.Tab(label="Installed", icon=ft.Icons.INVENTORY_2_OUTLINED),
+                    ft.Tab(label="Browse Modrinth", icon=ft.Icons.STORE),
+                ],
+                expand=True,
+            )
+
+            search_field = ft.TextField(
+                label="Search Modrinth",
+                hint_text="e.g. Sodium, Iris, Complementary",
+                expand=True,
+                border_color=theme["border"],
+                focused_border_color=theme["btn_primary"],
+                color=theme["text_primary"],
+                label_style=ft.TextStyle(color=theme["text_secondary"], size=13),
+                fill_color=theme["card"],
+                border_radius=8,
+            )
+
+            search_btn = ft.IconButton(
+                icon=ft.Icons.SEARCH,
+                tooltip="Search",
+                on_click=lambda e: page.run_task(do_search),
+            )
+
+            installed_list = ft.Column(expand=True, scroll=ft.ScrollMode.AUTO, spacing=8)
+            browse_list = ft.Column(expand=True, scroll=ft.ScrollMode.AUTO, spacing=8)
+
+            status_text = ft.Text("", size=12, color=theme["text_secondary"])
+            progress_bar = ft.ProgressBar(value=0, visible=False, bar_height=6)
+
+            content_area = ft.Container(expand=True)
+
+            # ---- handlers ----
+
+            async def refresh_install_dropdown(e=None):
+                options = []
+                for inst in installations:
+                    name = inst.get("name") or inst.get("version_id") or "Installation"
+                    loader = inst.get("loader", "Vanilla")
+                    mc = inst.get("minecraft_version", "")
+                    options.append(
+                        ft.DropdownOption(
+                            key=inst["id"],
+                            text=f"{name} ({loader} {mc})".strip(),
+                        )
+                    )
+                install_dropdown.options = options
+                current_id = content_state["install_id"]
+                valid_keys = {o.key for o in options}
+                if not current_id or current_id not in valid_keys:
+                    current_id = options[0].key if options else None
+                    content_state["install_id"] = current_id
+                install_dropdown.value = current_id
+                await select_installation(current_id)
+                page.update()
+
+            async def select_installation(install_id):
+                content_state["install_id"] = install_id
+                inst = next((i for i in installations if i.get("id") == install_id), None)
+                if inst:
+                    content_state["game_dir"] = (
+                        inst.get("game_directory") or minecraft_directory
+                    )
+                    content_state["mc_version"] = inst.get("minecraft_version", "") or ""
+                    content_state["loader"] = inst.get("loader", "Vanilla") or "Vanilla"
+                else:
+                    content_state["game_dir"] = minecraft_directory
+                    content_state["mc_version"] = ""
+                    content_state["loader"] = "Vanilla"
+                await refresh_content_view()
+
+            async def refresh_content_view(e=None):
+                categories = ["mod", "resourcepack", "shader"]
+                content_state["category"] = categories[
+                    min(category_tabs.selected_index, len(categories) - 1)
+                ]
+                content_state["view"] = (
+                    "installed" if view_tabs.selected_index == 0 else "browse"
+                )
+                if content_state["view"] == "installed":
+                    await load_installed_view()
+                    content_area.content = installed_list
+                else:
+                    await load_browse_view()
+                    content_area.content = browse_list
+                view_header.value = content_state["view"].title()
+                page.update()
+
+            async def load_installed_view():
+                """Show the content files present on disk for the selected installation."""
+                installed_list.controls = []
+                game_dir = content_state["game_dir"]
+                category = content_state["category"]
+                if not game_dir:
+                    installed_list.controls = [
+                        ft.Text("No installation selected.", color=theme["text_secondary"])
+                    ]
+                    return
+
+                try:
+                    files = await asyncio.to_thread(list_installed_content, game_dir)
+                except Exception as exc:
+                    installed_list.controls = [
+                        ft.Text(
+                            f"Failed to read content folder: {exc}",
+                            color=ft.Colors.RED_400,
+                        )
+                    ]
+                    return
+
+                tracked = {
+                    e.get("filename"): e
+                    for e in (
+                        load_installed_content().get(content_state["install_id"], []) or []
+                    )
+                    if isinstance(e, dict)
+                }
+                files = [f for f in files if f.get("category") == category]
+
+                if not files:
+                    installed_list.controls = [
+                        ft.Text(
+                            f"No {CATEGORY_LABELS[category].lower()} installed yet.",
+                            color=theme["text_secondary"],
+                        )
+                    ]
+                    return
+
+                for f in files:
+                    filename = f.get("filename", "")
+                    size = f.get("size", 0)
+                    size_str = f"{size // 1024} KB" if size else ""
+                    info = tracked.get(filename, {}) or {}
+                    version = info.get("version_number", "")
+                    enabled = bool(f.get("enabled", True))
+
+                    row = ft.Row(
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        spacing=8,
+                        controls=[
+                            ft.Checkbox(
+                                value=enabled,
+                                tooltip="Enable / disable this mod",
+                                visible=(category == "mod"),
+                                on_change=(
+                                    lambda e, fn=filename: page.run_task(
+                                        toggle_enabled, fn, e.control.value
+                                    )
+                                    if category == "mod"
+                                    else None
+                                ),
+                            ),
+                            ft.Text(
+                                filename,
+                                size=13,
+                                weight=ft.FontWeight.W_500,
+                                color=theme["text_primary"],
+                                expand=True,
+                                no_wrap=False,
+                            ),
+                            ft.Text(
+                                f"{version}  •  {size_str}".strip(" •"),
+                                size=11,
+                                color=theme["text_secondary"],
+                                width=150,
+                            ),
+                            ft.IconButton(
+                                icon=ft.Icons.DELETE_OUTLINE,
+                                tooltip="Remove",
+                                icon_color=theme["text_secondary"],
+                                on_click=lambda e, fn=filename: page.run_task(
+                                    remove_file, fn
+                                ),
+                            ),
+                        ],
+                    )
+                    installed_list.controls.append(
+                        ft.Container(
+                            padding=10,
+                            bgcolor=ft.Colors.with_opacity(0.06, theme["surface"]),
+                            border_radius=8,
+                            border=ft.Border.all(1, theme["border"]),
+                            content=row,
+                        )
+                    )
+
+            async def load_browse_view():
+                """Placeholder for the Modrinth browse view."""
+                browse_list.controls = [
+                    ft.Text(
+                        "Enter a search above to browse Modrinth.",
+                        color=theme["text_secondary"],
+                    )
+                ]
+
+            async def do_search(e=None):
+                """Search Modrinth for projects of the current category."""
+                query = (search_field.value or "").strip()
+                category = content_state["category"]
+                mc_version = content_state["mc_version"]
+                loader = content_state["loader"]
+                browse_list.controls = [
+                    ft.Row(
+                        controls=[
+                            ft.ProgressRing(width=16, height=16, stroke_width=2),
+                            ft.Text(
+                                "Searching Modrinth...",
+                                size=13,
+                                color=theme["text_secondary"],
+                            ),
+                        ],
+                        spacing=10,
+                    )
+                ]
+                page.update()
+                try:
+                    client = ModrinthClient()
+                    projects = await client.search_projects(
+                        category,
+                        query,
+                        game_version=mc_version or None,
+                        loader=loader if loader != "Vanilla" else None,
+                        limit=20,
+                    )
+                except ModrinthError as exc:
+                    browse_list.controls = [
+                        ft.Text(str(exc), color=ft.Colors.RED_400, size=13)
+                    ]
+                    page.update()
+                    return
+                except Exception as exc:
+                    browse_list.controls = [
+                        ft.Text(f"Search failed: {exc}", color=ft.Colors.RED_400, size=13)
+                    ]
+                    page.update()
+                    return
+
+                browse_list.controls = []
+                if not projects:
+                    browse_list.controls = [
+                        ft.Text(
+                            "No matching projects found.",
+                            color=theme["text_secondary"],
+                        )
+                    ]
+                    page.update()
+                    return
+
+                for project in projects:
+                    browse_list.controls.append(
+                        await build_search_result_row(project)
+                    )
+                page.update()
+
+            async def build_search_result_row(project: ContentProject):
+                """Build a single search-result row with an install button."""
+                version_dropdown = ft.Dropdown(
+                    label="Version",
+                    width=170,
+                    border_color=theme["border"],
+                    focused_border_color=theme["btn_primary"],
+                    color=theme["text_primary"],
+                    label_style=ft.TextStyle(color=theme["text_secondary"], size=12),
+                    fill_color=theme["card"],
+                    border_radius=8,
+                )
+                install_btn = ft.Button(
+                    content=ft.Text("Install", size=12),
+                    visible=False,
+                    on_click=lambda e, p=project, vd=version_dropdown: page.run_task(
+                        confirm_install, p, vd
+                    ),
+                )
+
+                async def load_versions():
+                    try:
+                        client = ModrinthClient()
+                        versions = await client.get_project_versions(
+                            project.project_id,
+                            game_version=content_state["mc_version"] or None,
+                            loader=(
+                                content_state["loader"]
+                                if content_state["loader"] != "Vanilla"
+                                else None
+                            ),
+                            limit=15,
+                        )
+                    except Exception:
+                        versions = []
+                    version_dropdown.options = [
+                        ft.DropdownOption(key=v.version_id, text=v.version_number or v.name)
+                        for v in versions
+                    ]
+                    if versions:
+                        version_dropdown.value = versions[0].version_id
+                        install_btn.visible = True
+                    page.update()
+
+                page.run_task(load_versions)
+
+                desc = (project.description or "")[:120]
+                return ft.Container(
+                    padding=12,
+                    bgcolor=ft.Colors.with_opacity(0.06, theme["surface"]),
+                    border_radius=10,
+                    border=ft.Border.all(1, theme["border"]),
+                    content=ft.Column(
+                        spacing=8,
+                        controls=[
+                            ft.Row(
+                                spacing=10,
+                                vertical_alignment=ft.CrossAxisAlignment.START,
+                                controls=[
+                                    ft.Text(
+                                        project.title,
+                                        size=14,
+                                        weight=ft.FontWeight.BOLD,
+                                        color=theme["text_primary"],
+                                        expand=True,
+                                    ),
+                                    ft.Text(
+                                        f"{project.downloads:,} dl",
+                                        size=11,
+                                        color=theme["text_secondary"],
+                                    ),
+                                ],
+                            ),
+                            ft.Text(
+                                desc, size=12, color=theme["text_secondary"], no_wrap=False
+                            ),
+                            ft.Row(
+                                spacing=10,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                controls=[
+                                    ft.Text(
+                                        f"Loader: {content_state['loader']}  •  MC: {content_state['mc_version'] or 'any'}",
+                                        size=11,
+                                        color=theme["text_secondary"],
+                                        expand=True,
+                                    ),
+                                    version_dropdown,
+                                    install_btn,
+                                ],
+                            ),
+                        ],
+                    ),
+                )
+
+            async def toggle_enabled(filename, enabled):
+                """Enable/disable a mod (renames .jar <-> .jar.disabled)."""
+                game_dir = content_state["game_dir"]
+                category = content_state["category"]
+                install_id = content_state["install_id"]
+                try:
+                    ok = await asyncio.to_thread(
+                        launcher_set_content_enabled,
+                        game_dir,
+                        category,
+                        filename,
+                        bool(enabled),
+                    )
+                    if ok and install_id:
+                        all_content = load_installed_content()
+                        entries = all_content.get(install_id, [])
+                        for entry in entries:
+                            if isinstance(entry, dict) and entry.get("filename") == filename:
+                                entry["enabled"] = bool(enabled)
+                        save_installed_content(all_content)
+                    await load_installed_view()
+                    page.update()
+                except Exception as exc:
+                    notify(
+                        f"Failed to toggle '{filename}': {exc}", ft.Icons.ERROR_OUTLINE
+                    )
+
+            async def remove_file(filename):
+                """Remove a content file from the game directory."""
+                game_dir = content_state["game_dir"]
+                category = content_state["category"]
+                install_id = content_state["install_id"]
+                try:
+                    ok = await asyncio.to_thread(
+                        remove_content_file, game_dir, category, filename
+                    )
+                    if ok and install_id:
+                        remove_installed_content(install_id, "", "", filename)
+                    await load_installed_view()
+                    page.update()
+                    if ok:
+                        notify(f"Removed '{filename}'.", ft.Icons.DELETE_OUTLINE)
+                except Exception as exc:
+                    notify(
+                        f"Failed to remove '{filename}': {exc}", ft.Icons.ERROR_OUTLINE
+                    )
+
+            async def confirm_install(project: ContentProject, version_dropdown: ft.Dropdown):
+                """Confirm which version to install, then download it into the game dir."""
+                version_id = version_dropdown.value
+                if not version_id:
+                    notify("Please select a version.", ft.Icons.ERROR_OUTLINE)
+                    return
+                try:
+                    versions = await ModrinthClient().get_project_versions(project.project_id)
+                except Exception as exc:
+                    notify(f"Failed to load versions: {exc}", ft.Icons.ERROR_OUTLINE)
+                    return
+                version = next((v for v in versions if v.version_id == version_id), None)
+                if not version or not version.files:
+                    notify(
+                        "No installable file found for this version.",
+                        ft.Icons.ERROR_OUTLINE,
+                    )
+                    return
+                file = next((f for f in version.files if f.is_primary), version.files[0])
+
+                game_dir = content_state["game_dir"]
+                category = content_state["category"]
+                install_id = content_state["install_id"]
+                if not install_id:
+                    notify("No installation selected.", ft.Icons.ERROR_OUTLINE)
+                    return
+
+                dest_folder = get_content_folder(game_dir, category)
+                dest_path = dest_folder / file.name
+
+                progress_bar.visible = True
+                progress_bar.value = 0
+                status_text.value = f"Downloading {file.name}..."
+                page.update()
+
+                try:
+                    await ModrinthClient().download_file(
+                        file.url,
+                        dest_path,
+                        progress_cb=lambda d, t: page.run_task(
+                            set_download_progress, d, t, file.name
+                        ),
+                        expected_hash=file.primary_hash,
+                        expected_hash_algo=file.primary_hash_algo,
+                    )
+                    add_installed_content(
+                        install_id,
+                        {
+                            "project_id": project.project_id,
+                            "project_slug": project.slug,
+                            "project_title": project.title,
+                            "version_id": version.version_id,
+                            "version_number": version.version_number,
+                            "filename": file.name,
+                            "category": category,
+                            "enabled": True,
+                            "downloaded_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        },
+                    )
+                    await load_installed_view()
+                    status_text.value = f"Installed '{file.name}'."
+                    notify(f"Installed '{file.name}'.", ft.Icons.DONE_OUTLINE)
+                except ModrinthError as exc:
+                    notify(str(exc), ft.Icons.ERROR_OUTLINE)
+                except Exception as exc:
+                    notify(f"Install failed: {exc}", ft.Icons.ERROR_OUTLINE)
+                finally:
+                    progress_bar.visible = False
+                    status_text.value = ""
+                    page.update()
+
+            def set_download_progress(downloaded, total, name):
+                progress_bar.visible = True
+                if total > 0:
+                    progress_bar.value = downloaded / total
+                status_text.value = (
+                    f"Downloading {name} "
+                    f"({downloaded // 1024} KB / {total // 1024} KB)..."
+                )
+                page.update()
+
+            # ---- layout assembly ----
+            install_dropdown.on_change = lambda e: page.run_task(
+                select_installation, e.control.value
+            )
+
+            view_header = ft.Text(
+                "Installed",
+                size=12,
+                weight=ft.FontWeight.BOLD,
+                color=theme["text_secondary"],
+            )
+
+            page_column = ft.Column(
+                expand=True,
+                spacing=16,
+                controls=[
+                    ft.Text(
+                        "Content Manager",
+                        size=22,
+                        weight=ft.FontWeight.BOLD,
+                        color=theme["text_primary"],
+                    ),
+                    ft.Text(
+                        "Install mods, resource packs and shader packs from Modrinth "
+                        "into the selected installation's game directory.",
+                        size=13,
+                        color=theme["text_secondary"],
+                    ),
+                    ft.Divider(height=1, color=theme["border"]),
+                    ft.Row(
+                        spacing=12,
+                        controls=[install_dropdown, category_tabs],
+                        expand=True,
+                    ),
+                    view_tabs,
+                    ft.Row(
+                        spacing=8,
+                        controls=[search_field, search_btn],
+                    ),
+                    ft.Container(
+                        expand=True,
+                        bgcolor=theme["surface"],
+                        border_radius=10,
+                        border=ft.Border.all(1, theme["border"]),
+                        padding=10,
+                        content=ft.Column(
+                            expand=True,
+                            spacing=8,
+                            controls=[
+                                view_header,
+                                content_area,
+                            ],
+                        ),
+                    ),
+                    ft.Row(
+                        spacing=8,
+                        controls=[progress_bar, status_text],
+                    ),
+                ],
+            )
+
+            content_area.content = installed_list
+
+            page.run_task(refresh_install_dropdown)
+
+            return ft.Container(expand=True, padding=20, content=page_column)
+
+
         def navigate(name, profile_id=None, force=False):
             nonlocal current_page, transition_id, tab, handled_external_profile_ids
             if name == "profiles":
@@ -4776,589 +5363,6 @@ def main(page: ft.Page):
                     )
                 ]
 
-        def build_content_page():
-            """Build the Modrinth content manager page (mods / resource packs / shader packs)."""
-
-            content_state = {
-                "install_id": None,
-                "category": "mod",
-                "view": "installed",
-                "game_dir": minecraft_directory,
-                "mc_version": "",
-                "loader": "Vanilla",
-            }
-
-            install_dropdown = ft.Dropdown(
-                label="Installation",
-                hint_text="Select a profile",
-                expand=True,
-                border_color=theme["border"],
-                focused_border_color=theme["btn_primary"],
-                color=theme["text_primary"],
-                label_style=ft.TextStyle(color=theme["text_secondary"], size=13),
-                fill_color=theme["card"],
-                border_radius=8,
-            )
-
-            category_tabs = ft.Tabs(
-                selected_index=0,
-                animation_duration=300,
-                on_change=lambda e: page.run_task(refresh_content_view),
-                tabs=[
-                    ft.Tab(text="Mods", icon=ft.Icons.CONSTRUCTION),
-                    ft.Tab(text="Resource Packs", icon=ft.Icons.PALETTE),
-                    ft.Tab(text="Shader Packs", icon=ft.Icons.BRIGHTNESS_7),
-                ],
-                expand=True,
-            )
-
-            view_tabs = ft.Tabs(
-                selected_index=0,
-                animation_duration=300,
-                on_change=lambda e: page.run_task(refresh_content_view),
-                tabs=[
-                    ft.Tab(text="Installed", icon=ft.Icons.INVENTORY_2_OUTLINED),
-                    ft.Tab(text="Browse Modrinth", icon=ft.Icons.STORE),
-                ],
-                expand=True,
-            )
-
-            search_field = ft.TextField(
-                label="Search Modrinth",
-                hint_text="e.g. Sodium, Iris, Complementary",
-                expand=True,
-                border_color=theme["border"],
-                focused_border_color=theme["btn_primary"],
-                color=theme["text_primary"],
-                label_style=ft.TextStyle(color=theme["text_secondary"], size=13),
-                fill_color=theme["card"],
-                border_radius=8,
-            )
-
-            search_btn = ft.IconButton(
-                icon=ft.Icons.SEARCH,
-                tooltip="Search",
-                on_click=lambda e: page.run_task(do_search),
-            )
-
-            installed_list = ft.Column(expand=True, scroll=ft.ScrollMode.AUTO, spacing=8)
-            browse_list = ft.Column(expand=True, scroll=ft.ScrollMode.AUTO, spacing=8)
-
-            status_text = ft.Text("", size=12, color=theme["text_secondary"])
-            progress_bar = ft.ProgressBar(value=0, visible=False, bar_height=6)
-
-            content_area = ft.Container(expand=True)
-
-            # ---- handlers ----
-
-            async def refresh_install_dropdown(e=None):
-                options = []
-                for inst in installations:
-                    name = inst.get("name") or inst.get("version_id") or "Installation"
-                    loader = inst.get("loader", "Vanilla")
-                    mc = inst.get("minecraft_version", "")
-                    options.append(
-                        ft.DropdownOption(
-                            key=inst["id"],
-                            text=f"{name} ({loader} {mc})".strip(),
-                        )
-                    )
-                install_dropdown.options = options
-                current_id = content_state["install_id"]
-                valid_keys = {o.key for o in options}
-                if not current_id or current_id not in valid_keys:
-                    current_id = options[0].key if options else None
-                    content_state["install_id"] = current_id
-                install_dropdown.value = current_id
-                await select_installation(current_id)
-                page.update()
-
-            async def select_installation(install_id):
-                content_state["install_id"] = install_id
-                inst = next((i for i in installations if i.get("id") == install_id), None)
-                if inst:
-                    content_state["game_dir"] = (
-                        inst.get("game_directory") or minecraft_directory
-                    )
-                    content_state["mc_version"] = inst.get("minecraft_version", "") or ""
-                    content_state["loader"] = inst.get("loader", "Vanilla") or "Vanilla"
-                else:
-                    content_state["game_dir"] = minecraft_directory
-                    content_state["mc_version"] = ""
-                    content_state["loader"] = "Vanilla"
-                await refresh_content_view()
-
-            async def refresh_content_view(e=None):
-                categories = ["mod", "resourcepack", "shader"]
-                content_state["category"] = categories[
-                    min(category_tabs.selected_index, len(categories) - 1)
-                ]
-                content_state["view"] = (
-                    "installed" if view_tabs.selected_index == 0 else "browse"
-                )
-                if content_state["view"] == "installed":
-                    await load_installed_view()
-                    content_area.content = installed_list
-                else:
-                    await load_browse_view()
-                    content_area.content = browse_list
-                view_header.value = content_state["view"].title()
-                page.update()
-
-            async def load_installed_view():
-                """Show the content files present on disk for the selected installation."""
-                installed_list.controls = []
-                game_dir = content_state["game_dir"]
-                category = content_state["category"]
-                if not game_dir:
-                    installed_list.controls = [
-                        ft.Text("No installation selected.", color=theme["text_secondary"])
-                    ]
-                    return
-
-                try:
-                    files = await asyncio.to_thread(list_installed_content, game_dir)
-                except Exception as exc:
-                    installed_list.controls = [
-                        ft.Text(
-                            f"Failed to read content folder: {exc}",
-                            color=ft.Colors.RED_400,
-                        )
-                    ]
-                    return
-
-                tracked = {
-                    e.get("filename"): e
-                    for e in (
-                        load_installed_content().get(content_state["install_id"], []) or []
-                    )
-                    if isinstance(e, dict)
-                }
-                files = [f for f in files if f.get("category") == category]
-
-                if not files:
-                    installed_list.controls = [
-                        ft.Text(
-                            f"No {CATEGORY_LABELS[category].lower()} installed yet.",
-                            color=theme["text_secondary"],
-                        )
-                    ]
-                    return
-
-                for f in files:
-                    filename = f.get("filename", "")
-                    size = f.get("size", 0)
-                    size_str = f"{size // 1024} KB" if size else ""
-                    info = tracked.get(filename, {}) or {}
-                    version = info.get("version_number", "")
-                    enabled = bool(f.get("enabled", True))
-
-                    row = ft.Row(
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        spacing=8,
-                        controls=[
-                            ft.Checkbox(
-                                value=enabled,
-                                tooltip="Enable / disable this mod",
-                                visible=(category == "mod"),
-                                on_change=(
-                                    lambda e, fn=filename: page.run_task(
-                                        toggle_enabled, fn, e.control.value
-                                    )
-                                    if category == "mod"
-                                    else None
-                                ),
-                            ),
-                            ft.Text(
-                                filename,
-                                size=13,
-                                weight=ft.FontWeight.W_500,
-                                color=theme["text_primary"],
-                                expand=True,
-                                no_wrap=False,
-                            ),
-                            ft.Text(
-                                f"{version}  •  {size_str}".strip(" •"),
-                                size=11,
-                                color=theme["text_secondary"],
-                                width=150,
-                            ),
-                            ft.IconButton(
-                                icon=ft.Icons.DELETE_OUTLINE,
-                                tooltip="Remove",
-                                icon_color=theme["text_secondary"],
-                                on_click=lambda e, fn=filename: page.run_task(
-                                    remove_file, fn
-                                ),
-                            ),
-                        ],
-                    )
-                    installed_list.controls.append(
-                        ft.Container(
-                            padding=10,
-                            bgcolor=ft.Colors.with_opacity(0.06, theme["surface"]),
-                            border_radius=8,
-                            border=ft.Border.all(1, theme["border"]),
-                            content=row,
-                        )
-                    )
-
-            async def load_browse_view():
-                """Placeholder for the Modrinth browse view."""
-                browse_list.controls = [
-                    ft.Text(
-                        "Enter a search above to browse Modrinth.",
-                        color=theme["text_secondary"],
-                    )
-                ]
-
-            async def do_search(e=None):
-                """Search Modrinth for projects of the current category."""
-                query = (search_field.value or "").strip()
-                category = content_state["category"]
-                mc_version = content_state["mc_version"]
-                loader = content_state["loader"]
-                browse_list.controls = [
-                    ft.Row(
-                        controls=[
-                            ft.ProgressRing(width=16, height=16, stroke_width=2),
-                            ft.Text(
-                                "Searching Modrinth...",
-                                size=13,
-                                color=theme["text_secondary"],
-                            ),
-                        ],
-                        spacing=10,
-                    )
-                ]
-                page.update()
-                try:
-                    client = ModrinthClient()
-                    projects = await client.search_projects(
-                        category,
-                        query,
-                        game_version=mc_version or None,
-                        loader=loader if loader != "Vanilla" else None,
-                        limit=20,
-                    )
-                except ModrinthError as exc:
-                    browse_list.controls = [
-                        ft.Text(str(exc), color=ft.Colors.RED_400, size=13)
-                    ]
-                    page.update()
-                    return
-                except Exception as exc:
-                    browse_list.controls = [
-                        ft.Text(f"Search failed: {exc}", color=ft.Colors.RED_400, size=13)
-                    ]
-                    page.update()
-                    return
-
-                browse_list.controls = []
-                if not projects:
-                    browse_list.controls = [
-                        ft.Text(
-                            "No matching projects found.",
-                            color=theme["text_secondary"],
-                        )
-                    ]
-                    page.update()
-                    return
-
-                for project in projects:
-                    browse_list.controls.append(
-                        await build_search_result_row(project)
-                    )
-                page.update()
-
-            async def build_search_result_row(project: ContentProject):
-                """Build a single search-result row with an install button."""
-                version_dropdown = ft.Dropdown(
-                    label="Version",
-                    width=170,
-                    border_color=theme["border"],
-                    focused_border_color=theme["btn_primary"],
-                    color=theme["text_primary"],
-                    label_style=ft.TextStyle(color=theme["text_secondary"], size=12),
-                    fill_color=theme["card"],
-                    border_radius=8,
-                )
-                install_btn = ft.ElevatedButton(
-                    text="Install",
-                    visible=False,
-                    on_click=lambda e, p=project, vd=version_dropdown: page.run_task(
-                        confirm_install, p, vd
-                    ),
-                )
-
-                async def load_versions():
-                    try:
-                        client = ModrinthClient()
-                        versions = await client.get_project_versions(
-                            project.project_id,
-                            game_version=content_state["mc_version"] or None,
-                            loader=(
-                                content_state["loader"]
-                                if content_state["loader"] != "Vanilla"
-                                else None
-                            ),
-                            limit=15,
-                        )
-                    except Exception:
-                        versions = []
-                    version_dropdown.options = [
-                        ft.DropdownOption(key=v.version_id, text=v.version_number or v.name)
-                        for v in versions
-                    ]
-                    if versions:
-                        version_dropdown.value = versions[0].version_id
-                        install_btn.visible = True
-                    page.update()
-
-                page.run_task(load_versions)
-
-                desc = (project.description or "")[:120]
-                return ft.Container(
-                    padding=12,
-                    bgcolor=ft.Colors.with_opacity(0.06, theme["surface"]),
-                    border_radius=10,
-                    border=ft.Border.all(1, theme["border"]),
-                    content=ft.Column(
-                        spacing=8,
-                        controls=[
-                            ft.Row(
-                                spacing=10,
-                                vertical_alignment=ft.CrossAxisAlignment.START,
-                                controls=[
-                                    ft.Text(
-                                        project.title,
-                                        size=14,
-                                        weight=ft.FontWeight.BOLD,
-                                        color=theme["text_primary"],
-                                        expand=True,
-                                    ),
-                                    ft.Text(
-                                        f"{project.downloads:,} dl",
-                                        size=11,
-                                        color=theme["text_secondary"],
-                                    ),
-                                ],
-                            ),
-                            ft.Text(
-                                desc, size=12, color=theme["text_secondary"], no_wrap=False
-                            ),
-                            ft.Row(
-                                spacing=10,
-                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                controls=[
-                                    ft.Text(
-                                        f"Loader: {content_state['loader']}  •  MC: {content_state['mc_version'] or 'any'}",
-                                        size=11,
-                                        color=theme["text_secondary"],
-                                        expand=True,
-                                    ),
-                                    version_dropdown,
-                                    install_btn,
-                                ],
-                            ),
-                        ],
-                    ),
-                )
-
-            async def toggle_enabled(filename, enabled):
-                """Enable/disable a mod (renames .jar <-> .jar.disabled)."""
-                game_dir = content_state["game_dir"]
-                category = content_state["category"]
-                install_id = content_state["install_id"]
-                try:
-                    ok = await asyncio.to_thread(
-                        launcher_set_content_enabled,
-                        game_dir,
-                        category,
-                        filename,
-                        bool(enabled),
-                    )
-                    if ok and install_id:
-                        all_content = load_installed_content()
-                        entries = all_content.get(install_id, [])
-                        for entry in entries:
-                            if isinstance(entry, dict) and entry.get("filename") == filename:
-                                entry["enabled"] = bool(enabled)
-                        save_installed_content(all_content)
-                    await load_installed_view()
-                    page.update()
-                except Exception as exc:
-                    notify(
-                        f"Failed to toggle '{filename}': {exc}", ft.Icons.ERROR_OUTLINE
-                    )
-
-            async def remove_file(filename):
-                """Remove a content file from the game directory."""
-                game_dir = content_state["game_dir"]
-                category = content_state["category"]
-                install_id = content_state["install_id"]
-                try:
-                    ok = await asyncio.to_thread(
-                        remove_content_file, game_dir, category, filename
-                    )
-                    if ok and install_id:
-                        remove_installed_content(install_id, "", "", filename)
-                    await load_installed_view()
-                    page.update()
-                    if ok:
-                        notify(f"Removed '{filename}'.", ft.Icons.DELETE_OUTLINE)
-                except Exception as exc:
-                    notify(
-                        f"Failed to remove '{filename}': {exc}", ft.Icons.ERROR_OUTLINE
-                    )
-
-            async def confirm_install(project: ContentProject, version_dropdown: ft.Dropdown):
-                """Confirm which version to install, then download it into the game dir."""
-                version_id = version_dropdown.value
-                if not version_id:
-                    notify("Please select a version.", ft.Icons.ERROR_OUTLINE)
-                    return
-                try:
-                    versions = await ModrinthClient().get_project_versions(project.project_id)
-                except Exception as exc:
-                    notify(f"Failed to load versions: {exc}", ft.Icons.ERROR_OUTLINE)
-                    return
-                version = next((v for v in versions if v.version_id == version_id), None)
-                if not version or not version.files:
-                    notify(
-                        "No installable file found for this version.",
-                        ft.Icons.ERROR_OUTLINE,
-                    )
-                    return
-                file = next((f for f in version.files if f.is_primary), version.files[0])
-
-                game_dir = content_state["game_dir"]
-                category = content_state["category"]
-                install_id = content_state["install_id"]
-                if not install_id:
-                    notify("No installation selected.", ft.Icons.ERROR_OUTLINE)
-                    return
-
-                dest_folder = get_content_folder(game_dir, category)
-                dest_path = dest_folder / file.name
-
-                progress_bar.visible = True
-                progress_bar.value = 0
-                status_text.value = f"Downloading {file.name}..."
-                page.update()
-
-                try:
-                    await ModrinthClient().download_file(
-                        file.url,
-                        dest_path,
-                        progress_cb=lambda d, t: page.run_task(
-                            set_download_progress, d, t, file.name
-                        ),
-                        expected_hash=file.primary_hash,
-                        expected_hash_algo=file.primary_hash_algo,
-                    )
-                    add_installed_content(
-                        install_id,
-                        {
-                            "project_id": project.project_id,
-                            "project_slug": project.slug,
-                            "project_title": project.title,
-                            "version_id": version.version_id,
-                            "version_number": version.version_number,
-                            "filename": file.name,
-                            "category": category,
-                            "enabled": True,
-                            "downloaded_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                        },
-                    )
-                    await load_installed_view()
-                    status_text.value = f"Installed '{file.name}'."
-                    notify(f"Installed '{file.name}'.", ft.Icons.DONE_OUTLINE)
-                except ModrinthError as exc:
-                    notify(str(exc), ft.Icons.ERROR_OUTLINE)
-                except Exception as exc:
-                    notify(f"Install failed: {exc}", ft.Icons.ERROR_OUTLINE)
-                finally:
-                    progress_bar.visible = False
-                    status_text.value = ""
-                    page.update()
-
-            def set_download_progress(downloaded, total, name):
-                progress_bar.visible = True
-                if total > 0:
-                    progress_bar.value = downloaded / total
-                status_text.value = (
-                    f"Downloading {name} "
-                    f"({downloaded // 1024} KB / {total // 1024} KB)..."
-                )
-                page.update()
-
-            # ---- layout assembly ----
-            install_dropdown.on_change = lambda e: page.run_task(
-                select_installation, e.control.value
-            )
-
-            view_header = ft.Text(
-                "Installed",
-                size=12,
-                weight=ft.FontWeight.BOLD,
-                color=theme["text_secondary"],
-            )
-
-            page_column = ft.Column(
-                expand=True,
-                spacing=16,
-                controls=[
-                    ft.Text(
-                        "Content Manager",
-                        size=22,
-                        weight=ft.FontWeight.BOLD,
-                        color=theme["text_primary"],
-                    ),
-                    ft.Text(
-                        "Install mods, resource packs and shader packs from Modrinth "
-                        "into the selected installation's game directory.",
-                        size=13,
-                        color=theme["text_secondary"],
-                    ),
-                    ft.Divider(height=1, color=theme["border"]),
-                    ft.Row(
-                        spacing=12,
-                        controls=[install_dropdown, category_tabs],
-                        expand=True,
-                    ),
-                    view_tabs,
-                    ft.Row(
-                        spacing=8,
-                        controls=[search_field, search_btn],
-                    ),
-                    ft.Container(
-                        expand=True,
-                        bgcolor=theme["surface"],
-                        border_radius=10,
-                        border=ft.Border.all(1, theme["border"]),
-                        padding=10,
-                        content=ft.Column(
-                            expand=True,
-                            spacing=8,
-                            controls=[
-                                view_header,
-                                content_area,
-                            ],
-                        ),
-                    ),
-                    ft.Row(
-                        spacing=8,
-                        controls=[progress_bar, status_text],
-                    ),
-                ],
-            )
-
-            content_area.content = installed_list
-
-            page.run_task(refresh_install_dropdown)
-
-            return ft.Container(expand=True, padding=20, content=page_column)
 
             pages = {
                 "content": build_content_page(),
