@@ -672,24 +672,30 @@ def discover_local_instances(
 	return updated_installations, changed
 
 
-def estimate_installation_total(target: dict, mc_dir: str | Path) -> int:
+def resolve_installation_files(target: dict, mc_dir: str | Path) -> int:
 	mc_dir = str(mc_dir)
 	version_id = target.get("minecraft_version") or target.get("version_id", "")
-	v_json_path = os.path.join(mc_dir, "versions", version_id, f"{version_id}.json")
+	v_dir = os.path.join(mc_dir, "versions", version_id)
+	v_json_path = os.path.join(v_dir, f"{version_id}.json")
 	vdata = None
+
 	if os.path.isfile(v_json_path):
 		try:
 			with open(v_json_path, "r", encoding="utf-8") as f:
 				vdata = json.load(f)
 		except Exception:
 			pass
+
 	if not vdata:
 		try:
 			manifest_url = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
-			r = requests.get(manifest_url, timeout=3).json()
+			r = requests.get(manifest_url, timeout=4).json()
 			entry = next((v for v in r.get("versions", []) if v.get("id") == version_id), None)
 			if entry and "url" in entry:
-				vdata = requests.get(entry["url"], timeout=3).json()
+				vdata = requests.get(entry["url"], timeout=4).json()
+				os.makedirs(v_dir, exist_ok=True)
+				with open(v_json_path, "w", encoding="utf-8") as f:
+					json.dump(vdata, f)
 		except Exception:
 			pass
 
@@ -701,19 +707,23 @@ def estimate_installation_total(target: dict, mc_dir: str | Path) -> int:
 	asset_info = vdata.get("assetIndex")
 	if asset_info:
 		asset_id = vdata.get("assets", asset_info.get("id", ""))
-		asset_local = os.path.join(mc_dir, "assets", "indexes", f"{asset_id}.json")
+		asset_dir = os.path.join(mc_dir, "assets", "indexes")
+		asset_local = os.path.join(asset_dir, f"{asset_id}.json")
 		if os.path.isfile(asset_local):
 			try:
 				with open(asset_local, "r", encoding="utf-8") as f:
 					assets_count = len(json.load(f).get("objects", {}))
 			except Exception:
-				assets_count = 1500
+				pass
 		else:
 			try:
-				aindex = requests.get(asset_info["url"], timeout=3).json()
+				aindex = requests.get(asset_info["url"], timeout=4).json()
 				assets_count = len(aindex.get("objects", {}))
+				os.makedirs(asset_dir, exist_ok=True)
+				with open(asset_local, "w", encoding="utf-8") as f:
+					json.dump(aindex, f)
 			except Exception:
-				assets_count = 3500
+				pass
 
 	runtime_count = 0
 	if "javaVersion" in vdata:
@@ -722,116 +732,171 @@ def estimate_installation_total(target: dict, mc_dir: str | Path) -> int:
 			plat = minecraft_launcher_lib.runtime._get_jvm_platform_string()
 			v_file = os.path.join(mc_dir, "runtime", comp, plat, ".version")
 			if not os.path.isfile(v_file):
-				runtime_count = 250
+				runtime_count = 150
 		except Exception:
 			pass
 
-	return libs_count + assets_count + runtime_count
+	loader_count = 0
+	if target.get("loader") and target["loader"] != "Vanilla":
+		loader_count = 30
+
+	return libs_count + assets_count + runtime_count + loader_count
+
+
+# Backward-compatible alias
+estimate_installation_total = resolve_installation_files
 
 
 class InstallationProgressTracker:
-	def __init__(self, estimated_total: int = 0):
-		self.estimated_total = max(0, estimated_total)
-		self.completed_previous = 0
-		self.current_stage_max = 0
-		self.current_stage_val = 0
+	def __init__(self, total_files: int = 0, is_modded: bool = False):
+		self._lock = threading.Lock()
+		self.is_modded = bool(is_modded)
+		self.pass_num = 0
+		self.stage_name = "Setup"
 		self.highest_ratio = 0.0
+		self.current_ratio = 0.0
+		self.current_stage_val = 0
+		self.current_stage_max = 0
 		self.start_time = None
 		self.history = []
-		self.stage_name = "Setup"
-		self.stage_index = 0
+		self.ema_speed = None
 		self.last_status = "Preparing..."
 		self.last_eta = ""
+		self.is_finished = False
 
 	def on_status(self, raw_status: str):
-		self.last_status = raw_status
-		lower = raw_status.lower()
-		if "librar" in lower:
-			self.stage_name = "Libraries"
-			self.stage_index = 1
-		elif "asset" in lower:
-			self.stage_name = "Assets"
-			self.stage_index = 2
-		elif "runtime" in lower or "java" in lower:
-			self.stage_name = "Java Runtime"
-			self.stage_index = 3
+		with self._lock:
+			self.last_status = str(raw_status)
+			lower = self.last_status.lower()
+			if "complete" in lower:
+				self.pass_num += 1
+				return
+
+			if "installer" in lower:
+				self.stage_name = "Mod Installer"
+			elif "librar" in lower:
+				self.stage_name = "Libraries"
+			elif "asset" in lower:
+				self.stage_name = "Assets"
+			elif "runtime" in lower or "java" in lower:
+				self.stage_name = "Java Runtime"
+			elif any(k in lower for k in ("forge", "fabric", "quilt", "neoforge", "mod")):
+				self.stage_name = "Mod Loader"
+			elif "verif" in lower:
+				self.stage_name = "Verifying"
 
 	def on_max(self, maximum: int):
-		if self.current_stage_max > 0:
-			self.completed_previous += max(self.current_stage_val, self.current_stage_max)
-		self.current_stage_max = max(1, int(maximum) + 1)
-		self.current_stage_val = 0
+		with self._lock:
+			self.current_stage_max = max(1, int(maximum) + 1)
+			self.current_stage_val = 0
 
 	def on_progress(self, current: int):
 		now = time.monotonic()
-		if self.start_time is None:
-			self.start_time = now
+		with self._lock:
+			if self.start_time is None:
+				self.start_time = now
 
-		self.current_stage_val = max(0, int(current))
-		overall_completed = self.completed_previous + self.current_stage_val
-		effective_total = max(self.estimated_total, self.completed_previous + self.current_stage_max)
-		if effective_total <= 0:
-			effective_total = max(1, overall_completed)
+			self.current_stage_val = max(self.current_stage_val, int(current))
+			self.current_stage_max = max(self.current_stage_max, self.current_stage_val)
+			self.history.append((now, self.current_stage_val))
+			self.history = [h for h in self.history if now - h[0] <= 2.5]
 
-		if self.estimated_total > 0:
-			ratio = overall_completed / effective_total
-		else:
-			stage_ranges = {1: (0.0, 0.20), 2: (0.20, 0.80), 3: (0.80, 0.98)}
-			if self.stage_index in stage_ranges:
-				s_start, s_end = stage_ranges[self.stage_index]
-				stage_pct = self.current_stage_val / max(1, self.current_stage_max)
-				ratio = s_start + (s_end - s_start) * stage_pct
+			if not self.is_modded:
+				ranges = {
+					"setup": (0.0, 0.05),
+					"libraries": (0.05, 0.20),
+					"assets": (0.20, 0.90),
+					"java runtime": (0.90, 0.98),
+					"verifying": (0.98, 0.99),
+				}
 			else:
-				ratio = self.highest_ratio
+				if self.pass_num == 0:
+					ranges = {
+						"setup": (0.0, 0.02),
+						"libraries": (0.02, 0.12),
+						"assets": (0.12, 0.65),
+						"java runtime": (0.65, 0.70),
+					}
+				elif self.pass_num == 1:
+					ranges = {
+						"mod installer": (0.70, 0.75),
+						"libraries": (0.75, 0.82),
+						"mod loader": (0.75, 0.82),
+						"assets": (0.80, 0.85),
+						"java runtime": (0.82, 0.85),
+					}
+				else:
+					ranges = {
+						"libraries": (0.85, 0.95),
+						"assets": (0.92, 0.96),
+						"mod loader": (0.90, 0.97),
+						"verifying": (0.97, 0.99),
+					}
 
-		ratio = min(0.99, max(self.highest_ratio, ratio))
-		self.highest_ratio = ratio
+			s_key = self.stage_name.lower()
+			r_low, r_high = ranges.get(s_key, (self.highest_ratio, min(0.98, self.highest_ratio + 0.08)))
+			stage_pct = self.current_stage_val / max(self.current_stage_max, 1)
+			calculated_ratio = r_low + (r_high - r_low) * stage_pct
 
-		progress_advanced = not self.history or overall_completed > self.history[-1][1]
-		if progress_advanced:
-			self.history.append((now, overall_completed))
-		self.history = [h for h in self.history if now - h[0] <= 4.0]
+			# Strictly monotonic: ratio NEVER drops or goes backward
+			self.highest_ratio = min(0.99, max(self.highest_ratio, calculated_ratio))
 
-		eta_text = ""
-		if progress_advanced and len(self.history) >= 2:
-			dt = now - self.history[0][0]
-			df = overall_completed - self.history[0][1]
-			if dt >= 0.6 and df > 0:
-				speed = df / dt
-				remaining = max(0, effective_total - overall_completed)
-				if remaining > 0 and speed > 0:
-					eta_sec = int(round(remaining / speed))
-					if eta_sec < 60:
-						time_str = f"{eta_sec}s"
-					elif eta_sec < 3600:
-						m, s = divmod(eta_sec, 60)
-						time_str = f"{m}m {s:02d}s"
+			if len(self.history) >= 2:
+				dt = now - self.history[0][0]
+				df = self.current_stage_val - self.history[0][1]
+				if dt >= 0.4 and df > 0:
+					instant_speed = df / dt
+					if self.ema_speed is None:
+						self.ema_speed = instant_speed
 					else:
-						h, m = divmod(eta_sec, 3600)
-						time_str = f"{h}h {m // 60:02d}m"
-					speed_str = (
-						f"{speed:.0f}"
-						if speed >= 10
-						else f"{speed:.1f}"
-						if speed >= 1
-						else f"{speed:.2f}"
-					)
-					eta_text = f"ETA: {time_str} ({speed_str} files/s)"
-				elif remaining == 0:
-					eta_text = "Finishing..."
-		if not eta_text and not self.last_eta and (now - self.start_time) > 1.5:
-			eta_text = "ETA: calculating..."
+						self.ema_speed = 0.25 * instant_speed + 0.75 * self.ema_speed
 
-		if eta_text:
-			self.last_eta = eta_text
-		pct_text = f"{int(round(ratio * 100))}%"
-		if self.current_stage_max > 1:
-			stage_str = f"Downloading {self.stage_name} ({self.current_stage_val:,}/{self.current_stage_max:,})"
-		else:
-			stage_str = self.last_status
+		return self.get_display_state()
 
-		status_text = f"{stage_str} • {pct_text}"
-		return ratio, status_text, self.last_eta
+	def get_display_state(self) -> tuple[float, str, str]:
+		now = time.monotonic()
+		with self._lock:
+			if self.is_finished:
+				return 1.0, "Installation complete • 100%", ""
+
+			diff = self.highest_ratio - self.current_ratio
+			if abs(diff) < 0.001:
+				self.current_ratio = self.highest_ratio
+			else:
+				self.current_ratio += diff * 0.35
+
+			render_ratio = min(0.99, max(0.0, self.current_ratio))
+
+			eta_text = ""
+			if self.ema_speed and self.ema_speed > 0.1:
+				speed_str = (
+					f"{self.ema_speed:.0f}"
+					if self.ema_speed >= 10
+					else f"{self.ema_speed:.1f}"
+				)
+				eta_text = f"({speed_str} files/s)"
+
+			pct_text = f"{int(round(render_ratio * 100))}%"
+			val_disp = min(self.current_stage_val, self.current_stage_max)
+			max_disp = max(self.current_stage_max, val_disp)
+			if max_disp > 1:
+				status_text = (
+					f"Downloading {self.stage_name} ({val_disp:,} / {max_disp:,}) • {pct_text}"
+				)
+			elif self.last_status.startswith("Download "):
+				fname = self.last_status[9:].strip()
+				status_text = f"Downloading {fname} • {pct_text}"
+			else:
+				status_text = f"{self.last_status} • {pct_text}"
+
+			return render_ratio, status_text, eta_text
+
+	def finish(self):
+		with self._lock:
+			self.is_finished = True
+			self.current_ratio = 1.0
+			self.highest_ratio = 1.0
+			self.last_eta = ""
 
 
 def get_mod_loader(loader_name: str):

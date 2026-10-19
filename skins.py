@@ -11,6 +11,7 @@ import hashlib
 import http.server
 import io
 import json
+import math
 import os
 import shutil
 import socket
@@ -21,7 +22,7 @@ import urllib.parse
 import uuid
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageEnhance
 import requests
 
 from storage import get_data_dir, load_settings, save_settings
@@ -374,9 +375,452 @@ def render_character_bytes(
     if img is None:
         img = get_default_skin(model)
 
+    if view.lower() == "3d":
+        return render_3d_skin_bytes(img, model=model)
+
     rendered = render_character(img, view=view, model=model, scale=scale)
     buf = io.BytesIO()
     rendered.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _find_affine_coeffs(dst_pts, src_pts):
+    """Calculates 6-element affine matrix mapping destination bounding points to source points."""
+    (x0, y0), (x1, y1), (x2, y2) = dst_pts
+    (u0, v0), (u1, v1), (u2, v2) = src_pts
+    det = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)
+    if abs(det) < 1e-9:
+        return None
+    a = ((u1 - u0) * (y2 - y0) - (u2 - u0) * (y1 - y0)) / det
+    b = ((x1 - x0) * (u2 - u0) - (x2 - x0) * (u1 - u0)) / det
+    c = u0 - a * x0 - b * y0
+    d = ((v1 - v0) * (y2 - y0) - (v2 - v0) * (y1 - y0)) / det
+    e = ((x1 - x0) * (v2 - v0) - (x2 - x0) * (v1 - v0)) / det
+    f = v0 - d * x0 - e * y0
+    return (a, b, c, d, e, f)
+
+
+def _rotate_pt_euler(x, y, z, rx, ry, rz):
+    """Rotates a 3D point by pitch (rx), yaw (ry), and roll (rz) radians."""
+    if rz != 0:
+        cz, sz = math.cos(rz), math.sin(rz)
+        x, y = x * cz - y * sz, x * sz + y * cz
+    if rx != 0:
+        cx, sx = math.cos(rx), math.sin(rx)
+        y, z = y * cx - z * sx, y * sx + z * cx
+    if ry != 0:
+        cy, sy = math.cos(ry), math.sin(ry)
+        x, z = x * cy + z * sy, -x * sy + z * cy
+    return x, y, z
+
+
+def render_3d_skin(
+    skin: Image.Image,
+    yaw_deg: float = -25.0,
+    pitch_deg: float = 10.0,
+    model: str = "classic",
+    pose: str = "hero",
+    width: int = 240,
+    height: int = 340,
+    scale: float = 8.5,
+) -> Image.Image:
+    """Renders an interactive, lighting-shaded 3D Minecraft player model.
+    Supports 64x64/64x32 skins, Classic (Steve) and Slim (Alex) models,
+    full overlay layers (hat, jacket, sleeves, pants), and directional shading.
+    """
+    if skin.mode != "RGBA":
+        skin = skin.convert("RGBA")
+    if skin.size[1] == 32:
+        skin = ensure_64x64(skin)
+
+    is_slim = model.lower() == "slim"
+    arm_w = 3.0 if is_slim else 4.0
+
+    yaw_rad = math.radians(yaw_deg)
+    pitch_rad = math.radians(pitch_deg)
+    cy, sy = math.cos(yaw_rad), math.sin(yaw_rad)
+    cp, sp = math.cos(pitch_rad), math.sin(pitch_rad)
+
+    # Directional key light vector (top-left-front)
+    lx, ly, lz = 0.35, 0.75, 0.55
+    l_mag = math.sqrt(lx * lx + ly * ly + lz * lz)
+    lx, ly, lz = lx / l_mag, ly / l_mag, lz / l_mag
+
+    cx = width / 2.0
+    cy_scr = height / 2.0 + 8.0
+
+    if pose == "hero":
+        poses = {
+            "head": (0.0, -5.0, 0.0),
+            "torso": (0.0, 0.0, 0.0),
+            "right_arm": (14.0, 0.0, 2.0),
+            "left_arm": (-14.0, 0.0, -2.0),
+            "right_leg": (-10.0, 0.0, 0.0),
+            "left_leg": (10.0, 0.0, 0.0),
+        }
+    else:
+        poses = {
+            "head": (0.0, 0.0, 0.0),
+            "torso": (0.0, 0.0, 0.0),
+            "right_arm": (0.0, 0.0, 0.0),
+            "left_arm": (0.0, 0.0, 0.0),
+            "right_leg": (0.0, 0.0, 0.0),
+            "left_leg": (0.0, 0.0, 0.0),
+        }
+
+    pivots = {
+        "head": (0.0, 8.0, 0.0),
+        "torso": (0.0, 0.0, 0.0),
+        "right_arm": (-4.0 - arm_w / 2.0, 6.0, 0.0),
+        "left_arm": (4.0 + arm_w / 2.0, 6.0, 0.0),
+        "right_leg": (-2.0, -4.0, 0.0),
+        "left_leg": (2.0, -4.0, 0.0),
+    }
+
+    boxes = [
+        {
+            "name": "head",
+            "bounds": (-4, 4, 8, 16, -4, 4),
+            "uv": {
+                "top": (8, 0, 16, 8),
+                "bottom": (16, 0, 24, 8),
+                "right": (0, 8, 8, 16),
+                "front": (8, 8, 16, 16),
+                "left": (16, 8, 24, 16),
+                "back": (24, 8, 32, 16),
+            },
+            "overlay": {
+                "top": (40, 0, 48, 8),
+                "bottom": (48, 0, 56, 8),
+                "right": (32, 8, 40, 16),
+                "front": (40, 8, 48, 16),
+                "left": (48, 8, 56, 16),
+                "back": (56, 8, 64, 16),
+            },
+            "expand": 0.5,
+        },
+        {
+            "name": "torso",
+            "bounds": (-4, 4, -4, 8, -2, 2),
+            "uv": {
+                "top": (20, 16, 28, 20),
+                "bottom": (28, 16, 36, 20),
+                "right": (16, 20, 20, 32),
+                "front": (20, 20, 28, 32),
+                "left": (28, 20, 32, 32),
+                "back": (32, 20, 40, 32),
+            },
+            "overlay": {
+                "top": (20, 32, 28, 36),
+                "bottom": (28, 32, 36, 36),
+                "right": (16, 36, 20, 48),
+                "front": (20, 36, 28, 48),
+                "left": (28, 36, 32, 48),
+                "back": (32, 36, 40, 48),
+            },
+            "expand": 0.35,
+        },
+        {
+            "name": "right_arm",
+            "bounds": (-4 - arm_w, -4, -4, 8, -2, 2),
+            "uv": {
+                "top": (44, 16, 47 if is_slim else 48, 20),
+                "bottom": (47 if is_slim else 48, 16, 50 if is_slim else 52, 20),
+                "right": (40, 20, 44, 32),
+                "front": (44, 20, 47 if is_slim else 48, 32),
+                "left": (47 if is_slim else 48, 20, 51 if is_slim else 52, 32),
+                "back": (51 if is_slim else 52, 20, 54 if is_slim else 56, 32),
+            },
+            "overlay": {
+                "top": (44, 32, 47 if is_slim else 48, 36),
+                "bottom": (47 if is_slim else 48, 32, 50 if is_slim else 52, 36),
+                "right": (40, 36, 44, 48),
+                "front": (44, 36, 47 if is_slim else 48, 48),
+                "left": (47 if is_slim else 48, 36, 51 if is_slim else 52, 48),
+                "back": (51 if is_slim else 52, 36, 54 if is_slim else 56, 48),
+            },
+            "expand": 0.35,
+        },
+        {
+            "name": "left_arm",
+            "bounds": (4, 4 + arm_w, -4, 8, -2, 2),
+            "uv": {
+                "top": (36, 48, 39 if is_slim else 40, 52),
+                "bottom": (39 if is_slim else 40, 48, 42 if is_slim else 44, 52),
+                "right": (32, 52, 36, 64),
+                "front": (36, 52, 39 if is_slim else 40, 64),
+                "left": (39 if is_slim else 40, 52, 43 if is_slim else 44, 64),
+                "back": (43 if is_slim else 44, 52, 46 if is_slim else 48, 64),
+            },
+            "overlay": {
+                "top": (52, 48, 55 if is_slim else 56, 52),
+                "bottom": (55 if is_slim else 56, 48, 58 if is_slim else 60, 52),
+                "right": (48, 52, 52, 64),
+                "front": (52, 52, 55 if is_slim else 56, 64),
+                "left": (55 if is_slim else 56, 52, 59 if is_slim else 60, 64),
+                "back": (59 if is_slim else 60, 52, 62 if is_slim else 64, 64),
+            },
+            "expand": 0.35,
+        },
+        {
+            "name": "right_leg",
+            "bounds": (-4, 0, -16, -4, -2, 2),
+            "uv": {
+                "top": (4, 16, 8, 20),
+                "bottom": (8, 16, 12, 20),
+                "right": (0, 20, 4, 32),
+                "front": (4, 20, 8, 32),
+                "left": (8, 20, 12, 32),
+                "back": (12, 20, 16, 32),
+            },
+            "overlay": {
+                "top": (4, 32, 8, 36),
+                "bottom": (8, 32, 12, 36),
+                "right": (0, 36, 4, 48),
+                "front": (4, 36, 8, 48),
+                "left": (8, 36, 12, 48),
+                "back": (12, 36, 16, 48),
+            },
+            "expand": 0.35,
+        },
+        {
+            "name": "left_leg",
+            "bounds": (0, 4, -16, -4, -2, 2),
+            "uv": {
+                "top": (20, 48, 24, 52),
+                "bottom": (24, 48, 28, 52),
+                "right": (16, 52, 20, 64),
+                "front": (20, 52, 24, 64),
+                "left": (24, 52, 28, 64),
+                "back": (28, 52, 32, 64),
+            },
+            "overlay": {
+                "top": (4, 48, 8, 52),
+                "bottom": (8, 48, 12, 52),
+                "right": (0, 52, 4, 64),
+                "front": (4, 52, 8, 64),
+                "left": (8, 52, 12, 64),
+                "back": (12, 52, 16, 64),
+            },
+            "expand": 0.35,
+        },
+    ]
+
+    faces_to_draw = []
+
+    def transform_pt(pt, part_name):
+        px, py, pz = pivots[part_name]
+        rx_deg, ry_deg, rz_deg = poses[part_name]
+        lx, ly, lz = pt[0] - px, pt[1] - py, pt[2] - pz
+        if rx_deg != 0 or ry_deg != 0 or rz_deg != 0:
+            lx, ly, lz = _rotate_pt_euler(
+                lx, ly, lz,
+                math.radians(rx_deg),
+                math.radians(ry_deg),
+                math.radians(rz_deg)
+            )
+        world_x, world_y, world_z = lx + px, ly + py, lz + pz
+        x1 = world_x * cy + world_z * sy
+        y1 = world_y
+        z1 = -world_x * sy + world_z * cy
+        x2 = x1
+        y2 = y1 * cp - z1 * sp
+        z2 = y1 * sp + z1 * cp
+        return x2, y2, z2
+
+    def process_box(b_info, is_overlay=False):
+        part_name = b_info["name"]
+        exp = b_info.get("expand", 0.35) if is_overlay else 0.0
+        x0, x1, y0, y1, z0, z1 = b_info["bounds"]
+        x0, x1 = x0 - exp, x1 + exp
+        y0, y1 = y0 - exp, y1 + exp
+        z0, z1 = z0 - exp, z1 + exp
+        uv_dict = b_info["overlay"] if is_overlay else b_info["uv"]
+
+        face_defs = {
+            "front": {
+                "pts": [(x0, y1, z1), (x1, y1, z1), (x1, y0, z1), (x0, y0, z1)],
+                "normal": (0, 0, 1),
+            },
+            "back": {
+                "pts": [(x1, y1, z0), (x0, y1, z0), (x0, y0, z0), (x1, y0, z0)],
+                "normal": (0, 0, -1),
+            },
+            "top": {
+                "pts": [(x0, y1, z0), (x1, y1, z0), (x1, y1, z1), (x0, y1, z1)],
+                "normal": (0, 1, 0),
+            },
+            "bottom": {
+                "pts": [(x0, y0, z1), (x1, y0, z1), (x1, y0, z0), (x0, y0, z0)],
+                "normal": (0, -1, 0),
+            },
+            "right": {
+                "pts": [(x0, y1, z0), (x0, y1, z1), (x0, y0, z1), (x0, y0, z0)],
+                "normal": (-1, 0, 0),
+            },
+            "left": {
+                "pts": [(x1, y1, z1), (x1, y1, z0), (x1, y0, z0), (x1, y0, z1)],
+                "normal": (1, 0, 0),
+            },
+        }
+
+        for face_name, f_info in face_defs.items():
+            uv_rect = uv_dict.get(face_name)
+            if not uv_rect:
+                continue
+
+            cam_pts = [transform_pt(pt, part_name) for pt in f_info["pts"]]
+            p0, p1, p3 = cam_pts[0], cam_pts[1], cam_pts[3]
+            v1 = (p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2])
+            v2 = (p3[0] - p0[0], p3[1] - p0[1], p3[2] - p0[2])
+            nx = v2[1] * v1[2] - v2[2] * v1[1]
+            ny = v2[2] * v1[0] - v2[0] * v1[2]
+            nz = v2[0] * v1[1] - v2[1] * v1[0]
+            n_len = math.sqrt(nx * nx + ny * ny + nz * nz)
+            if n_len < 1e-6:
+                continue
+            nx, ny, nz = nx / n_len, ny / n_len, nz / n_len
+
+            if nz <= 0.001:
+                continue
+
+            screen_pts = []
+            z_sum = 0.0
+            for pt in cam_pts:
+                sx = cx + pt[0] * scale
+                sy_pos = cy_scr - pt[1] * scale
+                screen_pts.append((sx, sy_pos))
+                z_sum += pt[2]
+
+            avg_z = z_sum / 4.0
+            if is_overlay:
+                avg_z += 0.05
+
+            dot = max(0.0, nx * lx + ny * ly + nz * lz)
+            light_mult = 0.55 + 0.45 * dot
+            if face_name == "top":
+                light_mult *= 1.15
+            elif face_name == "bottom":
+                light_mult *= 0.6
+            elif face_name in ("right", "left"):
+                light_mult *= 0.88
+            light_mult = min(1.25, max(0.4, light_mult))
+
+            faces_to_draw.append({
+                "screen_pts": screen_pts,
+                "avg_z": avg_z,
+                "uv_rect": uv_rect,
+                "light_mult": light_mult,
+                "is_overlay": is_overlay,
+            })
+
+    for b in boxes:
+        process_box(b, is_overlay=False)
+        process_box(b, is_overlay=True)
+
+    faces_to_draw.sort(key=lambda f: f["avg_z"])
+
+    canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+
+    # Soft ambient pedestal shadow at character's feet
+    shadow_y = cy_scr - (-16.0) * scale
+    draw.ellipse(
+        [cx - 42, shadow_y - 10, cx + 42, shadow_y + 10],
+        fill=(0, 0, 0, 40)
+    )
+
+    for f in faces_to_draw:
+        uv = f["uv_rect"]
+        tex = skin.crop(uv)
+        if f["is_overlay"] and tex.getextrema()[3][1] == 0:
+            continue
+
+        mult = f["light_mult"]
+        if abs(mult - 1.0) > 0.03:
+            enhancer = ImageEnhance.Brightness(tex)
+            tex = enhancer.enhance(mult)
+
+        s_pts = f["screen_pts"]
+        dst_p0, dst_p1, dst_p2, dst_p3 = s_pts
+
+        xs = [p[0] for p in s_pts]
+        ys = [p[1] for p in s_pts]
+        min_x = int(math.floor(min(xs)))
+        max_x = int(math.ceil(max(xs)))
+        min_y = int(math.floor(min(ys)))
+        max_y = int(math.ceil(max(ys)))
+
+        bw = max_x - min_x + 1
+        bh = max_y - min_y + 1
+        if bw <= 0 or bh <= 0:
+            continue
+
+        rel_dst = [
+            (dst_p0[0] - min_x, dst_p0[1] - min_y),
+            (dst_p1[0] - min_x, dst_p1[1] - min_y),
+            (dst_p3[0] - min_x, dst_p3[1] - min_y),
+        ]
+
+        tw, th = tex.size
+        src_corners = [(0, 0), (tw, 0), (0, th)]
+
+        coeffs = _find_affine_coeffs(rel_dst, src_corners)
+        if not coeffs:
+            continue
+
+        warped = tex.transform((bw, bh), Image.Transform.AFFINE, coeffs, resample=Image.Resampling.NEAREST)
+
+        mask = Image.new("L", (bw, bh), 0)
+        mask_draw = ImageDraw.Draw(mask)
+        poly_pts = [(p[0] - min_x, p[1] - min_y) for p in s_pts]
+        mask_draw.polygon(poly_pts, fill=255)
+
+        r, g, b_ch, a_ch = warped.split()
+        final_alpha = Image.composite(a_ch, Image.new("L", (bw, bh), 0), mask)
+        warped.putalpha(final_alpha)
+
+        canvas.alpha_composite(warped, (min_x, min_y))
+
+    return canvas
+
+
+def render_3d_skin_bytes(
+    skin_input: Path | str | bytes | Image.Image,
+    yaw_deg: float = -25.0,
+    pitch_deg: float = 10.0,
+    model: str = "classic",
+    pose: str = "hero",
+    width: int = 240,
+    height: int = 340,
+    scale: float = 8.5,
+) -> bytes:
+    """Renders a 3D character preview and returns the PNG encoded bytes."""
+    img = None
+    if isinstance(skin_input, Image.Image):
+        img = skin_input
+    elif isinstance(skin_input, (str, Path)):
+        path = Path(skin_input)
+        if path.is_file():
+            img = Image.open(path)
+    elif isinstance(skin_input, (bytes, bytearray)):
+        img = Image.open(io.BytesIO(skin_input))
+
+    if img is None:
+        img = get_default_skin(model)
+
+    rendered = render_3d_skin(
+        img,
+        yaw_deg=yaw_deg,
+        pitch_deg=pitch_deg,
+        model=model,
+        pose=pose,
+        width=width,
+        height=height,
+        scale=scale,
+    )
+    buf = io.BytesIO()
+    rendered.save(buf, format="PNG", compress_level=1)
     return buf.getvalue()
 
 
@@ -713,6 +1157,16 @@ def prune_skin_cache(max_cached_skins: int = 150, max_age_days: int = 14) -> int
         if any(stem == p or stem.startswith(p) for p in protected_prefixes):
             continue
 
+        # Instantly purge generic Steve/Alex fallback duplicates
+        if item.suffix.lower() == ".png" and item.name.startswith("ely_"):
+            try:
+                h = hashlib.md5(item.read_bytes()).hexdigest()
+                if h in {"6b751644d13c7c7a1fb320042a1e0e9e", "e5a2e67dba2c2d6bb80817a1c9211036"}:
+                    item.unlink(missing_ok=True)
+                    continue
+            except OSError:
+                pass
+
         try:
             mtime = item.stat().st_mtime
             candidate_files.append((mtime, item))
@@ -745,6 +1199,9 @@ def prune_skin_cache(max_cached_skins: int = 150, max_age_days: int = 14) -> int
                 pass
 
     return pruned
+
+
+clean_old_skins_cache = prune_skin_cache
 
 
 class LocalSkinServer:
@@ -926,10 +1383,16 @@ class LocalSkinServer:
                     try:
                         resp = requests.get(f"https://minotar.net/skin/{req_name}", timeout=1.5)
                         if resp.status_code == 200 and len(resp.content) > 100:
-                            try:
-                                user_cache.write_bytes(resp.content)
-                            except OSError:
-                                pass
+                            h = hashlib.md5(resp.content).hexdigest()
+                            # Do not pollute disk with duplicate default Steve fallbacks
+                            if h not in {"6b751644d13c7c7a1fb320042a1e0e9e", "e5a2e67dba2c2d6bb80817a1c9211036"}:
+                                try:
+                                    user_cache.write_bytes(resp.content)
+                                except OSError:
+                                    pass
+                            else:
+                                with outer._cache_lock:
+                                    outer._negative_cache[req_clean] = now + 86400.0
                             self.send_response(200)
                             self.send_header("Content-Type", "image/png")
                             self.send_header("Content-Length", str(len(resp.content)))
@@ -1016,6 +1479,11 @@ def prepare_skin_launch(
             legacy_cache = Path(minecraft_dir) / "assets" / "skins" / clean_name[:2] / clean_name
             if legacy_cache.is_file():
                 legacy_cache.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    try:
+        threading.Thread(target=clean_old_skins_cache, daemon=True).start()
     except Exception:
         pass
 
