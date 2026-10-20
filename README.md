@@ -16,7 +16,7 @@ A sleek, lightweight, and modern Minecraft launcher built with Python and [Flet]
   - Quilt
   - Forge
   - NeoForge
-- **Custom Skin & Cape Integration**:
+- **Custom Skin Integration**:
   - Full **Ely.by** account authentication and skin syncing.
   - Offline & local custom skin management (PNG upload, Steve/Alex models).
   - Built-in Java companion agent (`gr8-skin-bridge`) ensuring custom skins render seamlessly in multiplayer and offline sessions.
