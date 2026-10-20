@@ -66,29 +66,6 @@ A sleek, lightweight, and modern Minecraft launcher built with Python and [Flet]
 
 ---
 
-## 🔨 Building the Standalone App
-
-To package the launcher into a standalone Windows executable:
-
-```powershell
-flet pack main.py `
-  --name "Minecraft Launcher" `
-  --icon ".assets\icons\gr8_icon_r_256.ico" `
-  --product-name "Gr8Works Minecraft Launcher" `
-  --file-description "Gr8Works Minecraft Launcher" `
-  --company-name "Gr8Works" `
-  --product-version "1.2.0" `
-  --file-version "1.2.0.0" `
-  --copyright "Copyright (c) 2026 Gr8Works" `
-  --add-data ".assets;.assets" `
-  --add-data "tools;tools" `
-  -y
-```
-
-The resulting binary will be placed in the `dist/` directory.
-
----
-
 ## 📂 Project Structure
 
 ```text
