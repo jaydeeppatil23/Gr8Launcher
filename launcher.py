@@ -13,11 +13,18 @@ from pathlib import Path
 
 import requests
 import minecraft_launcher_lib
-from storage import load_pending_installations, save_pending_installations
+import ely_auth
+from storage import (
+	load_pending_installations,
+	save_pending_installations,
+	get_active_account,
+	add_or_update_account,
+)
 from skins import (
 	prepare_skin_launch,
 	sync_playerdata_uuids,
 )
+import banners
 
 
 minecraft_directory = minecraft_launcher_lib.utils.get_minecraft_directory()
@@ -216,6 +223,9 @@ def get_installed_versions(force_refresh: bool = False) -> list[dict[str, str]]:
 		elif "forge" in main_class or "-forge-" in lowered_id:
 			loader = "Forge"
 			loader_version = version_id.rsplit("-forge-", 1)[-1]
+		elif "optifine" in main_class or "optifine" in lowered_id:
+			loader = "OptiFine"
+			loader_version = version_id.split("-OptiFine_", 1)[-1] if "-OptiFine_" in version_id else (version_id.split("-optifine_", 1)[-1] if "-optifine_" in version_id else "OptiFine")
 
 		records.append(
 			{
@@ -284,7 +294,16 @@ def get_external_installations() -> list[dict[str, object]]:
 
 	external = []
 	for profile_id, profile in profiles.items():
-		if not isinstance(profile, dict) or profile.get("type") != "custom":
+		if not isinstance(profile, dict):
+			continue
+
+		ptype = str(profile.get("type", "")).strip().lower()
+		last_ver = str(profile.get("lastVersionId") or "").strip()
+		pname = str(profile.get("name") or "").strip()
+
+		if not last_ver:
+			continue
+		if ptype in ("latest-release", "latest-snapshot") and not pname:
 			continue
 
 		game_dir = profile.get("gameDir")
@@ -306,16 +325,16 @@ def get_external_installations() -> list[dict[str, object]]:
 			{
 				"id": str(profile_id),
 				"name": str(
-					profile.get("name")
-					or profile.get("lastVersionId")
+					pname
+					or last_ver
 					or "External installation"
 				),
-				"version_id": str(
-					profile.get("lastVersionId") or "Version not selected"
-				),
+				"version_id": last_ver,
 				"is_instance": is_instance,
 				"instance_name": instance_name,
 				"game_directory": resolved_game_dir,
+				"icon": str(profile.get("icon") or ""),
+				"java_args": str(profile.get("javaArgs") or ""),
 			}
 		)
 	return external
@@ -331,88 +350,133 @@ def import_external_installations(
 	installed_by_id = {
 		version["version_id"]: version for version in installed_versions
 	}
-	known_profile_versions = {
-		profile.get("version_id") or profile.get("minecraft_version")
-		for profile in installations
-		if not profile.get("is_instance")
-	}
-	known_game_dirs = {
-		str(Path(p["game_directory"]).resolve())
-		for p in installations
-		if p.get("game_directory")
-	}
 	version_types = {version["id"]: version.get("type") for version in version_catalog}
 	imported_installations = list(installations)
 	handled_ids = set(handled_profile_ids)
 	changed = False
 
-	# Upgrade any existing installations if their external profile has instance/custom dir info
-	ext_by_id = {p["id"]: p for p in external_profiles}
-	for inst in imported_installations:
-		ext_id = inst.get("external_profile_id")
-		if ext_id and ext_id in ext_by_id:
-			ext_prof = ext_by_id[ext_id]
-			if ext_prof.get("is_instance") and not inst.get("is_instance"):
-				inst["is_instance"] = True
-				inst["instance_name"] = str(ext_prof.get("instance_name", ""))
-				inst["game_directory"] = str(ext_prof.get("game_directory", ""))
-				changed = True
-				if inst["game_directory"]:
-					try:
-						known_game_dirs.add(str(Path(inst["game_directory"]).resolve()))
-					except Exception:
-						pass
-
 	for external_profile in external_profiles:
 		external_id = str(external_profile["id"])
-		if external_id in handled_ids:
-			continue
-
 		version_id = str(external_profile["version_id"])
 		version_info = installed_by_id.get(version_id)
 		if version_info is None:
+			ver_path = Path(minecraft_directory) / "versions" / version_id / f"{version_id}.json"
+			if ver_path.is_file():
+				try:
+					vmeta = json.loads(ver_path.read_text(encoding="utf-8"))
+					mc_ver = vmeta.get("inheritsFrom", version_id)
+					main_cls = vmeta.get("mainClass", "").lower()
+					lowered = version_id.lower()
+					ldr = "Vanilla"
+					ldr_ver = ""
+					if "fabric" in main_cls or lowered.startswith("fabric-loader-"):
+						ldr = "Fabric"
+						ldr_ver = _loader_version_from_id(version_id, "fabric-loader-", mc_ver)
+					elif "quilt" in main_cls or lowered.startswith("quilt-loader-"):
+						ldr = "Quilt"
+						ldr_ver = _loader_version_from_id(version_id, "quilt-loader-", mc_ver)
+					elif "neoforge" in main_cls or lowered.startswith("neoforge-"):
+						ldr = "NeoForge"
+						ldr_ver = _loader_version_from_id(version_id, "neoforge-", mc_ver)
+					elif "forge" in main_cls or "-forge-" in lowered:
+						ldr = "Forge"
+						ldr_ver = version_id.rsplit("-forge-", 1)[-1]
+					elif "optifine" in main_cls or "optifine" in lowered:
+						ldr = "OptiFine"
+						ldr_ver = version_id.split("-OptiFine_", 1)[-1] if "-OptiFine_" in version_id else (version_id.split("-optifine_", 1)[-1] if "-optifine_" in version_id else "OptiFine")
+					version_info = {
+						"version_id": version_id,
+						"minecraft_version": mc_ver,
+						"loader": ldr,
+						"loader_version": ldr_ver,
+					}
+					installed_by_id[version_id] = version_info
+				except Exception:
+					pass
+		if version_info is None:
 			continue
 
-		handled_ids.add(external_id)
-		changed = True
 		is_inst = bool(external_profile.get("is_instance", False))
 		ext_game_dir = str(external_profile.get("game_directory", "") or "")
-		if is_inst and ext_game_dir:
-			try:
-				if str(Path(ext_game_dir).resolve()) in known_game_dirs:
-					continue
-			except Exception:
-				pass
-		elif not is_inst and version_id in known_profile_versions:
-			continue
+		ext_name = str(external_profile.get("name") or version_info["minecraft_version"])
 
-		imported_installations.append(
-			{
-				"id": f"minecraft-launcher:{external_id}",
-				"name": str(external_profile["name"]),
-				"loader": version_info["loader"],
-				"channel": (
-					"Snapshot"
-					if version_types.get(version_info["minecraft_version"]) == "snapshot"
-					else "Release"
-				),
-				"minecraft_version": version_info["minecraft_version"],
-				"loader_version": version_info["loader_version"],
-				"version_id": version_id,
-				"source": "minecraft_launcher",
-				"external_profile_id": external_id,
-				"is_instance": is_inst,
-				"instance_name": str(external_profile.get("instance_name", "")),
-				"game_directory": ext_game_dir,
-			}
-		)
-		if ext_game_dir:
-			try:
-				known_game_dirs.add(str(Path(ext_game_dir).resolve()))
-			except Exception:
-				pass
-		if not is_inst:
-			known_profile_versions.add(version_id)
+		matched_inst = None
+		for inst in imported_installations:
+			if inst.get("external_profile_id") == external_id or inst.get("id") == f"minecraft-launcher:{external_id}":
+				matched_inst = inst
+				break
+			if is_inst and inst.get("is_instance") and ext_game_dir and inst.get("game_directory"):
+				try:
+					if Path(inst["game_directory"]).resolve() == Path(ext_game_dir).resolve():
+						matched_inst = inst
+						break
+				except Exception:
+					pass
+			elif not is_inst and not inst.get("is_instance") and inst.get("version_id") == version_id:
+				matched_inst = inst
+				break
+
+		icon_data = str(external_profile.get("icon") or "").strip()
+		custom_banner_path = None
+		if icon_data.startswith("data:image/") or len(icon_data) > 100:
+			# Decode base64 icon and save it as custom banner
+			custom_banner_path = banners.save_base64_icon_as_banner(f"minecraft-launcher:{external_id}", icon_data)
+			if not custom_banner_path:
+				custom_banner_path = banners.save_base64_icon_as_banner(external_id, icon_data)
+
+		if matched_inst is not None:
+			if custom_banner_path and not matched_inst.get("custom_banner"):
+				matched_inst["custom_banner"] = custom_banner_path
+				changed = True
+			if ext_name and matched_inst.get("name") != ext_name:
+				matched_inst["name"] = ext_name
+				changed = True
+			if matched_inst.get("external_profile_id") != external_id:
+				matched_inst["external_profile_id"] = external_id
+				changed = True
+			if matched_inst.get("source") != "minecraft_launcher":
+				matched_inst["source"] = "minecraft_launcher"
+				changed = True
+			if is_inst:
+				if not matched_inst.get("is_instance") or matched_inst.get("game_directory") != ext_game_dir:
+					matched_inst["is_instance"] = True
+					matched_inst["instance_name"] = str(external_profile.get("instance_name", ""))
+					matched_inst["game_directory"] = ext_game_dir
+					changed = True
+			if matched_inst.get("loader") != version_info["loader"]:
+				matched_inst["loader"] = version_info["loader"]
+				changed = True
+			if matched_inst.get("loader_version") != version_info["loader_version"]:
+				matched_inst["loader_version"] = version_info["loader_version"]
+				changed = True
+			if matched_inst.get("minecraft_version") != version_info["minecraft_version"]:
+				matched_inst["minecraft_version"] = version_info["minecraft_version"]
+				changed = True
+			handled_ids.add(external_id)
+		elif external_id not in handled_ids:
+			imported_installations.append(
+				{
+					"id": f"minecraft-launcher:{external_id}",
+					"name": ext_name,
+					"loader": version_info["loader"],
+					"channel": (
+						"Snapshot"
+						if version_types.get(version_info["minecraft_version"]) == "snapshot"
+						else "Release"
+					),
+					"minecraft_version": version_info["minecraft_version"],
+					"loader_version": version_info["loader_version"],
+					"version_id": version_id,
+					"source": "minecraft_launcher",
+					"external_profile_id": external_id,
+					"is_instance": is_inst,
+					"instance_name": str(external_profile.get("instance_name", "")),
+					"game_directory": ext_game_dir,
+					"custom_banner": custom_banner_path or "",
+				}
+			)
+			handled_ids.add(external_id)
+			changed = True
 
 	if changed:
 		invalidate_installed_versions_cache()
@@ -968,13 +1032,48 @@ async def start_game(
 	callback["setStatus"]("Building launch command...")
 	game_dir = str(target.get("game_directory") or minecraft_directory)
 	Path(game_dir).mkdir(parents=True, exist_ok=True)
-	offline_uuid = generate_offline_uuid(username)
+
+	active_account = get_active_account()
+	account_type = active_account.get("type", "offline")
+	account_username = str(active_account.get("username", username)).strip() or username or "Player"
+
+	offline_uuid = generate_offline_uuid(account_username)
 	active_uuid = offline_uuid
+	active_token = ""
 	skin_server_instance = None
+
+	if account_type == "ely":
+		ely_uuid = str(active_account.get("uuid", "")).replace("-", "").strip()
+		access_token = str(active_account.get("access_token", "")).strip()
+		client_token = str(active_account.get("client_token", "")).strip()
+
+		if ely_uuid:
+			active_uuid = ely_uuid
+
+		if online_available and access_token:
+			callback["setStatus"]("Verifying Ely.by session...")
+			is_valid = await asyncio.to_thread(ely_auth.validate_token, access_token, client_token)
+			if not is_valid and client_token:
+				callback["setStatus"]("Refreshing Ely.by session...")
+				refreshed = await asyncio.to_thread(ely_auth.refresh_token, access_token, client_token)
+				if refreshed and refreshed.get("access_token"):
+					active_account["access_token"] = refreshed["access_token"]
+					if refreshed.get("uuid"):
+						active_account["uuid"] = refreshed["uuid"]
+						active_uuid = str(refreshed["uuid"]).replace("-", "")
+					if refreshed.get("username"):
+						active_account["username"] = refreshed["username"]
+						account_username = refreshed["username"]
+					access_token = refreshed["access_token"]
+					add_or_update_account(active_account)
+				else:
+					access_token = ""
+			active_token = access_token
+
 	launch_options = {
-		"username": username,
-		"uuid": offline_uuid,
-		"token": "",
+		"username": account_username,
+		"uuid": active_uuid,
+		"token": active_token,
 		"launcherName": "Gr8 Launcher",
 		"launcherVersion": "1.0",
 		"gameDirectory": game_dir,
@@ -990,15 +1089,18 @@ async def start_game(
 			f"-Xmx{int((settings or {}).get('ram_mb', 4096))}M",
 		],
 	}
-	if (settings or {}).get("enable_custom_skins", True):
+
+	# Skin system is ONLY active for Ely.by accounts.
+	# Offline mode strictly disables custom skins and skin bridge (defaults to vanilla Steve/Alex).
+	if account_type == "ely" and (settings or {}).get("enable_custom_skins", True):
 		active_uuid, skin_jvm_args, skin_server_instance = prepare_skin_launch(
-			username=username,
+			username=account_username,
 			game_dir=game_dir,
 			minecraft_dir=minecraft_directory,
 			is_online=online_available,
 		)
 		launch_options["jvmArguments"].extend(skin_jvm_args)
-	launch_options["uuid"] = active_uuid
+		launch_options["uuid"] = active_uuid
 	java_path = str((settings or {}).get("java_path", "")).strip()
 	if java_path:
 		launch_options["executablePath"] = java_path

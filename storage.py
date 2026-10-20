@@ -79,6 +79,7 @@ PROFILE_OPTIONS_FILE = DATA_DIR / "profile_n_options.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 PENDING_INSTALLATIONS_FILE = DATA_DIR / "pending_installations.json"
 ACCOUNT_PICTURES_DIR = get_account_pictures_dir()
+ACCOUNTS_FILE = DATA_DIR / "accounts.json"
 
 DEFAULT_SETTINGS: dict[str, object] = {
     "ram_mb": 4096,
@@ -88,7 +89,6 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "fullscreen": False,
     "launch_action": "Hide launcher",
     "capture_logs": True,
-    "show_installation_directory": True,
     "enable_orbs": True,
     "enable_custom_skins": True,
 }
@@ -115,7 +115,6 @@ def load_settings() -> dict[str, object]:
     for key in (
         "fullscreen",
         "capture_logs",
-        "show_installation_directory",
         "enable_orbs",
         "enable_custom_skins",
     ):
@@ -343,3 +342,185 @@ def save_pending_installations(version_ids: set[str]) -> bool:
             pass
         return False
     return True
+
+
+# =============================================================================
+# Account Storage and Management (Offline & Ely.by Accounts)
+# =============================================================================
+
+def load_accounts() -> dict[str, object]:
+    """Loads accounts from accounts.json.
+    If missing or invalid, initializes from legacy player_name and creates an offline account.
+    """
+    try:
+        document = json.loads(ACCOUNTS_FILE.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        document = None
+
+    if isinstance(document, dict) and isinstance(document.get("accounts"), list):
+        accounts = [acc for acc in document["accounts"] if isinstance(acc, dict) and "id" in acc]
+        active_id = document.get("active_account_id")
+        if accounts:
+            if not active_id or not any(acc.get("id") == active_id for acc in accounts):
+                active_id = accounts[0]["id"]
+            return {"active_account_id": active_id, "accounts": accounts}
+
+    # Initialize from existing profile options
+    current_name = load_profile_options().get("player_name", "").strip() or "Player"
+    default_account = {
+        "id": "offline_default",
+        "type": "offline",
+        "username": current_name,
+        "created_at": 0,
+    }
+    initial_data = {
+        "active_account_id": "offline_default",
+        "accounts": [default_account],
+    }
+    save_accounts(initial_data)
+    return initial_data
+
+
+def save_accounts(accounts_data: dict[str, object]) -> bool:
+    """Saves accounts data dictionary to accounts.json."""
+    temporary_file = ACCOUNTS_FILE.with_suffix(".tmp")
+    try:
+        ACCOUNTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temporary_file.write_text(json.dumps(accounts_data, indent=2), encoding="utf-8")
+        temporary_file.replace(ACCOUNTS_FILE)
+    except (OSError, TypeError, ValueError):
+        try:
+            temporary_file.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+    return True
+
+
+def get_active_account() -> dict[str, object]:
+    """Returns the currently active account dictionary."""
+    data = load_accounts()
+    active_id = data.get("active_account_id")
+    accounts = data.get("accounts", [])
+    for acc in accounts:
+        if acc.get("id") == active_id:
+            return acc
+    if accounts:
+        return accounts[0]
+    return {"id": "offline_default", "type": "offline", "username": "Player"}
+
+
+def set_active_account(account_id: str) -> bool:
+    """Sets the active account by account ID and syncs legacy player_name."""
+    data = load_accounts()
+    accounts = data.get("accounts", [])
+    matched = None
+    for acc in accounts:
+        if acc.get("id") == account_id:
+            matched = acc
+            break
+    if not matched:
+        return False
+
+    data["active_account_id"] = account_id
+    success = save_accounts(data)
+    if success:
+        uname = matched.get("username", "")
+        prof = load_profile_options()
+        save_profile_options(uname, prof.get("last_selected_button", ""), prof.get("profile_picture_path", ""))
+    return success
+
+
+def add_or_update_account(account: dict[str, object], set_as_active: bool = True) -> bool:
+    """Adds a new account or updates an existing one (matched by ID or Ely UUID)."""
+    data = load_accounts()
+    accounts = data.get("accounts", [])
+    acc_id = account.get("id")
+    if not acc_id:
+        return False
+
+    updated = False
+    for i, existing in enumerate(accounts):
+        if existing.get("id") == acc_id or (
+            existing.get("type") == "ely"
+            and account.get("type") == "ely"
+            and existing.get("uuid")
+            and existing.get("uuid") == account.get("uuid")
+        ):
+            accounts[i] = account
+            updated = True
+            break
+
+    if not updated:
+        accounts.append(account)
+
+    data["accounts"] = accounts
+    if set_as_active:
+        data["active_account_id"] = account.get("id")
+
+    success = save_accounts(data)
+    if success and set_as_active:
+        prof = load_profile_options()
+        save_profile_options(
+            account.get("username", ""),
+            prof.get("last_selected_button", ""),
+            prof.get("profile_picture_path", ""),
+        )
+    return success
+
+
+def remove_account(account_id: str) -> bool:
+    """Removes an account. Preserves at least one offline account."""
+    data = load_accounts()
+    accounts = data.get("accounts", [])
+    if not any(acc.get("id") == account_id for acc in accounts):
+        return False
+
+    remaining = [acc for acc in accounts if acc.get("id") != account_id]
+    if not remaining:
+        remaining = [{"id": "offline_default", "type": "offline", "username": "Player"}]
+
+    active_id = data.get("active_account_id")
+    if active_id == account_id:
+        active_id = remaining[0].get("id")
+
+    data["active_account_id"] = active_id
+    data["accounts"] = remaining
+    success = save_accounts(data)
+    if success:
+        for acc in remaining:
+            if acc.get("id") == active_id:
+                prof = load_profile_options()
+                save_profile_options(
+                    acc.get("username", ""),
+                    prof.get("last_selected_button", ""),
+                    prof.get("profile_picture_path", ""),
+                )
+                break
+    return success
+
+
+def update_offline_username(username: str) -> bool:
+    """Updates the offline account username."""
+    clean_name = username.strip() or "Player"
+    data = load_accounts()
+    accounts = data.get("accounts", [])
+    found = False
+    for acc in accounts:
+        if acc.get("type") == "offline":
+            acc["username"] = clean_name
+            found = True
+            break
+    if not found:
+        accounts.append({"id": "offline_default", "type": "offline", "username": clean_name})
+
+    data["accounts"] = accounts
+    success = save_accounts(data)
+    if success and get_active_account().get("type") == "offline":
+        prof = load_profile_options()
+        save_profile_options(
+            clean_name,
+            prof.get("last_selected_button", ""),
+            prof.get("profile_picture_path", ""),
+        )
+    return success

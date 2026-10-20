@@ -20,6 +20,9 @@ from pathlib import Path
 from PIL import Image
 import skins
 import banners
+import state
+from ui_options import build_options_views
+from ui_skins import build_skins_view as build_skins_view_external
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -55,7 +58,7 @@ from storage import (
     save_profile_options,
     save_settings,
     save_theme_choice,
-    get_account_pictures_dir,
+    get_active_account,
 )
 
 ASSETS_DIR = Path(__file__).resolve().parent / ".assets"
@@ -92,7 +95,7 @@ def get_random_thought() -> str:
 
 
 def main(page: ft.Page):
-    page.window.icon = str(ASSETS_DIR / "icons" / "gr8_icon_r_256.ico")
+    page.window.icon = str(ASSETS_DIR / "icons" / "gr8_icon_r_128.ico")
     available_themes = get_theme_names()
     installations = load_installations()
     profile_options = load_profile_options()
@@ -101,13 +104,11 @@ def main(page: ft.Page):
     settings["ram_mb"] = min(
         maximum_memory_mb, max(256, int(settings.get("ram_mb", 4096)))
     )
-    player_name_state = {"value": profile_options["player_name"]}
-    launch_selection = {"key": profile_options["last_selected_button"]}
-    profile_pictures_directory = get_account_pictures_dir()
-    saved_picture_path = profile_options["profile_picture_path"]
-    profile_picture_state = {
-        "path": saved_picture_path if saved_picture_path and Path(saved_picture_path).is_file() else ""
-    }
+    player_name_state = state.player_name_state
+    player_name_state["value"] = profile_options["player_name"]
+    launch_selection = state.launch_selection
+    launch_selection["key"] = profile_options["last_selected_button"]
+    profile_picture_state = state.profile_picture_state
     version_catalog, local_latest_release = get_local_version_catalog()
     latest_release_id = load_latest_release_id() or local_latest_release
     online_available = False
@@ -140,38 +141,17 @@ def main(page: ft.Page):
 
     theme_choice = load_theme_choice(available_themes)
     theme = get_theme(theme_choice)
-    selected_theme = {"name": theme_choice}
-    active_page = {"name": "home"}
-    refresh_state = {"running": False}
-    connectivity_known = {"value": False}
-    navigation_state = {"navigate": None}
-    notification_state = {"show": None, "pending": None, "epoch": 0}
-    # Startup ripple: controls registered here start hidden and pop in one by one.
-    intro_state = {"pending": True, "running": False, "targets": []}
-    options_background_state = {"animation_running": False}
-    danger_zone_state = {"expanded": False}
-    launcher_log_state = {
-        "lines": [],
-        "list": None,
-        "open": False,
-        "running": False,
-        "downloading": False,
-        "game_started": False,
-        "cancelling": False,
-        "cancel_event": None,
-        "play_button": None,
-        "refresh_play_button": None,
-        "target_version_id": None,
-        "target_profile_id": None,
-        "status": None,
-        "progress": 0,
-        "eta": "",
-        "status_control": None,
-        "progress_control": None,
-        "eta_control": None,
-        "animation_running": False,
-        "new_installation_button": None,
-    }
+    selected_theme = state.selected_theme
+    selected_theme["name"] = theme_choice
+    active_page = state.active_page
+    refresh_state = state.refresh_state
+    connectivity_known = state.connectivity_known
+    navigation_state = state.navigation_state
+    notification_state = state.notification_state
+    intro_state = state.intro_state
+    options_background_state = state.options_background_state
+    danger_zone_state = state.danger_zone_state
+    launcher_log_state = state.launcher_log_state
     page.title = "Gr8 Launcher"
     page.window.width = 1000
     page.window.height = 650
@@ -185,8 +165,6 @@ def main(page: ft.Page):
     page.window.prevent_close = False
     page.window.title_bar_hidden = True
     page.fonts = {"mojangles": str(ASSETS_DIR / "font" / "mojangles-v2.otf")}
-    account_picture_picker = ft.FilePicker()
-    page.services.append(account_picture_picker)
     clipboard_service = ft.Clipboard()
     page.services.append(clipboard_service)
 
@@ -233,111 +211,13 @@ def main(page: ft.Page):
         ]
 
 
-    TAB_BTN_WIDTH = 58
-    TAB_BTN_HEIGHT = 38
-    TAB_GAP = 4
-    TAB_PITCH = TAB_BTN_WIDTH + TAB_GAP
-
-    class NavigationTabs(ft.Container):
-        def __init__(self, tab_names, initial_index, on_tab_select, app_theme, tooltip_func):
-            self.tab_names = tab_names
-            self._selected_index = initial_index
-            self.app_theme = app_theme
-
-            self.tab_highlight = ft.Container(
-                left=initial_index * TAB_PITCH,
-                top=0,
-                width=TAB_BTN_WIDTH,
-                height=TAB_BTN_HEIGHT,
-                border_radius=8,
-                bgcolor=ft.Colors.with_opacity(0.18, app_theme["btn_primary"]),
-                animate_position=ft.Animation(200, ft.AnimationCurve.FAST_OUT_SLOWIN),
-            )
-
-            tab_defs = [
-                ("home", ft.Icons.HOME, "Home"),
-                ("installations", ft.Icons.FILE_DOWNLOAD_OUTLINED, "Profiles"),
-                ("skins", ft.Icons.CHECKROOM, "Skins"),
-                ("options", ft.Icons.TUNE, "Options"),
-            ]
-
-            self.buttons = []
-            for i, (t_name, t_icon, t_tip) in enumerate(tab_defs):
-                is_active = (i == initial_index)
-                btn_width = (
-                    TAB_BTN_WIDTH + TAB_GAP // 2
-                    if i == 0 or i == len(tab_defs) - 1
-                    else TAB_BTN_WIDTH + TAB_GAP
-                )
-                btn = ft.IconButton(
-                    icon=t_icon,
-                    icon_size=23,
-                    width=btn_width,
-                    height=TAB_BTN_HEIGHT,
-                    icon_color=(
-                        app_theme["btn_primary"]
-                        if is_active
-                        else app_theme["text_secondary"]
-                    ),
-                    tooltip=tooltip_func(t_tip),
-                    hover_color=ft.Colors.with_opacity(0.06, app_theme["btn_primary"]),
-                    style=ft.ButtonStyle(
-                        shape=ft.RoundedRectangleBorder(radius=8),
-                        overlay_color=ft.Colors.TRANSPARENT,
-                        mouse_cursor={
-                            ft.ControlState.DISABLED: ft.MouseCursor.BASIC,
-                            ft.ControlState.DEFAULT: ft.MouseCursor.CLICK,
-                        },
-                    ),
-                    on_click=lambda e, name=t_name: on_tab_select(name),
-                )
-                self.buttons.append(btn)
-
-            inner_stack = ft.Stack(
-                controls=[
-                    self.tab_highlight,
-                    ft.Row(
-                        controls=self.buttons,
-                        spacing=0,
-                        alignment=ft.MainAxisAlignment.CENTER,
-                    ),
-                ],
-                width=len(tab_names) * TAB_BTN_WIDTH + (len(tab_names) - 1) * TAB_GAP,
-                height=TAB_BTN_HEIGHT,
-            )
-
-            super().__init__(
-                content=inner_stack,
-                height=TAB_BTN_HEIGHT + 6,
-                border_radius=11,
-                bgcolor=ft.Colors.with_opacity(0.16, app_theme["surface"]),
-                padding=3,
-            )
-
-        @property
-        def selected_index(self):
-            return self._selected_index
-
-        @selected_index.setter
-        def selected_index(self, new_index):
-            if not (0 <= new_index < len(self.tab_names)):
-                return
-            self._selected_index = new_index
-            self.tab_highlight.left = new_index * TAB_PITCH
-            for i, btn in enumerate(self.buttons):
-                btn.icon_color = (
-                    self.app_theme["btn_primary"]
-                    if i == new_index
-                    else self.app_theme["text_secondary"]
-                )
-                try:
-                    btn.update()
-                except Exception:
-                    pass
-            try:
-                self.tab_highlight.update()
-            except Exception:
-                pass
+    from ui_components import (
+        NavigationTabs,
+        tooltip,
+        clickable_mouse_cursor,
+        window_button_style,
+        rounded_button_style,
+    )
 
     def build_page(theme_select, tab="home"):
         theme = get_theme(theme_select)
@@ -396,7 +276,7 @@ def main(page: ft.Page):
             title: ft.Control,
             content: ft.Control,
             actions: list[ft.Control],
-            modal: bool = True,
+            modal: bool = False,
             on_dismiss=None,
         ) -> ft.AlertDialog:
             def handle_dismiss(e):
@@ -416,14 +296,6 @@ def main(page: ft.Page):
                 on_dismiss=handle_dismiss,
             )
 
-        def tooltip(msg):
-            return ft.Tooltip(
-                message=msg,
-                bgcolor=theme["card"],
-                text_style=ft.TextStyle(color=theme["text_primary"], size=12),
-                padding=ft.Padding.symmetric(horizontal=8, vertical=4),
-                wait_duration=350,
-            )
         launcher_log_state["tooltip_func"] = tooltip
 
         def copy_to_clipboard(text: str, message: str = "Copied to clipboard!"):
@@ -853,7 +725,7 @@ def main(page: ft.Page):
                 if callable(callback):
                     page.run_task(callback)
             elif page_name == "options":
-                callback = globals().get("animate_options_background")
+                callback = options_background_state.get("animate")
                 if callable(callback):
                     page.run_task(callback)
 
@@ -873,604 +745,26 @@ def main(page: ft.Page):
             if enabled:
                 start_active_page_orb_animation()
 
+        from ui_installations import build_installation_editor as _build_installation_editor
+
         def build_installation_editor(profile=None, name_only=False):
-            existing_profile = profile or {}
-            loader_names = ["Vanilla", "Fabric", "Forge", "Quilt", "NeoForge"]
-            initial_loader = existing_profile.get("loader", "Vanilla")
-            if initial_loader not in loader_names:
-                initial_loader = "Vanilla"
-
-            installation_name_is_default = {
-                "value": not bool((existing_profile.get("name") or "").strip())
-            }
-            name_field = ft.TextField(
-                label="Profile Name",
-                value=existing_profile.get("name", ""),
-                hint_text="Defaults to the selected version",
-                border_color=theme["border"],
-                focused_border_color=theme["btn_primary"],
-                color=theme["text_primary"],
-                label_style=ft.TextStyle(color=theme["text_secondary"], size=13),
-                cursor_color=theme["btn_primary"],
-                fill_color=theme["card"],
-                border_radius=8,
-                expand=True,
-                on_change=lambda e: installation_name_is_default.update(
-                    value=False
-                ),
+            return _build_installation_editor(
+                profile=profile,
+                name_only=name_only,
+                page=page,
+                theme=theme,
+                settings=settings,
+                installations=installations,
+                handled_external_profile_ids=handled_external_profile_ids,
+                latest_release_id=latest_release_id,
+                version_catalog=version_catalog,
+                loader_catalog_cache=loader_catalog_cache,
+                navigate=navigate,
+                notify=notify,
+                online_available=online_available,
+                show_dialog_with_blur=show_dialog_with_blur,
+                close_dialog_with_blur=close_dialog_with_blur,
             )
-            loader_field = ft.Dropdown(
-                label="Type",
-                value=initial_loader,
-                options=[
-                    ft.DropdownOption(key=name, text=name) for name in loader_names
-                ],
-                border_color=theme["border"],
-                focused_border_color=theme["btn_primary"],
-                color=theme["text_primary"],
-                label_style=ft.TextStyle(color=theme["text_secondary"], size=13),
-                fill_color=theme["card"],
-                border_radius=8,
-                expand=True,
-            )
-            channel_field = ft.Dropdown(
-                label="Version channel",
-                value=existing_profile.get("channel", "Release") or "Release",
-                options=[
-                    ft.DropdownOption(key="Release", text="Release"),
-                    ft.DropdownOption(key="Snapshot", text="Snapshot"),
-                ],
-                border_color=theme["border"],
-                focused_border_color=theme["btn_primary"],
-                color=theme["text_primary"],
-                label_style=ft.TextStyle(color=theme["text_secondary"], size=13),
-                fill_color=theme["card"],
-                border_radius=8,
-                expand=True,
-            )
-
-            def get_minecraft_version_ids(loader_name, channel_name):
-                if loader_name == "Vanilla":
-                    version_type = channel_name.casefold()
-                    return [
-                        version["id"]
-                        for version in version_catalog
-                        if version.get("type") == version_type
-                    ]
-
-                cache_key = (loader_name.casefold(), "minecraft")
-                if cache_key not in loader_catalog_cache:
-                    try:
-                        loader_catalog_cache[cache_key] = get_mod_loader(
-                            loader_name
-                        ).get_minecraft_versions(False)
-                    except Exception:
-                        loader_catalog_cache[cache_key] = []
-                return loader_catalog_cache[cache_key]
-
-            def get_loader_version_ids(loader_name, minecraft_version):
-                if not minecraft_version:
-                    return []
-                cache_key = (loader_name.casefold(), minecraft_version)
-                if cache_key not in loader_catalog_cache:
-                    try:
-                        loader_catalog_cache[cache_key] = get_mod_loader(
-                            loader_name
-                        ).get_loader_versions(minecraft_version, False)
-                    except Exception:
-                        loader_catalog_cache[cache_key] = []
-                return loader_catalog_cache[cache_key]
-
-            selected_version = existing_profile.get("minecraft_version", "")
-            initial_mc_versions = (
-                []
-                if name_only
-                else get_minecraft_version_ids(
-                    initial_loader,
-                    channel_field.value or "Release",
-                )
-            )
-            if selected_version and selected_version not in initial_mc_versions:
-                initial_mc_versions.insert(0, selected_version)
-            version_field = ft.Dropdown(
-                label="Minecraft version",
-                value=selected_version
-                or (initial_mc_versions[0] if initial_mc_versions else None),
-                options=[
-                    ft.DropdownOption(key=version, text=version)
-                    for version in initial_mc_versions
-                ],
-                enable_filter=True,
-                on_select=lambda e: update_loader_versions(),
-                border_color=theme["border"],
-                focused_border_color=theme["btn_primary"],
-                color=theme["text_primary"],
-                label_style=ft.TextStyle(color=theme["text_secondary"], size=13),
-                fill_color=theme["card"],
-                border_radius=8,
-                expand=True,
-            )
-
-            def sync_default_installation_name():
-                if installation_name_is_default["value"]:
-                    name_field.value = (version_field.value or "").strip()
-
-            sync_default_installation_name()
-            initial_loader_versions = (
-                get_loader_version_ids(initial_loader, version_field.value)
-                if initial_loader != "Vanilla" and not name_only
-                else []
-            )
-            selected_loader_version = existing_profile.get("loader_version", "")
-            if (
-                selected_loader_version
-                and selected_loader_version not in initial_loader_versions
-            ):
-                initial_loader_versions.insert(0, selected_loader_version)
-            loader_version_field = ft.Dropdown(
-                label="Loader version",
-                value=selected_loader_version
-                or (initial_loader_versions[0] if initial_loader_versions else None),
-                options=[
-                    ft.DropdownOption(key=version, text=version)
-                    for version in initial_loader_versions
-                ],
-                visible=initial_loader != "Vanilla",
-                border_color=theme["border"],
-                focused_border_color=theme["btn_primary"],
-                color=theme["text_primary"],
-                label_style=ft.TextStyle(color=theme["text_secondary"], size=13),
-                fill_color=theme["card"],
-                border_radius=8,
-                expand=True,
-            )
-            form_error = ft.Text(color=theme["btn_primary"])
-
-            def set_form_error(message):
-                form_error.value = message
-                notify(message, ft.Icons.ERROR_OUTLINE)
-
-            is_instance_switch = build_themed_switch(
-                label="Separate Instance (Isolated Environment)",
-                value=bool(existing_profile.get("is_instance", False)),
-                on_change=lambda e: toggle_instance_mode(),
-            )
-            instance_hint = ft.Text(
-                "Gives this installation its own isolated folder for worlds, texture packs, options, and mods.",
-                size=12,
-                color=theme["text_secondary"],
-            )
-            instance_folder_field = ft.TextField(
-                label=" Instance Folder Name (Optional)",
-                value=existing_profile.get("instance_name", ""),
-                hint_text="e.g. My_Modded_MC",
-                border_color=theme["border"],
-                focused_border_color=theme["btn_primary"],
-                color=theme["text_primary"],
-                label_style=ft.TextStyle(color=theme["text_secondary"], size=13),
-                fill_color=theme["card"],
-                border_radius=8,
-                expand=True,
-                visible=bool(existing_profile.get("is_instance", False)),
-            )
-
-            def toggle_instance_mode(e=None):
-                instance_folder_field.visible = bool(is_instance_switch.value)
-                if is_instance_switch.value and not instance_folder_field.value:
-                    clean_name = re.sub(
-                        r"[^a-zA-Z0-9_\-]", "_", (name_field.value or "").strip()
-                    )
-                    if clean_name:
-                        instance_folder_field.value = clean_name
-                page.update()
-
-            def update_loader_versions(e=None):
-                selected_loader = loader_field.value or "Vanilla"
-                selected_mc_version = version_field.value or ""
-                loader_versions = (
-                    get_loader_version_ids(selected_loader, selected_mc_version)
-                    if selected_loader != "Vanilla"
-                    else []
-                )
-                current_loader_version = loader_version_field.value
-                if (
-                    current_loader_version
-                    and current_loader_version not in loader_versions
-                ):
-                    current_loader_version = None
-                loader_version_field.options = [
-                    ft.DropdownOption(key=version, text=version)
-                    for version in loader_versions
-                ]
-                loader_version_field.value = current_loader_version or (
-                    loader_versions[0] if loader_versions else None
-                )
-                sync_default_installation_name()
-                if selected_loader != "Vanilla" and not loader_versions:
-                    set_form_error(
-                        "No loader versions found for this Minecraft version."
-                    )
-                elif not form_error.value or form_error.value.startswith(
-                    "No loader versions"
-                ):
-                    form_error.value = ""
-                if e is not None:
-                    page.update()
-
-            def update_editor_fields(e=None):
-                if name_only:
-                    return
-
-                selected_loader = loader_field.value or "Vanilla"
-                selected_channel = channel_field.value or "Release"
-                is_vanilla = selected_loader == "Vanilla"
-                channel_field.visible = is_vanilla
-                loader_version_field.visible = not is_vanilla
-                selected_value = version_field.value or ""
-                minecraft_versions = get_minecraft_version_ids(
-                    selected_loader,
-                    selected_channel,
-                )
-                if (
-                    e is None
-                    and selected_value
-                    and selected_value not in minecraft_versions
-                ):
-                    minecraft_versions.insert(0, selected_value)
-                version_field.options = [
-                    ft.DropdownOption(key=version, text=version)
-                    for version in minecraft_versions
-                ]
-                if selected_value not in minecraft_versions:
-                    version_field.value = (
-                        minecraft_versions[0] if minecraft_versions else None
-                    )
-                sync_default_installation_name()
-                if is_vanilla:
-                    loader_version_field.options = []
-                    loader_version_field.value = None
-                else:
-                    update_loader_versions()
-                if e is not None:
-                    page.update()
-
-            loader_field.on_select = update_editor_fields
-            channel_field.on_select = update_editor_fields
-            version_field.on_select = update_loader_versions
-
-            def save_profile(e):
-                name = (name_field.value or "").strip()
-                if name_only:
-                    if not name:
-                        name = (
-                            existing_profile.get("version_id")
-                            or existing_profile.get("minecraft_version")
-                            or "Minecraft profile"
-                        )
-
-                    saved_profile = dict(existing_profile)
-                    saved_profile["id"] = saved_profile.get("id", uuid.uuid4().hex)
-                    saved_profile["name"] = name
-                    updated_installations = list(installations)
-                    existing_index = next(
-                        (
-                            index
-                            for index, item in enumerate(updated_installations)
-                            if item["id"] == saved_profile["id"]
-                        ),
-                        None,
-                    )
-                    if existing_index is None:
-                        updated_installations.append(saved_profile)
-                    else:
-                        updated_installations[existing_index] = saved_profile
-                    if save_installations(updated_installations):
-                        installations[:] = updated_installations
-                        navigate("installations")
-                        return
-                    set_form_error("Could not save profile data.")
-                    page.update()
-                    return
-
-                if not online_available:
-                    set_form_error(
-                        "No internet connection. Try creating the profile again when online."
-                    )
-                    page.update()
-                    return
-
-                loader_name = loader_field.value or "Vanilla"
-                channel_name = channel_field.value or "Release"
-                mc_version = (version_field.value or "").strip()
-                mod_version = (loader_version_field.value or "").strip()
-                is_instance = bool(is_instance_switch.value)
-
-                if not mc_version:
-                    set_form_error("Please choose a Minecraft version.")
-                    page.update()
-                    return
-                if not name:
-                    name = mc_version
-                if loader_name != "Vanilla" and not mod_version:
-                    set_form_error("Please choose a loader version.")
-                    page.update()
-                    return
-
-                profile_id = existing_profile.get("id", uuid.uuid4().hex)
-                target_version_id = (
-                    mc_version
-                    if loader_name == "Vanilla"
-                    else get_mod_loader(loader_name).get_installed_version(
-                        mc_version, mod_version
-                    )
-                )
-
-                # Validation: Prevent duplicate default/shared configurations for the same version
-                if not is_instance:
-                    conflicting_profile = next(
-                        (
-                            item
-                            for item in installations
-                            if item["id"] != profile_id
-                            and not item.get("is_instance")
-                            and get_profile_version_id(item) == target_version_id
-                        ),
-                        None,
-                    )
-                    if conflicting_profile:
-                        notify(
-                            f"{target_version_id} already has a configured profile.",
-                            ft.Icons.INFO_OUTLINE,
-                        )
-
-                        def close_already_installed_dialog(dlg):
-                            close_dialog_with_blur(dlg)
-
-                        def enable_instance_mode(dlg):
-                            close_dialog_with_blur(dlg)
-                            is_instance_switch.value = True
-                            instance_folder_field.visible = True
-                            if not instance_folder_field.value:
-                                instance_folder_field.value = re.sub(
-                                    r"[^a-zA-Z0-9_\-]", "_", name
-                                )
-                            form_error.value = ""
-                            page.update()
-
-                        already_installed_dialog = build_themed_alert_dialog(
-                            title=ft.Row(
-                                spacing=8,
-                                controls=[
-                                    ft.Icon(
-                                        ft.Icons.INFO_OUTLINED,
-                                        color=theme["btn_primary"],
-                                        size=22,
-                                    ),
-                                    ft.Text(
-                                        "This version is already installed",
-                                        weight=ft.FontWeight.BOLD,
-                                        color=theme["text_primary"],
-                                    ),
-                                ],
-                            ),
-                            content=ft.Text(
-                                f"A profile for '{target_version_id}' is already configured in Gr8 Launcher ('{conflicting_profile['name']}').\n\n"
-                                "Creating another standard configuration for the same version will just launch into the same shared environment.\n\n"
-                                "To create a new environment with separate worlds, texture packs, and settings, make it a Separate Instance.",
-                                color=theme["text_primary"],
-                                size=14,
-                            ),
-                            actions=[
-                                ft.TextButton(
-                                    "Cancel",
-                                    style=ft.ButtonStyle(
-                                        color=theme["text_secondary"],
-                                        mouse_cursor=clickable_mouse_cursor,
-                                    ),
-                                    on_click=lambda e: close_already_installed_dialog(
-                                        already_installed_dialog
-                                    ),
-                                ),
-                                ft.Button(
-                                    "Make Instance",
-                                    bgcolor=theme["btn_primary"],
-                                    color=theme["btn_primary_text"],
-                                    style=rounded_button_style,
-                                    on_click=lambda e: enable_instance_mode(
-                                        already_installed_dialog
-                                    ),
-                                ),
-                            ],
-                        )
-                        show_dialog_with_blur(already_installed_dialog)
-                        return
-
-                instance_folder_name = ""
-                game_dir = ""
-                if is_instance:
-                    clean_folder = re.sub(
-                        r"[^a-zA-Z0-9_\-]",
-                        "_",
-                        (instance_folder_field.value or name).strip(),
-                    )
-                    if not clean_folder:
-                        clean_folder = f"instance_{uuid.uuid4().hex[:6]}"
-                    instance_folder_name = clean_folder
-                    instances_dir = Path(minecraft_directory) / "instances" / clean_folder
-                    game_dir = str(instances_dir)
-
-                    duplicate_instance = next(
-                        (
-                            item
-                            for item in installations
-                            if item["id"] != profile_id
-                            and item.get("is_instance")
-                            and item.get("game_directory") == game_dir
-                        ),
-                        None,
-                    )
-                    if duplicate_instance:
-                        set_form_error(
-                            f"An instance using folder '{clean_folder}' already exists. Choose a different folder name."
-                        )
-                        page.update()
-                        return
-
-                    Path(game_dir).mkdir(parents=True, exist_ok=True)
-
-                saved_profile = {
-                    "id": profile_id,
-                    "name": name,
-                    "loader": loader_name,
-                    "channel": channel_name if loader_name == "Vanilla" else "",
-                    "minecraft_version": mc_version,
-                    "loader_version": (
-                        mod_version if loader_name != "Vanilla" else ""
-                    ),
-                    "version_id": target_version_id,
-                    "is_instance": is_instance,
-                    "instance_name": instance_folder_name,
-                    "game_directory": game_dir,
-                }
-                updated_installations = list(installations)
-                existing_index = next(
-                    (
-                        index
-                        for index, item in enumerate(updated_installations)
-                        if item["id"] == profile_id
-                    ),
-                    None,
-                )
-                if existing_index is None:
-                    updated_installations.append(saved_profile)
-                else:
-                    updated_installations[existing_index] = saved_profile
-
-                if save_installations(updated_installations):
-                    installations[:] = updated_installations
-                    navigate("installations")
-                    return
-                set_form_error("Could not save profile data.")
-                page.update()
-
-            update_editor_fields()
-
-            bg_orb1, bg_orb2 = create_ambient_gradient_orbs()
-            page.run_task(
-                animate_ambient_gradient_orbs,
-                bg_orb1,
-                bg_orb2,
-                lambda: active_page.get("name")
-                in ("new_installation", "edit_installation", "configure_installed"),
-            )
-
-            editor_card = ft.Container(
-                width=520,
-                padding=ft.Padding.symmetric(horizontal=32, vertical=28),
-                bgcolor=theme["surface"],
-                border=ft.Border.all(1, color=theme["border"]),
-                border_radius=16,
-                shadow=ft.BoxShadow(
-                    spread_radius=0,
-                    blur_radius=16,
-                    color=ft.Colors.with_opacity(0.25, "#000000"),
-                    offset=ft.Offset(0, 6),
-                ),
-                content=ft.Column(
-                    spacing=16,
-                    controls=[
-                        ft.Row(
-                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                            controls=[
-                                ft.Row(
-                                    spacing=10,
-                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                    controls=[
-                                        ft.IconButton(
-                                            icon=ft.Icons.ARROW_BACK,
-                                            tooltip=tooltip("Back to profiles"),
-                                            icon_color=theme["text_secondary"],
-                                            style=rounded_button_style,
-                                            on_click=lambda e: navigate("installations"),
-                                        ),
-                                        ft.Text(
-                                            (
-                                                "Edit Profile"
-                                                if profile
-                                                else "New Profile"
-                                            ),
-                                            size=22,
-                                            weight=ft.FontWeight.BOLD,
-                                            color=theme["text_primary"],
-                                        ),
-                                    ],
-                                ),
-                            ],
-                        ),
-                        name_field,
-                        ft.Container(loader_field, visible=not name_only),
-                        ft.Container(channel_field, visible=not name_only),
-                        ft.Container(version_field, visible=not name_only),
-                        ft.Container(loader_version_field, visible=not name_only),
-                        ft.Container(
-                            content=ft.Column(
-                                spacing=6,
-                                controls=[
-                                    is_instance_switch,
-                                    instance_hint,ft.Divider(color=ft.Colors.TRANSPARENT),
-                                    
-                                    instance_folder_field,
-                                ],
-                            ),
-                            visible=not name_only,
-                        ),
-                        form_error,
-                        ft.Row(
-                            alignment=ft.MainAxisAlignment.END,
-                            spacing=12,
-                            controls=[
-                                ft.TextButton(
-                                    "Cancel",
-                                    style=ft.ButtonStyle(
-                                        color=theme["text_secondary"],
-                                        shape=ft.RoundedRectangleBorder(radius=8),
-                                        mouse_cursor=clickable_mouse_cursor,
-                                    ),
-                                    on_click=lambda e: navigate("installations"),
-                                ),
-                                ft.Button(
-                                    "Save Profile",
-                                    bgcolor=theme["btn_primary"],
-                                    color=theme["btn_primary_text"],
-                                    style=rounded_button_style,
-                                    on_click=save_profile,
-                                ),
-                            ],
-                        ),
-                    ],
-                ),
-            )
-
-            return ft.Stack(
-                expand=True,
-                alignment=ft.Alignment.CENTER,
-                controls=[
-                    bg_orb1,
-                    bg_orb2,
-                    ft.Container(
-                        alignment=ft.Alignment.CENTER,
-                        padding=ft.Padding.symmetric(vertical=20),
-                        content=ft.Column(
-                            alignment=ft.MainAxisAlignment.CENTER,
-                            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                            scroll=ft.ScrollMode.AUTO,
-                            controls=[editor_card],
-                        ),
-                    ),
-                ],
-            )
-
         def navigate(name, profile_id=None, force=False):
             nonlocal current_page, transition_id, tab, handled_external_profile_ids
             if name == "profiles":
@@ -1495,8 +789,8 @@ def main(page: ft.Page):
             active_page["name"] = name
             active_page["profile_id"] = profile_id
 
-            installed_versions = get_installed_versions(force_refresh=force)
-            if force:
+            installed_versions = get_installed_versions(force_refresh=force or name in ("home", "installations"))
+            if force or name in ("home", "installations"):
                 installations[:], handled_external_profile_ids, imp_changed = (
                     import_external_installations(
                         installations,
@@ -1533,6 +827,77 @@ def main(page: ft.Page):
                 if installation.get("is_instance"):
                     summary += f" • Instance: {installation.get('instance_name', 'Custom')}"
                 return summary
+
+            def build_profile_badges(target):
+                loader = target.get("loader", "Vanilla")
+                is_inst = bool(target.get("is_instance"))
+                if loader == "Fabric":
+                    loader_bg = ft.Colors.with_opacity(0.18, ft.Colors.BLUE_400)
+                    loader_color = ft.Colors.BLUE_300
+                elif loader == "Forge":
+                    loader_bg = ft.Colors.with_opacity(0.18, ft.Colors.ORANGE_400)
+                    loader_color = ft.Colors.ORANGE_300
+                elif loader == "OptiFine":
+                    loader_bg = ft.Colors.with_opacity(0.18, ft.Colors.PURPLE_400)
+                    loader_color = ft.Colors.PURPLE_300
+                elif loader == "NeoForge":
+                    loader_bg = ft.Colors.with_opacity(0.18, ft.Colors.ORANGE_300)
+                    loader_color = ft.Colors.ORANGE_200
+                elif loader == "Quilt":
+                    loader_bg = ft.Colors.with_opacity(0.18, ft.Colors.PURPLE_300)
+                    loader_color = ft.Colors.PURPLE_200
+                else:
+                    loader_bg = ft.Colors.with_opacity(0.15, theme["surface"])
+                    loader_color = theme["text_secondary"]
+
+                mc_ver = str(target.get("minecraft_version") or target.get("version_id") or "").strip()
+                if mc_ver.lower() == "latest-release":
+                    mc_ver = "Release"
+
+                badges = []
+                if mc_ver:
+                    badges.append(
+                        ft.Container(
+                            content=ft.Text(
+                                mc_ver,
+                                size=10,
+                                weight=ft.FontWeight.W_600,
+                                color=theme["btn_primary"],
+                            ),
+                            bgcolor=ft.Colors.with_opacity(0.14, theme["btn_primary"]),
+                            padding=ft.Padding.symmetric(horizontal=7, vertical=2),
+                            border_radius=5,
+                        )
+                    )
+                if loader != "Vanilla":
+                    badges.append(
+                        ft.Container(
+                            content=ft.Text(
+                                loader,
+                                size=10,
+                                weight=ft.FontWeight.W_600,
+                                color=loader_color,
+                            ),
+                            bgcolor=loader_bg,
+                            padding=ft.Padding.symmetric(horizontal=7, vertical=2),
+                            border_radius=5,
+                        )
+                    )
+                if is_inst:
+                    badges.append(
+                        ft.Container(
+                            content=ft.Text(
+                                "Instance",
+                                size=10,
+                                weight=ft.FontWeight.W_600,
+                                color=theme["btn_primary"],
+                            ),
+                            bgcolor=ft.Colors.with_opacity(0.14, theme["btn_primary"]),
+                            padding=ft.Padding.symmetric(horizontal=7, vertical=2),
+                            border_radius=5,
+                        )
+                    )
+                return badges
 
             def open_game_folder(folder_path):
                 try:
@@ -1965,6 +1330,29 @@ def main(page: ft.Page):
                     dialog.content = ft.Text("Could not save profile changes.")
                     page.update()
 
+            installed_versions = get_installed_versions(force_refresh=True)
+            installations[:], handled_external_profile_ids, imp_changed = (
+                import_external_installations(
+                    installations,
+                    handled_external_profile_ids,
+                    installed_versions,
+                    get_external_installations(),
+                    version_catalog,
+                )
+            )
+            installations[:], disc_changed = discover_local_instances(
+                minecraft_directory,
+                installations,
+                installed_versions,
+                version_catalog,
+            )
+            if imp_changed or disc_changed:
+                save_installations(
+                    installations,
+                    handled_external_profile_ids,
+                    latest_release_id,
+                )
+
             launch_targets = {}
             if latest_release_id:
                 launch_targets["latest-release"] = {
@@ -2005,7 +1393,9 @@ def main(page: ft.Page):
 
             selection_rows = []
             play_button_ref = {}
-            initial_uname = player_name_state["value"].strip() or "Player"
+            active_acc = get_active_account()
+            initial_uname = active_acc.get("username", player_name_state["value"]).strip() or "Player"
+            player_name_state["value"] = initial_uname
 
             account_username_text = ft.Text(
                 initial_uname,
@@ -2016,28 +1406,60 @@ def main(page: ft.Page):
                 overflow=ft.TextOverflow.ELLIPSIS,
             )
 
+            def get_active_player_head_avatar_bytes(scale=4) -> bytes:
+                curr_acc = get_active_account()
+                # Skin system is disabled for offline mode
+                if curr_acc.get("type") == "offline":
+                    return skins.render_head_avatar_bytes(skins.get_default_skin("classic"), scale=scale)
+
+                uname = curr_acc.get("username", player_name_state.get("value", "")).strip()
+                skin_img = None
+                active_choice = skins.load_active_skin_choice()
+
+                # Check custom skin choice
+                if active_choice.get("skin_type") == "custom" and active_choice.get("custom_path"):
+                    custom_file = Path(active_choice["custom_path"])
+                    if custom_file.is_file():
+                        try:
+                            skin_img = Image.open(custom_file)
+                        except Exception:
+                            pass
+
+                # Check Ely.by cached skin for current username
+                if skin_img is None and uname:
+                    cached_file = skins.get_skins_dir() / f"ely_{uname.lower()}.png"
+                    if cached_file.is_file():
+                        try:
+                            skin_img = Image.open(cached_file)
+                        except Exception:
+                            pass
+
+                # Fallback to Steve (classic default skin)
+                if skin_img is None:
+                    skin_img = skins.get_default_skin(active_choice.get("model", "classic"))
+
+                try:
+                    return skins.render_head_avatar_bytes(skin_img, scale=scale)
+                except Exception:
+                    return skins.render_head_avatar_bytes(skins.get_default_skin("classic"), scale=scale)
+
             def build_account_picture(size):
-                picture_path = profile_picture_state["path"]
-                if picture_path and Path(picture_path).is_file():
-                    return ft.Image(
-                        src=picture_path,
-                        width=size,
-                        height=size,
-                        fit=ft.BoxFit.COVER,
-                        border_radius=9,
-                    )
-                return ft.Icon(
-                    ft.Icons.PERSON_ROUNDED,
-                    size=size * 0.62,
-                    color=theme["btn_primary"],
+                scale = max(2, int(size // 8))
+                avatar_bytes = get_active_player_head_avatar_bytes(scale=scale)
+                return ft.Image(
+                    src=avatar_bytes,
+                    width=size,
+                    height=size,
+                    fit=ft.BoxFit.CONTAIN,
+                    border_radius=8,
+                    gapless_playback=True,
                 )
 
             account_avatar = ft.Container(
                 width=36,
                 height=36,
-                border_radius=9,
+                border_radius=8,
                 bgcolor=ft.Colors.with_opacity(0.14, theme["btn_primary"]),
-                # border=ft.Border.all(1.5, color=theme["btn_primary"]),
                 alignment=ft.Alignment.CENTER,
                 clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
                 content=build_account_picture(36),
@@ -2045,18 +1467,17 @@ def main(page: ft.Page):
             account_picture_preview = ft.Container(
                 width=48,
                 height=48,
-                border_radius=9,
+                border_radius=10,
                 bgcolor=ft.Colors.with_opacity(0.14, theme["btn_primary"]),
-                # border=ft.Border.all(1.5, color=theme["btn_primary"]),
                 alignment=ft.Alignment.CENTER,
                 clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
                 content=build_account_picture(48),
             )
             account_picture_status = ft.Text(
+                "Synchronized with your Minecraft skin",
                 size=12,
                 color=theme["text_secondary"],
             )
-            remove_account_picture_button_ref = {}
 
             def refresh_account_picture():
                 account_avatar.content = build_account_picture(36)
@@ -2066,85 +1487,13 @@ def main(page: ft.Page):
                         avatar_control.update()
                     except Exception:
                         pass
-                remove_button = remove_account_picture_button_ref.get("control")
-                if remove_button is not None:
-                    remove_button.disabled = not bool(profile_picture_state["path"])
 
-            def remove_managed_account_picture(picture_path):
-                if not picture_path:
-                    return
-                old_path = Path(picture_path)
-                try:
-                    if (
-                        old_path.name.startswith("avatar-")
-                        and old_path.resolve().parent
-                        == profile_pictures_directory.resolve()
-                    ):
-                        old_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
-
-            async def choose_account_picture():
-                selected_files = await account_picture_picker.pick_files(
-                    dialog_title="Choose an account picture",
-                    file_type=ft.FilePickerFileType.IMAGE,
-                    allowed_extensions=["png", "jpg", "jpeg", "webp", "gif"],
-                    allow_multiple=False,
-                )
-                if not selected_files or not selected_files[0].path:
-                    return
-
-                source_path = Path(selected_files[0].path)
-                if not source_path.is_file():
-                    account_picture_status.value = "The selected image could not be opened."
-                    page.update()
-                    return
-
-                old_picture_path = profile_picture_state["path"]
-                destination = profile_pictures_directory / (
-                    f"avatar-{uuid.uuid4().hex}{source_path.suffix.lower()}"
-                )
-                try:
-                    profile_pictures_directory.mkdir(parents=True, exist_ok=True)
-                    shutil.copyfile(source_path, destination)
-                except OSError:
-                    account_picture_status.value = "Could not copy the selected image."
-                    page.update()
-                    return
-
-                if not save_profile_options(
-                    player_name_state["value"],
-                    launch_selection["key"],
-                    str(destination),
-                ):
-                    destination.unlink(missing_ok=True)
-                    account_picture_status.value = "Could not save the profile picture."
-                    page.update()
-                    return
-
-                profile_picture_state["path"] = str(destination)
-                refresh_account_picture()
-                remove_managed_account_picture(old_picture_path)
-                account_picture_status.value = "Profile picture updated."
-                page.update()
-
-            def clear_account_picture(e):
-                old_picture_path = profile_picture_state["path"]
-                if not save_profile_options(
-                    player_name_state["value"], launch_selection["key"], ""
-                ):
-                    account_picture_status.value = "Could not remove the profile picture."
-                    page.update()
-                    return
-
-                profile_picture_state["path"] = ""
-                refresh_account_picture()
-                remove_managed_account_picture(old_picture_path)
-                account_picture_status.value = "Profile picture removed."
-                page.update()
+            launcher_log_state["refresh_account_picture"] = refresh_account_picture
 
             def update_sidebar_username():
-                uname = player_name_state["value"].strip() or "Player"
+                curr_acc = get_active_account()
+                uname = curr_acc.get("username", player_name_state["value"]).strip() or "Player"
+                player_name_state["value"] = uname
                 account_username_text.value = uname
                 try:
                     account_username_text.update()
@@ -2158,18 +1507,14 @@ def main(page: ft.Page):
                     if is_hovered
                     else theme["card"]
                 )
-                # container.border = ft.Border.all(
-                #     1,
-                #     color=theme["btn_primary"] if is_hovered else theme["border"],
-                # )
                 container.update()
 
             account_card = ft.Container(
                 bgcolor=theme["card"],
                 border_radius=14,
-                padding=ft.Padding.symmetric(horizontal=12, vertical=6),
+                padding=ft.Padding.symmetric(horizontal=10, vertical=6),
                 ink=True,
-                tooltip=tooltip("Go to Profiles & Account settings"),
+                tooltip=tooltip("Go to account settings"),
                 on_click=lambda e: navigate("options_accounts"),
                 content=ft.Row(
                     spacing=8,
@@ -2190,24 +1535,31 @@ def main(page: ft.Page):
             welcome_row = ft.Row(
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                controls=[
+                controls=[ft.Container(
                     ft.Column(
                         spacing=2,
                         controls=[
                             ft.Text(
-                                "WELCOME BACK",
+                                "WELCOME BACK,",
                                 size=11,
                                 weight=ft.FontWeight.BOLD,
                                 color=theme["text_muted"],
                             ),
                             ft.Text(
-                                "Ready to play?",
-                                size=24,
+                                "CLICK PLAY TO LAUNCH THE GAME",
+                                size=11,
                                 weight=ft.FontWeight.BOLD,
-                                color=theme["text_primary"],
+                                color=theme["text_muted"],
                             ),
+                            # ft.Text(
+                            #     "Ready to play?",
+                            #     size=24,
+                            #     weight=ft.FontWeight.BOLD,
+                            #     color=theme["text_primary"],
+                            #     font_family="mojangles"
+                            # ),
                         ],
-                    ),
+                    ),padding=ft.Padding.only(left=10)),
                     account_card_wrap,
                 ],
             )
@@ -2282,7 +1634,7 @@ def main(page: ft.Page):
                     horizontal=8, vertical=4
                 ),
                 border_radius=6,
-                visible=bool(selected_target and not selected_target.get("is_instance")),
+                visible=bool(selected_target and selected_target.get("loader") != "Vanilla"),
             )
             selected_version_title_row = ft.Row(
                 spacing=10,
@@ -2310,11 +1662,7 @@ def main(page: ft.Page):
             def get_selected_version_details(target):
                 if target is None:
                     return "No profile selected."
-                details = f"Version ID: {target['version_id']}"
-                if settings.get("show_installation_directory", True):
-                    game_directory = target.get("game_directory") or minecraft_directory
-                    details += f"\nGame directory: {game_directory}"
-                return details
+                return f"Version ID: {target['version_id']}"
 
             selected_version_details = ft.Text(
                 get_selected_version_details(selected_target),
@@ -2322,7 +1670,7 @@ def main(page: ft.Page):
                 weight=ft.FontWeight.W_400,
                 color=ft.Colors.with_opacity(0.85, ft.Colors.WHITE),
                 selectable=True,
-                max_lines=2,
+                max_lines=1,
                 overflow=ft.TextOverflow.ELLIPSIS,
                 style=ft.TextStyle(
                     shadow=ft.BoxShadow(
@@ -2336,7 +1684,7 @@ def main(page: ft.Page):
             def is_target_installed(target):
                 if not target:
                     return False
-                return bool(target.get("is_instance") or target.get("version_id") in local_version_ids)
+                return bool(target.get("version_id") in local_version_ids)
 
             initial_installed = is_target_installed(selected_target)
             hero_status_icon = ft.Icon(
@@ -2439,7 +1787,7 @@ def main(page: ft.Page):
             launch_progress = launch_progress_track
             launch_progress_container = launch_progress_track
 
-            def set_track_progress(val):
+            def set_track_progress(val, force=False):
                 if val is None:
                     changed = launcher_log_state.get("progress") is not None
                     launcher_log_state["progress"] = None
@@ -2454,7 +1802,7 @@ def main(page: ft.Page):
                     except (ValueError, TypeError):
                         v = 0.0
                     old_v = launcher_log_state.get("progress")
-                    if old_v is not None and abs(v - old_v) < 0.003 and (0.005 < v < 0.995):
+                    if not force and old_v is not None and abs(v - old_v) < 0.003 and (0.005 < v < 0.995):
                         return False
                     launcher_log_state["progress"] = v
                     if v <= 0.001:
@@ -2481,7 +1829,9 @@ def main(page: ft.Page):
                     launch_progress_track.value = v
                     return True
 
-            set_track_progress(launcher_log_state.get("progress"))
+            set_track_progress(launcher_log_state.get("progress"), force=True)
+            launcher_log_state["set_track_progress"] = set_track_progress
+            launcher_log_state["white_beam"] = white_beam
 
             launcher_log_list = ft.ListView(
                 controls=[
@@ -2507,15 +1857,31 @@ def main(page: ft.Page):
             )
             launcher_log_state["list"] = launcher_log_list
             launcher_log_orb1, launcher_log_orb2 = create_ambient_gradient_orbs()
+
+            def on_copy_logs(e):
+                text = "\n".join(launcher_log_state["lines"])
+                if text:
+                    copy_to_clipboard(text, "Copied launcher logs to clipboard!")
+                else:
+                    notify("No logs to copy.", ft.Icons.INFO_OUTLINE)
+
+            log_copy_button = ft.IconButton(
+                hover_color=ft.Colors.TRANSPARENT,
+                icon=ft.Icons.COPY,
+                icon_size=16,
+                tooltip=tooltip("Copy Logs"),
+                icon_color=theme["text_secondary"],
+                style=ft.ButtonStyle(mouse_cursor=clickable_mouse_cursor),
+                on_click=on_copy_logs,
+            )
             log_back_button = ft.IconButton(
                 hover_color=ft.Colors.TRANSPARENT,
                 icon=ft.Icons.CLOSE,
-                icon_size=15,
+                icon_size=16,
                 tooltip=tooltip("Close Logs"),
                 icon_color=theme["text_secondary"],
-                visible=launcher_log_state["open"],
                 style=ft.ButtonStyle(mouse_cursor=clickable_mouse_cursor),
-                on_click=lambda e: return_to_selected_installation(),
+                on_click=lambda e: set_launcher_log_visible(False),
             )
             open_logs_button = ft.TextButton(
                 "Open logs",
@@ -2529,7 +1895,7 @@ def main(page: ft.Page):
                 on_click=lambda e: set_launcher_log_visible(True),
             )
             bottom_log_toggle_button = ft.Button(
-                "Logs" if not launcher_log_state["open"] else "Close Logs",
+                "Logs",
                 icon=ft.Icons.TERMINAL,
                 style=ft.ButtonStyle(
                     bgcolor=theme["surface"],
@@ -2539,40 +1905,71 @@ def main(page: ft.Page):
                 ),
                 on_click=lambda e: set_launcher_log_visible(not launcher_log_state["open"]),
             )
-            launcher_log_panel = ft.Container(
+            launcher_log_state["bottom_log_toggle_button"] = bottom_log_toggle_button
+
+            floating_logs_window = ft.Container(
+                left=28,
+                right=28,
+                top=20,
+                bottom=64,
+                bgcolor=ft.Colors.with_opacity(0.96, theme["card"]),
+                border=ft.Border.all(1, ft.Colors.with_opacity(0.35, theme["border"])),
+                border_radius=16,
+                shadow=ft.BoxShadow(
+                    blur_radius=28,
+                    spread_radius=3,
+                    color=ft.Colors.with_opacity(0.65, ft.Colors.BLACK),
+                    offset=ft.Offset(0, 8),
+                ),
                 padding=16,
-                expand=True,
+                visible=launcher_log_state["open"],
                 content=ft.Column(
                     expand=True,
                     spacing=10,
                     controls=[
                         ft.Row(
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                            spacing=8,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
                             controls=[
                                 ft.Row(
-                                    spacing=6,
+                                    spacing=8,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                     controls=[
                                         ft.Icon(
                                             ft.Icons.TERMINAL,
-                                            size=17,
+                                            size=18,
                                             color=theme["btn_primary"],
                                         ),
                                         ft.Text(
-                                            "MINECRAFT LOG",
-                                            size=11,
+                                            "MINECRAFT LOGS",
+                                            size=12,
                                             weight=ft.FontWeight.BOLD,
-                                            color=theme["text_secondary"],
+                                            color=theme["text_primary"],
                                         ),
                                     ],
                                 ),
-                                log_back_button,
+                                ft.Row(
+                                    spacing=4,
+                                    controls=[
+                                        log_copy_button,
+                                        log_back_button,
+                                    ],
+                                ),
                             ],
                         ),
-                        launcher_log_list,
+                        ft.Container(
+                            expand=True,
+                            bgcolor=ft.Colors.with_opacity(0.45, theme["surface"]),
+                            border=ft.Border.all(1, ft.Colors.with_opacity(0.14, theme["border"])),
+                            border_radius=10,
+                            padding=10,
+                            content=launcher_log_list,
+                        ),
                     ],
                 ),
             )
+            launcher_log_panel = floating_logs_window
+            launcher_log_state["floating_logs_window"] = floating_logs_window
             selected_installation_view_ref = {"control": None}
             selected_version_elements_ref = {"control": None}
 
@@ -2580,28 +1977,36 @@ def main(page: ft.Page):
                 launcher_log_state["open"] = visible
                 log_back_button.visible = visible
                 open_logs_button.visible = not visible
-                bottom_log_toggle_button.text = "Close Logs" if visible else "Logs"
-                view = selected_installation_view_ref["control"]
-                if view is None:
-                    page.update()
+                win = launcher_log_state.get("floating_logs_window", floating_logs_window)
+                if win is not None:
+                    win.visible = visible
+                if visible:
+                    active_log_list = launcher_log_state.get("list")
+                    if active_log_list is not None and launcher_log_state["lines"]:
+                        active_log_list.controls = [
+                            ft.Text(
+                                line,
+                                size=11,
+                                color=theme["text_primary"],
+                                font_family="Consolas",
+                                selectable=True,
+                            )
+                            for line in launcher_log_state["lines"][-300:]
+                        ]
+                if active_page.get("name") != "home" and visible:
+                    nav_fn = navigation_state.get("navigate", navigate)
+                    nav_fn("home")
                     return
-                view.content = (
-                    launcher_log_panel if visible else selected_installation_content
-                )
-                view.bgcolor = (
-                    ft.Colors.with_opacity(0.92, theme["surface"])
-                    if visible
-                    else ft.Colors.TRANSPARENT
-                )
-                view.update()
                 try:
-                    bottom_log_toggle_button.update()
+                    if win is not None:
+                        win.update()
+                except Exception:
+                    pass
                 except Exception:
                     pass
 
             def return_to_selected_installation():
                 set_launcher_log_visible(False)
-                page.update()
 
             def append_launcher_logs(lines):
                 active_log_list = launcher_log_state["list"]
@@ -2806,7 +2211,7 @@ def main(page: ft.Page):
                 if elem_box is None or launcher_log_state["open"]:
                     selected_version_name.value = target["name"]
                     selected_version_instance_badge.visible = bool(target.get("is_instance"))
-                    selected_version_loader_badge.visible = bool(not target.get("is_instance"))
+                    selected_version_loader_badge.visible = bool(target.get("loader") != "Vanilla")
                     selected_version_loader_badge.content.value = get_loader_badge_text(target)
                     selected_version_summary.value = profile_summary(target)
                     selected_version_details.value = get_selected_version_details(target)
@@ -2830,7 +2235,7 @@ def main(page: ft.Page):
 
                 selected_version_name.value = target["name"]
                 selected_version_instance_badge.visible = bool(target.get("is_instance"))
-                selected_version_loader_badge.visible = bool(not target.get("is_instance"))
+                selected_version_loader_badge.visible = bool(target.get("loader") != "Vanilla")
                 selected_version_loader_badge.content.value = get_loader_badge_text(target)
                 selected_version_summary.value = profile_summary(target)
                 selected_version_details.value = get_selected_version_details(target)
@@ -2984,6 +2389,8 @@ def main(page: ft.Page):
                 )
                 library_banner_images[key] = (card_banner_img, card_banner_gradient, top_banner_section)
 
+                tags_row = build_profile_badges(target)
+
                 bottom_info_section = ft.Container(
                     left=0,
                     right=0,
@@ -3019,41 +2426,21 @@ def main(page: ft.Page):
                             ft.Row(
                                 spacing=6,
                                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                controls=[
-                                    ft.Container(
-                                        content=ft.Text(
-                                            mc_ver,
-                                            size=10,
-                                            weight=ft.FontWeight.W_600,
-                                            color=theme['btn_primary'],
-                                        ),
-                                        bgcolor=ft.Colors.with_opacity(0.14, theme['btn_primary']),
-                                        padding=ft.Padding.symmetric(horizontal=7, vertical=2),
-                                        border_radius=5,
-                                    ),
-                                    ft.Container(
-                                        content=ft.Text(
-                                            loader,
-                                            size=10,
-                                            weight=ft.FontWeight.W_600,
-                                            color=loader_color,
-                                        ),
-                                        bgcolor=loader_bg,
-                                        padding=ft.Padding.symmetric(horizontal=7, vertical=2),
-                                        border_radius=5,
-                                    ),
-                                ],
+                                controls=tags_row,
                             ),
                         ],
                     ),
                 )
 
+                is_running = bool(launcher_log_state.get("running"))
                 card = ft.Container(
                     width=235,
                     height=152,
                     border_radius=16,
                     padding=0,
-                    ink=True,
+                    ink=not is_running,
+                    disabled=is_running,
+                    opacity=0.5 if is_running else 1.0,
                     bgcolor=theme['card'],
                     border=(
                         ft.Border.all(2, color=theme['btn_primary'])
@@ -3071,7 +2458,7 @@ def main(page: ft.Page):
                 )
 
                 def on_card_hover(e, c=card, k=key):
-                    if launch_selection['key'] == k:
+                    if launcher_log_state.get("running") or launch_selection['key'] == k:
                         return
                     is_h = e.data == 'true'
                     c.border = (
@@ -3088,18 +2475,21 @@ def main(page: ft.Page):
                 library_cards[key] = card
 
                 return ft.GestureDetector(
-                    mouse_cursor=clickable_mouse_cursor,
-                    on_tap=lambda e, k=key: select_launch_target(k),
+                    mouse_cursor=ft.MouseCursor.BASIC if is_running else clickable_mouse_cursor,
+                    on_tap=lambda e, k=key: (None if launcher_log_state.get("running") else select_launch_target(k)),
                     content=card,
                 )
 
+            is_running = bool(launcher_log_state.get("running"))
             new_profile_container = ft.Container(
                 width=235,
                 height=152,
                 border_radius=16,
                 padding=16,
-                ink=True,
-                on_click=lambda e: navigate("new_installation"),
+                ink=not is_running,
+                disabled=is_running,
+                opacity=0.5 if is_running else 1.0,
+                on_click=lambda e: (None if launcher_log_state.get("running") else navigate("new_installation")),
                 bgcolor=ft.Colors.with_opacity(0.04, theme["surface"]),
                 border=ft.Border.all(1, color=ft.Colors.with_opacity(0.18, theme["border"])),
                 alignment=ft.Alignment.CENTER,
@@ -3128,6 +2518,8 @@ def main(page: ft.Page):
             )
 
             def on_new_profile_hover(e, c=new_profile_container):
+                if launcher_log_state.get("running"):
+                    return
                 is_h = e.data == "true"
                 c.bgcolor = ft.Colors.with_opacity(0.08, theme["btn_primary"]) if is_h else ft.Colors.with_opacity(0.04, theme["surface"])
                 c.border = ft.Border.all(1, color=theme["btn_primary"]) if is_h else ft.Border.all(1, color=ft.Colors.with_opacity(0.18, theme["border"]))
@@ -3139,8 +2531,8 @@ def main(page: ft.Page):
             new_profile_container.on_hover = on_new_profile_hover
 
             new_profile_card = ft.GestureDetector(
-                mouse_cursor=clickable_mouse_cursor,
-                on_tap=lambda e: navigate("new_installation"),
+                mouse_cursor=ft.MouseCursor.BASIC if is_running else clickable_mouse_cursor,
+                on_tap=lambda e: (None if launcher_log_state.get("running") else navigate("new_installation")),
                 content=new_profile_container,
             )
 
@@ -3290,12 +2682,14 @@ def main(page: ft.Page):
                             launcher_log_state["eta"] = ""
                 track_changed = False
                 if value is not None:
-                    track_changed = set_track_progress(value)
+                    set_fn = launcher_log_state.get("set_track_progress", set_track_progress)
+                    track_changed = set_fn(value)
                 if eta is not None:
                     launcher_log_state["eta"] = eta
 
                 status_control = launcher_log_state.get("status_control")
                 eta_control = launcher_log_state.get("eta_control")
+                progress_control = launcher_log_state.get("progress_control", launch_progress_track)
                 is_on_home = active_page.get("name") == "home"
 
                 need_update = []
@@ -3303,8 +2697,8 @@ def main(page: ft.Page):
                     status_control.value = launcher_log_state["status"]
                     if is_on_home and status_changed:
                         need_update.append(status_control)
-                if track_changed and is_on_home:
-                    need_update.append(launch_progress_track)
+                if track_changed and is_on_home and progress_control is not None:
+                    need_update.append(progress_control)
                 if eta_control is not None and (eta is not None or status_changed):
                     eta_control.value = launcher_log_state.get("eta", "")
                     if is_on_home:
@@ -3385,8 +2779,6 @@ def main(page: ft.Page):
                 launcher_log_state["lines"].clear()
                 launcher_log_list.controls.clear()
                 append_launcher_logs([f"Launching {target['name']}..."])
-                if launcher_log_state["downloading"]:
-                    set_launcher_log_visible(True)
                 update_launch_progress("Preparing Minecraft...")
                 loop = asyncio.get_running_loop()
                 launch_action = settings["launch_action"]
@@ -3431,7 +2823,7 @@ def main(page: ft.Page):
                         await asyncio.sleep(0.05)
 
                 async def animate_progress_shimmer():
-                    beam = white_beam
+                    beam = launcher_log_state.get("white_beam", white_beam)
                     beam.left = -100
                     beam.opacity = 0.0
                     beam.visible = True
@@ -3442,15 +2834,16 @@ def main(page: ft.Page):
                             await asyncio.sleep(0.2)
                             continue
 
+                        beam = launcher_log_state.get("white_beam", white_beam)
                         win_w = float(getattr(page.window, "width", 1000) or 1000)
-                        track_w = max(380.0, win_w - 450.0)
+                        track_w = max(500.0, win_w - 200.0)
                         prog_val = launcher_log_state.get("progress")
                         curr_pct = float(prog_val) if prog_val is not None else 0.04
                         curr_pct = max(0.04, min(1.0, curr_pct))
-                        green_w = max(60.0, track_w * curr_pct)
-                        target_x = int(green_w + 15)
+                        green_w = max(80.0, track_w * curr_pct)
+                        target_x = int(green_w + 120)
                         travel_dist = target_x - (-100)
-                        duration_ms = max(700, min(1700, int((travel_dist / 260.0) * 1000)))
+                        duration_ms = max(700, min(2200, int((travel_dist / 320.0) * 1000)))
 
                         # 1. Forward sweep: visible with smooth linear motion
                         beam.opacity = 1.0
@@ -3469,6 +2862,7 @@ def main(page: ft.Page):
                             break
 
                         # 3. Snap back to start in 0ms while invisible (no backward motion visible)
+                        beam = launcher_log_state.get("white_beam", white_beam)
                         beam.opacity = 0.0
                         beam.animate_position = ft.Animation(0)
                         beam.left = -100
@@ -3558,12 +2952,13 @@ def main(page: ft.Page):
                             await shimmer_task
                         except asyncio.CancelledError:
                             pass
-                    white_beam.opacity = 0.0
-                    white_beam.animate_position = None
-                    white_beam.left = -100
+                    curr_beam = launcher_log_state.get("white_beam", white_beam)
+                    curr_beam.opacity = 0.0
+                    curr_beam.animate_position = None
+                    curr_beam.left = -100
                     if active_page.get("name") == "home":
                         try:
-                            white_beam.update()
+                            curr_beam.update()
                         except Exception:
                             pass
                     if log_file is not None:
@@ -3597,6 +2992,12 @@ def main(page: ft.Page):
                             card.update()
                         except Exception:
                             pass
+                    new_profile_container.disabled = False
+                    new_profile_container.opacity = 1.0
+                    try:
+                        new_profile_container.update()
+                    except Exception:
+                        pass
                     if launch_action != "Close launcher":
                         page.update()
                         navigate(
@@ -3703,25 +3104,8 @@ def main(page: ft.Page):
                         weight=ft.FontWeight.W_500,
                         color=theme["text_primary"],
                     ),
+                    *build_profile_badges(profile),
                 ]
-                if is_inst:
-                    title_row.append(
-                        ft.Container(
-                            content=ft.Text(
-                                "INSTANCE",
-                                size=10,
-                                weight=ft.FontWeight.BOLD,
-                                color=theme["btn_primary"],
-                            ),
-                            bgcolor=ft.Colors.with_opacity(
-                                0.14, theme["btn_primary"]
-                            ),
-                            padding=ft.Padding.symmetric(
-                                horizontal=6, vertical=2
-                            ),
-                            border_radius=4,
-                        )
-                    )
 
                 row_controls = [
                     ft.Icon(
@@ -3932,27 +3316,7 @@ def main(page: ft.Page):
                                                     size=14,
                                                     weight=ft.FontWeight.W_500,
                                                 ),
-                                                *(
-                                                    [
-                                                        ft.Container(
-                                                            content=ft.Text(
-                                                                "INSTANCE",
-                                                                size=10,
-                                                                weight=ft.FontWeight.BOLD,
-                                                                color=theme["btn_primary"],
-                                                            ),
-                                                            bgcolor=ft.Colors.with_opacity(
-                                                                0.14, theme["btn_primary"]
-                                                            ),
-                                                            padding=ft.Padding.symmetric(
-                                                                horizontal=6, vertical=2
-                                                            ),
-                                                            border_radius=4,
-                                                        )
-                                                    ]
-                                                    if profile.get("is_instance")
-                                                    else []
-                                                ),
+                                                *build_profile_badges(profile),
                                             ],
                                         ),
                                         ft.Text(
@@ -4005,1118 +3369,37 @@ def main(page: ft.Page):
                         ),
                     )
                 )
-            def on_setting_card_hover(e, container):
-                is_hovered = e.data == "true"
-                container.bgcolor = (
-                    theme.get("card_hover", theme["card"])
-                    if is_hovered
-                    else theme["surface"]
-                )
-                container.border = ft.Border.all(
-                    1,
-                    color=theme["btn_primary"] if is_hovered else theme["border"],
-                )
-                container.update()
-
-            def build_option_card(category):
-                return ft.Button(
-                    width=170,
-                    height=130,
-                    style=ft.ButtonStyle(
-                        bgcolor={
-                            ft.ControlState.HOVERED: theme.get("card_hover", theme["card"]),
-                            ft.ControlState.DEFAULT: theme["surface"],
-                        },
-                        side={
-                            ft.ControlState.HOVERED: ft.BorderSide(1, color=theme["btn_primary"]),
-                            ft.ControlState.DEFAULT: ft.BorderSide(1, color=theme["border"]),
-                        },
-                        shape=ft.RoundedRectangleBorder(radius=14),
-                        elevation=0,
-                        shadow_color=ft.Colors.TRANSPARENT,
-                        overlay_color={
-                            ft.ControlState.PRESSED: ft.Colors.with_opacity(0.1, theme["btn_primary"]),
-                            ft.ControlState.DEFAULT: ft.Colors.TRANSPARENT,
-                        },
-                        padding=0,
-                        mouse_cursor=clickable_mouse_cursor,
-                    ),
-                    on_click=lambda e, opt_id=category["id"]: navigate(opt_id),
-                    content=ft.Column(
-                        alignment=ft.MainAxisAlignment.CENTER,
-                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                        spacing=12,
-                        controls=[
-                            ft.Icon(
-                                category["icon"],
-                                size=34,
-                                color=theme["btn_primary"],
-                            ),
-                            ft.Text(
-                                category["title"],
-                                size=16,
-                                weight=ft.FontWeight.BOLD,
-                                color=theme["text_primary"],
-                            ),
-                        ],
-                    ),
-                )
-
-            options_categories = [
-                {
-                    "id": "options_ui",
-                    "title": "UI",
-                    "icon": ft.Icons.PALETTE_OUTLINED,
-                },
-                {
-                    "id": "options_java",
-                    "title": "Java",
-                    "icon": ft.Icons.MEMORY,
-                },
-                {
-                    "id": "options_game",
-                    "title": "Game",
-                    "icon": ft.Icons.SPORTS_ESPORTS_OUTLINED,
-                },
-                {
-                    "id": "options_accounts",
-                    "title": "Accounts",
-                    "icon": ft.Icons.PERSON_OUTLINE,
-                },
-                {
-                    "id": "options_launcher",
-                    "title": "Launcher",
-                    "icon": ft.Icons.TUNE,
-                },
-                {
-                    "id": "options_about",
-                    "title": "About",
-                    "icon": ft.Icons.INFO_OUTLINE,
-                },
-            ]
-
-            options_orb1, options_orb2 = create_ambient_gradient_orbs()
-            options_dashboard = ft.Stack(
-                expand=True,
-                clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
-                controls=[
-                    options_orb1,
-                    options_orb2,
-                    ft.Container(
-                        expand=True,
-                        alignment=ft.Alignment.CENTER,
-                        content=ft.Column(
-                            alignment=ft.MainAxisAlignment.CENTER,
-                            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                            spacing=20,
-                            controls=[
-                                ft.Row(
-                                    alignment=ft.MainAxisAlignment.CENTER,
-                                    spacing=20,
-                                    controls=[
-                                        build_option_card(category)
-                                        for category in options_categories[:3]
-                                    ],
-                                ),
-                                ft.Row(
-                                    alignment=ft.MainAxisAlignment.CENTER,
-                                    spacing=20,
-                                    controls=[
-                                        build_option_card(category)
-                                        for category in options_categories[3:]
-                                    ],
-                                ),
-                                ft.Container(
-                                    margin=ft.Margin.only(top=16),
-                                    padding=ft.Padding.symmetric(horizontal=32),
-                                    content=ft.Text(
-                                        f"\"{get_random_thought()}\"",
-                                        size=12,
-                                        italic=True,
-                                        color=theme["text_muted"],
-                                        text_align=ft.TextAlign.CENTER,
-                                    ),
-                                ),
-                            ],
-                        ),
-                    ),
-                ],
+            options_views = build_options_views(
+                page=page,
+                theme=theme,
+                settings=settings,
+                persist_setting=persist_setting,
+                navigate=navigate,
+                notify=notify,
+                copy_to_clipboard=copy_to_clipboard,
+                open_url=open_url,
+                theme_dropdown=theme_dropdown,
+                available_themes=available_themes,
+                maximum_memory_mb=maximum_memory_mb,
+                minecraft_directory=minecraft_directory,
+                account_picture_preview=account_picture_preview,
+                account_picture_status=account_picture_status,
+                refresh_account_picture=refresh_account_picture,
+                update_sidebar_username=update_sidebar_username,
+                play_button_ref=play_button_ref,
+                refresh_launch_button=refresh_launch_button,
+                rebuild_page_callback=lambda theme_name, cur_page: (page.controls.clear(), build_page(theme_name, cur_page)),
+                set_orbs_enabled=set_orbs_enabled,
+                show_dialog_with_blur=show_dialog_with_blur,
+                close_dialog_with_blur=close_dialog_with_blur,
             )
-
-            async def animate_options_background():
-                if options_background_state["animation_running"]:
-                    return
-                options_background_state["animation_running"] = True
-                try:
-                    await animate_ambient_gradient_orbs(
-                        options_orb1,
-                        options_orb2,
-                        lambda: active_page.get("name") == "options",
-                    )
-                finally:
-                    options_background_state["animation_running"] = False
-
-            globals()["animate_options_background"] = animate_options_background
-
-            def build_setting_container(
-                title: str,
-                explanation: str,
-                control: ft.Control | None = None,
-                extra_content: ft.Control | None = None,
-            ) -> ft.Container:
-                items = [
-                    ft.Text(
-                        title,
-                        size=15,
-                        weight=ft.FontWeight.BOLD,
-                        color=theme["text_primary"],
-                    ),
-                    ft.Text(
-                        explanation,
-                        size=12,
-                        color=theme["text_secondary"],
-                    ),
-                ]
-                if control is not None:
-                    items.append(
-                        ft.Container(
-                            content=control,
-                            padding=ft.Padding.only(top=4),
-                        )
-                    )
-                if extra_content is not None:
-                    items.append(
-                        ft.Container(
-                            content=extra_content,
-                            padding=ft.Padding.only(top=6),
-                        )
-                    )
-
-                return ft.Container(
-                    bgcolor=theme["surface"],
-                    border=ft.Border.all(1, color=theme["border"]),
-                    border_radius=12,
-                    padding=ft.Padding.symmetric(horizontal=20, vertical=16),
-                    content=ft.Column(
-                        spacing=8,
-                        horizontal_alignment=ft.CrossAxisAlignment.START,
-                        controls=items,
-                    ),
-                )
-
-            def build_settings_page(
-                title: str,
-                setting_items: list[ft.Container],
-                on_reset=None,
-            ) -> ft.Container:
-                return ft.Container(
-                    expand=True,
-                    padding=ft.Padding.only(left=28, top=20, right=28, bottom=20),
-                    content=ft.Column(
-                        expand=True,
-                        spacing=16,
-                        scroll=ft.ScrollMode.AUTO,
-                        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-                        controls=[
-                            ft.Row(
-                                alignment=ft.MainAxisAlignment.START,
-                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                spacing=8,
-                                controls=[
-                                    ft.IconButton(
-                                        icon=ft.Icons.ARROW_BACK,
-                                        tooltip=tooltip("Back to Options"),
-                                        icon_color=theme["text_secondary"],
-                                        hover_color=theme["card_hover"],
-                                        icon_size=20,
-                                        style=rounded_button_style,
-                                        on_click=lambda e: navigate("options"),
-                                    ),
-                                    ft.Text(
-                                        title,
-                                        size=24,
-                                        weight=ft.FontWeight.BOLD,
-                                        color=theme["text_primary"],
-                                    ),
-                                    *(
-                                        [
-                                            ft.IconButton(
-                                                icon=ft.Icons.RESTORE,
-                                                tooltip="Reset this page to defaults",
-                                                icon_color=theme["text_secondary"],
-                                                style=ft.ButtonStyle(mouse_cursor=clickable_mouse_cursor),
-                                                on_click=on_reset,
-                                            )
-                                        ]
-                                        if on_reset is not None
-                                        else []
-                                    ),
-                                ],
-                            ),
-                            *setting_items,
-                        ],
-                    ),
-                )
-
-            theme_palette_preview = ft.Row(
-                spacing=8,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                controls=[
-                    ft.Container(
-                        width=28,
-                        height=28,
-                        border_radius=6,
-                        bgcolor=theme["btn_primary"],
-                        border=ft.Border.all(1, theme["border"]),
-                        tooltip="Accent",
-                    ),
-                    ft.Container(
-                        width=28,
-                        height=28,
-                        border_radius=6,
-                        bgcolor=theme["card"],
-                        border=ft.Border.all(1, theme["border"]),
-                        tooltip="Card",
-                    ),
-                    ft.Container(
-                        width=28,
-                        height=28,
-                        border_radius=6,
-                        bgcolor=theme["surface"],
-                        border=ft.Border.all(1, theme["border"]),
-                        tooltip="Surface",
-                    ),
-                    ft.Container(
-                        width=28,
-                        height=28,
-                        border_radius=6,
-                        bgcolor=theme["bg"],
-                        border=ft.Border.all(1, theme["border"]),
-                        tooltip="Background",
-                    ),
-                    ft.Text(
-                        f"Active Palette: {selected_theme['name']}",
-                        size=11,
-                        color=theme["text_muted"],
-                    ),
-                ],
-            )
-
-            def rebuild_settings_page(message):
-                page.controls.clear()
-                build_page(selected_theme["name"], active_page["name"])
-                notify(message, ft.Icons.RESTORE)
-
-            def reset_settings_fields(field_names, section_name):
-                for field_name in field_names:
-                    settings[field_name] = DEFAULT_SETTINGS[field_name]
-                save_settings(settings)
-                rebuild_settings_page(f"{section_name} settings restored to defaults.")
-
-            def reset_ui_settings(e):
-                default_theme = (
-                    DEFAULT_THEME
-                    if DEFAULT_THEME in available_themes
-                    else available_themes[0]
-                )
-                save_theme_choice(default_theme)
-                selected_theme["name"] = default_theme
-                settings["show_installation_directory"] = DEFAULT_SETTINGS[
-                    "show_installation_directory"
-                ]
-                settings["enable_orbs"] = DEFAULT_SETTINGS["enable_orbs"]
-                save_settings(settings)
-                page.controls.clear()
-                build_page(default_theme, active_page["name"])
-                notify("UI settings restored to defaults.", ft.Icons.RESTORE)
-
-            ui_subpage = build_settings_page(
-                "UI",
-                [
-                    build_setting_container(
-                        "Theme Selection",
-                        "Choose the color palette for the launcher interface. Updates immediately.",
-                        control=theme_dropdown,
-                        extra_content=theme_palette_preview,
-                    ),
-                    build_setting_container(
-                        "Show Profile Directory",
-                        "Display the game directory path in the selected profile card on the home page.",
-                        control=build_themed_switch(
-                            label="Show profile directory",
-                            value=settings.get("show_installation_directory", True),
-                            on_change=lambda e: persist_setting(
-                                "show_installation_directory", e.control.value
-                            ),
-                        ),
-                    ),
-                    build_setting_container(
-                        "Ambient Background Orbs",
-                        "Display subtle animated gradient orbs in the background of screens.",
-                        control=build_themed_switch(
-                            label="Enable background orbs",
-                            value=settings.get("enable_orbs", True),
-                            on_change=lambda e: set_orbs_enabled(e.control.value),
-                        ),
-                    ),
-                ],
-                on_reset=reset_ui_settings,
-            )
-
-            ram_input_ref = {}
-
-            def set_ram_value(value):
-                value = min(maximum_memory_mb, max(256, int(value)))
-                settings["ram_mb"] = value
-                save_settings(settings)
-                field = ram_input_ref.get("control")
-                if field is not None and field.value != str(value):
-                    field.value = str(value)
-                    field.update()
-
-            def on_ram_slider_change(e):
-                set_ram_value(round(e.control.value))
-
-            def on_ram_input_change(e):
-                try:
-                    value = int(e.control.value)
-                except (TypeError, ValueError):
-                    return
-                if 256 <= value <= maximum_memory_mb:
-                    settings["ram_mb"] = value
-                    save_settings(settings)
-                    ram_slider.value = value
-                    ram_slider.update()
-
-            def on_ram_input_blur(e):
-                try:
-                    value = int(e.control.value)
-                except (TypeError, ValueError):
-                    value = int(settings["ram_mb"])
-                set_ram_value(value)
-
-            ram_slider = ft.Slider(
-                min=256,
-                max=max(512, maximum_memory_mb),
-                divisions=max(1, (max(512, maximum_memory_mb) - 256) // 256),
-                value=settings["ram_mb"],
-                active_color=theme["btn_primary"],
-                inactive_color=theme["border"],
-                expand=True,
-                on_change=on_ram_slider_change,
-            )
-            ram_input = ft.TextField(
-                value=str(settings["ram_mb"]),
-                width=132,
-                suffix=ft.Text("MB", color=theme["text_secondary"]),
-                keyboard_type=ft.KeyboardType.NUMBER,
-                border_color=theme["border"],
-                focused_border_color=theme["btn_primary"],
-                color=theme["text_primary"],
-                fill_color=theme["card"],
-                border_radius=8,
-                on_change=on_ram_input_change,
-                on_blur=on_ram_input_blur,
-            )
-            ram_input_ref["control"] = ram_input
-
-            def on_java_path_change(e):
-                persist_setting("java_path", e.control.value or "")
-
-            def on_positive_integer_change(setting_key):
-                def handler(e):
-                    try:
-                        value = int(e.control.value)
-                    except (TypeError, ValueError):
-                        return
-                    if value > 0:
-                        persist_setting(setting_key, value)
-
-                return handler
-
-            java_subpage = build_settings_page(
-                "Java",
-                [
-                    build_setting_container(
-                        "Allocated Memory (RAM)",
-                        f"Allocate between 256 MB and {maximum_memory_mb:,} MB of detected system memory.",
-                        control=ft.Row(
-                            spacing=16,
-                            controls=[
-                                ram_slider,
-                                ram_input,
-                            ],
-                        ),
-                    ),
-                    build_setting_container(
-                        "Java Executable",
-                        "Specify a custom path to a Java binary (java.exe). Leave empty to use system default Java.",
-                        control=ft.TextField(
-                            hint_text="e.g. C:\\Program Files\\Java\\jdk-21\\bin\\java.exe",
-                            border_color=theme["border"],
-                            focused_border_color=theme["btn_primary"],
-                            color=theme["text_primary"],
-                            fill_color=theme["card"],
-                            border_radius=8,
-                            expand=True,
-                            value=settings["java_path"],
-                            on_change=on_java_path_change,
-                        ),
-                    ),
-                ],
-                on_reset=lambda e: reset_settings_fields(
-                    ("ram_mb", "java_path"), "Java"
-                ),
-            )
-
-            game_subpage = build_settings_page(
-                "Game",
-                [
-                    build_setting_container(
-                        "Default Window Resolution",
-                        "The window resolution applied when Minecraft starts up.",
-                        control=ft.Row(
-                            spacing=12,
-                            controls=[
-                                ft.TextField(
-                                    value=str(settings["window_width"]),
-                                    width=110,
-                                    prefix=ft.Text("W: ", color=theme["text_secondary"]),
-                                    border_color=theme["border"],
-                                    focused_border_color=theme["btn_primary"],
-                                    color=theme["text_primary"],
-                                    fill_color=theme["card"],
-                                    border_radius=8,
-                                    on_change=on_positive_integer_change("window_width"),
-                                ),
-                                ft.TextField(
-                                    value=str(settings["window_height"]),
-                                    width=110,
-                                    prefix=ft.Text("H: ", color=theme["text_secondary"]),
-                                    border_color=theme["border"],
-                                    focused_border_color=theme["btn_primary"],
-                                    color=theme["text_primary"],
-                                    fill_color=theme["card"],
-                                    border_radius=8,
-                                    on_change=on_positive_integer_change("window_height"),
-                                ),
-                            ],
-                        ),
-                    ),
-                    build_setting_container(
-                        "Fullscreen",
-                        "Launch Minecraft directly in fullscreen mode.",
-                        control=build_themed_switch(
-                            label="Start in fullscreen",
-                            value=settings["fullscreen"],
-                            on_change=lambda e: persist_setting(
-                                "fullscreen", e.control.value
-                            ),
-                        ),
-                    ),
-                    build_setting_container(
-                        "Custom Skins",
-                        "Load player skins in-game using the skin network Java agent.",
-                        control=build_themed_switch(
-                            label="Enable in-game skins",
-                            value=settings.get("enable_custom_skins", True),
-                            on_change=lambda e: persist_setting(
-                                "enable_custom_skins", e.control.value
-                            ),
-                        ),
-                    ),
-                ],
-                on_reset=lambda e: reset_settings_fields(
-                    ("window_width", "window_height", "fullscreen", "enable_custom_skins"), "Game"
-                ),
-            )
-
-            def on_accounts_username_change(e):
-                val = (e.control.value or "").strip()
-                player_name_state["value"] = val
-                save_profile_options(
-                    val,
-                    launch_selection["key"],
-                    profile_picture_state["path"],
-                )
-                update_sidebar_username()
-                if play_button_ref.get("control") is not None:
-                    refresh_launch_button()
-
-            accounts_player_field = ft.TextField(
-                label="Player username",
-                value=player_name_state["value"] or "Player",
-                width=280,
-                max_length=16,
-                hint_text="1-16 letters, numbers, or _",
-                border_color=theme["border"],
-                focused_border_color=theme["btn_primary"],
-                color=theme["text_primary"],
-                label_style=ft.TextStyle(color=theme["text_secondary"], size=13),
-                cursor_color=theme["btn_primary"],
-                fill_color=theme["card"],
-                border_radius=8,
-                on_change=on_accounts_username_change,
-            )
-            remove_account_picture_button = ft.TextButton(
-                "Remove picture",
-                disabled=not bool(profile_picture_state["path"]),
-                style=ft.ButtonStyle(
-                    color=theme["text_secondary"],
-                    overlay_color=ft.Colors.TRANSPARENT,
-                    mouse_cursor=clickable_mouse_cursor,
-                ),
-                on_click=clear_account_picture,
-            )
-            remove_account_picture_button_ref["control"] = (
-                remove_account_picture_button
-            )
-
-            def reset_account_settings(e):
-                old_picture_path = profile_picture_state["path"]
-                if not save_profile_options(
-                    "", launch_selection["key"], ""
-                ):
-                    notify("Could not reset account settings.", ft.Icons.ERROR_OUTLINE)
-                    return
-                player_name_state["value"] = ""
-                profile_picture_state["path"] = ""
-                remove_managed_account_picture(old_picture_path)
-                refresh_account_picture()
-                rebuild_settings_page("Account settings restored to defaults.")
-
-            accounts_subpage = build_settings_page(
-                "Accounts",
-                [
-                    build_setting_container(
-                        "Active Offline Username",
-                        "The username used when launching in offline mode.",
-                        control=accounts_player_field,
-                    ),
-                    build_setting_container(
-                        "Profile Picture",
-                        "Choose an image to show in the account card.",
-                        control=ft.Row(
-                            spacing=12,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                            controls=[
-                                account_picture_preview,
-                                ft.Column(
-                                    spacing=4,
-                                    controls=[ft.Container(
-                                        ft.Button(
-                                            "Choose picture",
-                                            icon=ft.Icons.ADD_PHOTO_ALTERNATE_OUTLINED,
-                                            bgcolor=theme["btn_primary"],
-                                            color=theme["btn_primary_text"],
-                                            style=rounded_button_style,
-                                            on_click=lambda e: page.run_task(
-                                                choose_account_picture
-                                            ),),padding=ft.Padding.only(left=12),expand = True
-                                        ),
-                                        ft.Container(
-                                        remove_account_picture_button,expand=True,alignment=ft.Alignment.CENTER,padding=ft.Padding.only(left=27))
-                                    ],
-                                ),
-                            ],
-                        ),
-                        extra_content=account_picture_status,
-                    ),
-                    build_setting_container(
-                        "Microsoft Account Authentication",
-                        "Microsoft sign-in is not available during the current development stage.",
-                        control=ft.Button(
-                            "Not available yet",
-                            icon=ft.Icons.ACCOUNT_CIRCLE_OUTLINED,
-                            bgcolor=theme["surface"],
-                            color=theme["text_muted"],
-                            style=rounded_button_style,
-                            disabled=True,
-                        ),
-                    ),
-                ],
-                on_reset=reset_account_settings,
-            )
-
-            launcher_subpage = build_settings_page(
-                "Launcher",
-                [
-                    build_setting_container(
-                        "Action on Launch",
-                        "Choose what Gr8 Launcher does when Minecraft starts.",
-                        control=ft.Dropdown(
-                            value=settings["launch_action"],
-                            options=[
-                                ft.DropdownOption(
-                                    key="Hide launcher",
-                                    text="Hide launcher (Default)",
-                                ),
-                                ft.DropdownOption(
-                                    key="Keep launcher open",
-                                    text="Keep launcher open",
-                                ),
-                                ft.DropdownOption(
-                                    key="Close launcher",
-                                    text="Close launcher",
-                                ),
-                            ],
-                            width=260,
-                            border_color=theme["border"],
-                            focused_border_color=theme["btn_primary"],
-                            color=theme["text_primary"],
-                            fill_color=theme["card"],
-                            border_radius=8,
-                            on_select=lambda e: persist_setting(
-                                "launch_action", e.control.value
-                            ),
-                        ),
-                    ),
-                    build_setting_container(
-                        "Log Capture",
-                        "Capture standard output to log files for crash inspection.",
-                        control=build_themed_switch(
-                            label="Record logs to disk",
-                            value=settings["capture_logs"],
-                            on_change=lambda e: persist_setting(
-                                "capture_logs", e.control.value
-                            ),
-                        ),
-                    ),
-                ],
-                on_reset=lambda e: reset_settings_fields(
-                    ("launch_action", "capture_logs"), "Launcher"
-                ),
-            )
-
-            def on_card_hover(e, container):
-                is_hovered = e.data == "true"
-                container.border = ft.Border.all(
-                    1,
-                    color=theme["btn_primary"] if is_hovered else theme["border"],
-                )
-                container.update()
-
-            def mini_badge(text, color=None):
-                return ft.Container(
-                    bgcolor=theme["card"],
-                    border=ft.Border.all(1, color=theme["border"]),
-                    border_radius=6,
-                    padding=ft.Padding.symmetric(horizontal=8, vertical=3),
-                    content=ft.Text(
-                        text,
-                        size=11,
-                        weight=ft.FontWeight.W_500,
-                        color=color or theme["text_secondary"],
-                    ),
-                )
-
-            # 1. Header Card (Minimal branding & vision)
-            about_hero_card = ft.Container(
-                bgcolor=theme["surface"],
-                border=ft.Border.all(1, color=theme["border"]),
-                border_radius=12,
-                padding=ft.Padding.all(20),
-                content=ft.Column(
-                    spacing=12,
-                    horizontal_alignment=ft.CrossAxisAlignment.START,
-                    controls=[
-                        ft.Row(
-                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                            controls=[
-                                ft.Row(
-                                    spacing=0,
-                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                    controls=[
-                                        ft.Text(
-                                            "Gr",
-                                            font_family="Mojangles",
-                                            size=22,
-                                            weight=ft.FontWeight.BOLD,
-                                            color=theme["text_primary"],
-                                        ),
-                                        ft.Text(
-                                            "8",
-                                            font_family="Mojangles",
-                                            size=22,
-                                            weight=ft.FontWeight.BOLD,
-                                            color=theme["btn_primary"],
-                                        ),
-                                        ft.Text(
-                                            " Launcher",
-                                            font_family="Mojangles",
-                                            size=22,
-                                            weight=ft.FontWeight.BOLD,
-                                            color=theme["text_primary"],
-                                        ),
-                                        ft.Container(width=8),
-                                        mini_badge("v1.1.0", color=theme["btn_primary"]),
-                                    ],
-                                ),
-                                mini_badge("Stable", color=theme["btn_primary"]),
-                            ],
-                        ),
-                        ft.Text(
-                            "The Gr8 Launcher is a minimal, sleek, functionality-based launcher which targets productivity, less distractions and provides a clean user experience.",
-                            size=13,
-                            color=theme["text_secondary"],
-                        ),
-                        ft.Row(
-                            spacing=8,
-                            controls=[
-                                mini_badge("Minimalism"),
-                                mini_badge("Functionality"),
-                                mini_badge("Clean UX"),
-                            ],
-                        ),
-                    ],
-                ),
-            )
-            about_hero_card.on_hover = lambda e, c=about_hero_card: on_card_hover(e, c)
-
-            # 2. Creator & Links Card (Unified, clean)
-            discord_id_pill_card = ft.Container(
-                bgcolor=theme["card"],
-                border=ft.Border.all(1, color=theme["border"]),
-                border_radius=8,
-                padding=ft.Padding.symmetric(horizontal=10, vertical=6),
-                ink=True,
-                tooltip=tooltip("Click to copy Discord ID (@jaydeeppatil23)"),
-                on_click=lambda e: copy_to_clipboard(
-                    "@jaydeeppatil23",
-                    "Copied Discord ID to clipboard: @jaydeeppatil23",
-                ),
-                content=ft.Row(
-                    spacing=6,
-                    tight=True,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    controls=[
-                        ft.Icon(
-                            ft.Icons.DISCORD,
-                            size=16,
-                            color=theme["btn_primary"],
-                        ),
-                        ft.Text(
-                            "@jaydeeppatil23",
-                            size=12,
-                            weight=ft.FontWeight.BOLD,
-                            color=theme["text_primary"],
-                        ),
-                        ft.Icon(
-                            ft.Icons.CONTENT_COPY_ROUNDED,
-                            size=13,
-                            color=theme["text_muted"],
-                        ),
-                    ],
-                ),
-            )
-            discord_id_pill_card.on_hover = lambda e, c=discord_id_pill_card: on_card_hover(e, c)
-            discord_id_pill = ft.GestureDetector(
-                mouse_cursor=ft.MouseCursor.CLICK,
-                content=discord_id_pill_card,
-            )
-
-            creator_social_card = ft.Container(
-                bgcolor=theme["surface"],
-                border=ft.Border.all(1, color=theme["border"]),
-                border_radius=12,
-                padding=ft.Padding.all(20),
-                content=ft.Column(
-                    spacing=16,
-                    controls=[
-                        # Developer info row
-                        ft.Row(
-                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                            controls=[
-                                ft.Row(
-                                    spacing=10,
-                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                    controls=[
-                                        ft.Container(
-                                            width=36,
-                                            height=36,
-                                            border_radius=8,
-                                            bgcolor=theme["card"],
-                                            border=ft.Border.all(1, color=theme["border"]),
-                                            alignment=ft.Alignment.CENTER,
-                                            content=ft.Icon(
-                                                ft.Icons.CODE_ROUNDED,
-                                                size=18,
-                                                color=theme["btn_primary"],
-                                            ),
-                                        ),
-                                        ft.Column(
-                                            spacing=2,
-                                            controls=[
-                                                ft.Text(
-                                                    "Made with ❤️ by Jaydeep Patil",
-                                                    size=14,
-                                                    weight=ft.FontWeight.BOLD,
-                                                    color=theme["text_primary"],
-                                                ),
-                                                ft.Text(
-                                                    "Creator & Developer",
-                                                    size=11,
-                                                    color=theme["text_muted"]
-                                                ),
-                                            ],
-                                        ),
-                                    ],
-                                ),
-                                discord_id_pill,
-                            ],
-                        ),
-                        ft.Divider(height=1, color=theme["border"]),
-                        # Connect & Support links row
-                        ft.Row(
-                            spacing=12,
-                            controls=[
-                                # Discord Server item
-                                ft.Container(
-                                    expand=True,
-                                    bgcolor=theme["card"],
-                                    border=ft.Border.all(1, color=theme["border"]),
-                                    border_radius=10,
-                                    padding=ft.Padding.symmetric(horizontal=14, vertical=12),
-                                    content=ft.Row(
-                                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                        controls=[
-                                            ft.Row(
-                                                spacing=10,
-                                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                                controls=[
-                                                    ft.Icon(
-                                                        ft.Icons.DISCORD,
-                                                        size=20,
-                                                        color=theme["btn_primary"],
-                                                    ),
-                                                    ft.Column(
-                                                        spacing=1,
-                                                        controls=[
-                                                            ft.Text(
-                                                                "Discord Community",
-                                                                size=13,
-                                                                weight=ft.FontWeight.BOLD,
-                                                                color=theme["text_primary"],
-                                                            ),
-                                                            ft.Text(
-                                                                "dsc.gg/_gr8",
-                                                                size=11,
-                                                                color=theme["text_muted"],
-                                                            ),
-                                                        ],
-                                                    ),
-                                                ],
-                                            ),
-                                            ft.Row(
-                                                spacing=4,
-                                                tight=True,
-                                                controls=[
-                                                    ft.Button(
-                                                        "Join",
-                                                        icon=ft.Icons.OPEN_IN_NEW_ROUNDED,
-                                                        bgcolor=theme["btn_primary"],
-                                                        color=theme["btn_primary_text"],
-                                                        style=rounded_button_style,
-                                                        on_click=lambda e: open_url(
-                                                            "https://dsc.gg/_gr8",
-                                                            "Opening Discord server: dsc.gg/_gr8",
-                                                        ),
-                                                    ),
-                                                    ft.IconButton(
-                                                        icon=ft.Icons.CONTENT_COPY_ROUNDED,
-                                                        icon_size=16,
-                                                        icon_color=theme["text_secondary"],
-                                                        hover_color=theme["card_hover"],
-                                                        tooltip=tooltip("Copy invite link"),
-                                                        style=rounded_button_style,
-                                                        on_click=lambda e: copy_to_clipboard(
-                                                            "https://dsc.gg/_gr8",
-                                                            "Copied Discord invite: https://dsc.gg/_gr8",
-                                                        ),
-                                                    ),
-                                                ],
-                                            ),
-                                        ],
-                                    ),
-                                ),
-                                # Buy Me a Coffee item
-                                ft.Container(
-                                    expand=True,
-                                    bgcolor=theme["card"],
-                                    border=ft.Border.all(1, color=theme["border"]),
-                                    border_radius=10,
-                                    padding=ft.Padding.symmetric(horizontal=14, vertical=12),
-                                    content=ft.Row(
-                                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                        controls=[
-                                            ft.Row(
-                                                spacing=10,
-                                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                                controls=[
-                                                    ft.Icon(
-                                                        ft.Icons.COFFEE_ROUNDED,
-                                                        size=20,
-                                                        color=theme["btn_primary"],
-                                                    ),
-                                                    ft.Column(
-                                                        spacing=1,
-                                                        controls=[
-                                                            ft.Text(
-                                                                "Buy Me a Coffee",
-                                                                size=13,
-                                                                weight=ft.FontWeight.BOLD,
-                                                                color=theme["text_primary"],
-                                                            ),
-                                                            ft.Text(
-                                                                "buymeacoffee.com/jaydeeeep",
-                                                                size=11,
-                                                                color=theme["text_muted"],
-                                                            ),
-                                                        ],
-                                                    ),
-                                                ],
-                                            ),
-                                            ft.Row(
-                                                spacing=4,
-                                                tight=True,
-                                                controls=[
-                                                    ft.Button(
-                                                        "Support",
-                                                        icon=ft.Icons.FAVORITE_ROUNDED,
-                                                        bgcolor=theme["btn_secondary"],
-                                                        color=theme["btn_secondary_text"],
-                                                        style=rounded_button_style,
-                                                        on_click=lambda e: open_url(
-                                                            "https://buymeacoffee.com/jaydeeeep",
-                                                            "Opening Buy Me a Coffee...",
-                                                        ),
-                                                    ),
-                                                    ft.IconButton(
-                                                        icon=ft.Icons.CONTENT_COPY_ROUNDED,
-                                                        icon_size=16,
-                                                        icon_color=theme["text_secondary"],
-                                                        hover_color=theme["card_hover"],
-                                                        tooltip=tooltip("Copy donation link"),
-                                                        style=rounded_button_style,
-                                                        on_click=lambda e: copy_to_clipboard(
-                                                            "https://buymeacoffee.com/jaydeeeep",
-                                                            "Copied donation link to clipboard!",
-                                                        ),
-                                                    ),
-                                                ],
-                                            ),
-                                        ],
-                                    ),
-                                ),
-                            ],
-                        ),
-                    ],
-                ),
-            )
-            creator_social_card.on_hover = lambda e, c=creator_social_card: on_card_hover(e, c)
-
-            # 3. Game Directory & Specs Card (Clean, minimal)
-            storage_specs_card = ft.Container(
-                bgcolor=theme["surface"],
-                border=ft.Border.all(1, color=theme["border"]),
-                border_radius=12,
-                padding=ft.Padding.all(20),
-                content=ft.Column(
-                    spacing=12,
-                    horizontal_alignment=ft.CrossAxisAlignment.START,
-                    controls=[
-                        ft.Row(
-                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                            controls=[
-                                ft.Row(
-                                    spacing=8,
-                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                    controls=[
-                                        ft.Icon(
-                                            ft.Icons.FOLDER_OPEN_OUTLINED,
-                                            size=16,
-                                            color=theme["btn_primary"],
-                                        ),
-                                        ft.Text(
-                                            "Game Directory",
-                                            size=14,
-                                            weight=ft.FontWeight.BOLD,
-                                            color=theme["text_primary"],
-                                        ),
-                                    ],
-                                ),
-                                ft.Text(
-                                    f"Palette: {selected_theme['name']}  •  RAM: {settings.get('ram_mb', 4096)} MB",
-                                    size=11,
-                                    color=theme["text_muted"],
-                                ),
-                            ],
-                        ),
-                        ft.Container(
-                            bgcolor=theme["card"],
-                            border=ft.Border.all(1, color=theme["border"]),
-                            border_radius=8,
-                            padding=ft.Padding.symmetric(horizontal=12, vertical=8),
-                            content=ft.Row(
-                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                controls=[
-                                    ft.Text(
-                                        str(minecraft_directory),
-                                        size=12,
-                                        color=theme["text_secondary"],
-                                        selectable=True,
-                                        expand=True,
-                                    ),
-                                    ft.Row(
-                                        spacing=6,
-                                        tight=True,
-                                        controls=[
-                                            ft.Button(
-                                                "Open Folder",
-                                                icon=ft.Icons.FOLDER_ROUNDED,
-                                                bgcolor=theme["btn_secondary"],
-                                                color=theme["btn_secondary_text"],
-                                                style=rounded_button_style,
-                                                on_click=lambda e: open_game_folder(
-                                                    minecraft_directory
-                                                ),
-                                            ),
-                                            ft.IconButton(
-                                                icon=ft.Icons.CONTENT_COPY_ROUNDED,
-                                                icon_size=16,
-                                                icon_color=theme["text_secondary"],
-                                                hover_color=theme["card_hover"],
-                                                tooltip=tooltip("Copy path"),
-                                                style=rounded_button_style,
-                                                on_click=lambda e: copy_to_clipboard(
-                                                    str(minecraft_directory),
-                                                    "Copied game data path to clipboard!",
-                                                ),
-                                            ),
-                                        ],
-                                    ),
-                                ],
-                            ),
-                        ),
-                    ],
-                ),
-            )
-            storage_specs_card.on_hover = lambda e, c=storage_specs_card: on_card_hover(e, c)
-
-            about_subpage = build_settings_page(
-                "About",
-                [
-                    about_hero_card,
-                    creator_social_card,
-                    storage_specs_card,
-                ],
-            )
+            options_dashboard = options_views["options"]
+            ui_subpage = options_views["options_ui"]
+            java_subpage = options_views["options_java"]
+            game_subpage = options_views["options_game"]
+            accounts_subpage = options_views["options_accounts"]
+            launcher_subpage = options_views["options_launcher"]
+            about_subpage = options_views["options_about"]
 
             def open_current_folder(e):
                 target = launch_targets.get(launch_selection["key"])
@@ -5325,42 +3608,26 @@ def main(page: ft.Page):
                 ),
             )
 
-            selected_installation_view = ft.Container(
-                left=0,
-                top=0,
-                right=0,
-                bottom=0,
-                bgcolor=(
-                    ft.Colors.with_opacity(0.92, theme["surface"])
-                    if launcher_log_state["open"]
-                    else ft.Colors.TRANSPARENT
-                ),
-                padding=0,
-                content=(
-                    launcher_log_panel
-                    if launcher_log_state["open"]
-                    else selected_installation_content
-                ),
-            )
             selected_installation_card = ft.Container(
                 height=180,
                 border_radius=20,
                 bgcolor=theme["card"],
+                border=ft.Border.all(1, color=theme["border"]),
                 clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
-                content=ft.Stack(
-                    expand=True,
-                    clip_behavior=ft.ClipBehavior.HARD_EDGE,
-                    controls=[
-                        hero_banner_img_box,
-                        hero_banner_blur,
-                        hero_banner_scrim,
-                        launcher_log_orb1,
-                        launcher_log_orb2,
-                        selected_installation_view,
-                    ],
+                content=ft.Container(
+                    border_radius=19,
+                    clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+                    content=ft.Stack(
+                        expand=True,
+                        controls=[
+                            hero_banner_img_box,
+                            hero_banner_blur,
+                            hero_banner_scrim,
+                            selected_installation_content,
+                        ],
+                    ),
                 ),
             )
-            selected_installation_view_ref["control"] = selected_installation_view
             if selected_target:
                 page.run_task(update_hero_banner, selected_target)
             page.run_task(auto_download_library_banners)
@@ -5550,533 +3817,7 @@ def main(page: ft.Page):
                 ]
 
             def build_skins_view():
-                active_skin_data = skins.load_active_skin_choice()
-                skin_model_state = {"value": active_skin_data.get("model", "classic")}
-                skin_view_state = {"value": "3d"}
-
-                status_dot = ft.Container(
-                    width=8,
-                    height=8,
-                    border_radius=4,
-                    bgcolor=theme["text_secondary"],
-                )
-                status_text = ft.Text(
-                    "Default Skin",
-                    size=12,
-                    color=theme["text_secondary"],
-                )
-                player_label = ft.Text(
-                    player_name_state["value"].strip() or "Offline Player",
-                    size=18,
-                    weight=ft.FontWeight.BOLD,
-                    color=theme["text_primary"],
-                )
-
-                cached_skin_im = [None]
-                cached_skin_key = [""]
-
-                is_init_classic = skin_model_state["value"] == "classic"
-                model_badge_icon = ft.Icon(
-                    ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED,
-                    size=15,
-                    color=theme["btn_primary"],
-                )
-                model_badge_text = ft.Text(
-                    "Classic Model (Steve • 4px arms)" if is_init_classic else "Slim Model (Alex • 3px arms)",
-                    size=12,
-                    weight=ft.FontWeight.W_500,
-                    color=theme["text_primary"],
-                )
-                model_badge = ft.Container(
-                    content=ft.Row(
-                        spacing=8,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        controls=[model_badge_icon, model_badge_text],
-                    ),
-                    padding=ft.Padding.symmetric(horizontal=12, vertical=8),
-                    bgcolor=ft.Colors.with_opacity(0.08, theme["btn_primary"]),
-                    border=ft.Border.all(1, color=ft.Colors.with_opacity(0.2, theme["btn_primary"])),
-                    border_radius=8,
-                )
-
-                def get_effective_skin_image() -> Image.Image:
-                    uname = player_name_state["value"].strip()
-                    model = skin_model_state["value"]
-                    key = f"{uname}_{model}"
-                    if cached_skin_key[0] == key and cached_skin_im[0] is not None:
-                        return cached_skin_im[0]
-
-                    raw = None
-                    if uname:
-                        cache_file = skins.get_skins_dir() / f"ely_{uname.lower()}.png"
-                        if cache_file.is_file():
-                            try:
-                                raw = cache_file.read_bytes()
-                            except OSError:
-                                pass
-
-                    im = None
-                    if raw:
-                        try:
-                            im = Image.open(io.BytesIO(raw))
-                        except Exception:
-                            pass
-                    if im is None:
-                        im = skins.get_default_skin(model)
-
-                    prepared = skins.ensure_64x64(im)
-                    cached_skin_im[0] = prepared
-                    cached_skin_key[0] = key
-
-                    # Automatically sync model detection from texture pixels
-                    if raw and im is not None:
-                        is_slim = skins.is_slim_skin(prepared)
-                        detected_model = "slim" if is_slim else "classic"
-                        if skin_model_state["value"] != detected_model:
-                            skin_model_state["value"] = detected_model
-                            model_badge_text.value = (
-                                "Classic Model (Steve • 4px arms)"
-                                if detected_model == "classic"
-                                else "Slim Model (Alex • 3px arms)"
-                            )
-                            try:
-                                model_badge_text.update()
-                            except Exception:
-                                pass
-
-                    return prepared
-
-                def invalidate_skin_cache():
-                    cached_skin_im[0] = None
-                    cached_skin_key[0] = ""
-
-                current_rot = {"yaw": -25.0, "pitch": 10.0}
-                velocity = {"yaw": 0.0, "pitch": 0.0}
-                anim_id = [0]
-                is_dragging = [False]
-
-                def render_current_character() -> bytes:
-                    skin_im = get_effective_skin_image()
-                    return skins.render_3d_skin_bytes(
-                        skin_im,
-                        yaw_deg=current_rot["yaw"],
-                        pitch_deg=current_rot["pitch"],
-                        model=skin_model_state["value"],
-                        pose="hero",
-                        width=240,
-                        height=340,
-                        scale=8.5,
-                    )
-
-                skin_image = ft.Image(
-                    src=render_current_character(),
-                    fit=ft.BoxFit.CONTAIN,
-                    width=240,
-                    height=340,
-                    filter_quality=ft.FilterQuality.NONE,
-                    gapless_playback=True,
-                )
-
-                def update_preview():
-                    skin_image.src = render_current_character()
-                    try:
-                        skin_image.update()
-                    except Exception:
-                        pass
-
-                active_pill_style = ft.ButtonStyle(
-                    bgcolor={
-                        ft.ControlState.DEFAULT: theme["btn_primary"],
-                        ft.ControlState.DISABLED: theme["surface"],
-                    },
-                    color={
-                        ft.ControlState.DEFAULT: theme.get("btn_primary_text", "#FFFFFF"),
-                        ft.ControlState.DISABLED: theme.get("text_muted", theme["text_secondary"]),
-                    },
-                    side={
-                        ft.ControlState.DEFAULT: ft.BorderSide(0, ft.Colors.TRANSPARENT),
-                        ft.ControlState.DISABLED: ft.BorderSide(1, color=theme["border"]),
-                    },
-                    shape=ft.RoundedRectangleBorder(radius=8),
-                    mouse_cursor=clickable_mouse_cursor,
-                    padding=ft.Padding.symmetric(horizontal=14, vertical=8),
-                )
-                inactive_pill_style = ft.ButtonStyle(
-                    bgcolor={
-                        ft.ControlState.HOVERED: theme.get("card_hover", theme["card"]),
-                        ft.ControlState.DEFAULT: theme["card"],
-                        ft.ControlState.DISABLED: theme["surface"],
-                    },
-                    color={
-                        ft.ControlState.DEFAULT: theme["text_secondary"],
-                        ft.ControlState.DISABLED: theme.get("text_muted", theme["text_secondary"]),
-                    },
-                    side={
-                        ft.ControlState.HOVERED: ft.BorderSide(1, color=theme["btn_primary"]),
-                        ft.ControlState.DEFAULT: ft.BorderSide(1, color=theme["border"]),
-                        ft.ControlState.DISABLED: ft.BorderSide(1, color=theme["border"]),
-                    },
-                    shape=ft.RoundedRectangleBorder(radius=8),
-                    mouse_cursor=clickable_mouse_cursor,
-                    padding=ft.Padding.symmetric(horizontal=14, vertical=8),
-                )
-
-                def highlight_active_view(view_name):
-                    view_front_btn.style = active_pill_style if view_name == "front" else inactive_pill_style
-                    view_back_btn.style = active_pill_style if view_name == "back" else inactive_pill_style
-                    try:
-                        view_front_btn.update()
-                        view_back_btn.update()
-                    except Exception:
-                        pass
-
-                async def coast_task(gen):
-                    while active_page.get("name") == "skins" and anim_id[0] == gen:
-                        if abs(velocity["yaw"]) < 0.03 and abs(velocity["pitch"]) < 0.03:
-                            break
-                        current_rot["yaw"] = (current_rot["yaw"] + velocity["yaw"]) % 360.0
-                        current_rot["pitch"] = max(-35.0, min(35.0, current_rot["pitch"] + velocity["pitch"]))
-                        velocity["yaw"] *= 0.90
-                        velocity["pitch"] *= 0.90
-                        skin_image.src = render_current_character()
-                        try:
-                            skin_image.update()
-                        except Exception:
-                            break
-                        await asyncio.sleep(0.001)
-
-                async def animate_to(goal_yaw, goal_pitch, gen):
-                    start_yaw = current_rot["yaw"]
-                    start_pitch = current_rot["pitch"]
-                    diff_yaw = (goal_yaw - start_yaw + 180.0) % 360.0 - 180.0
-                    diff_pitch = goal_pitch - start_pitch
-                    steps = 18
-                    for step in range(1, steps + 1):
-                        if anim_id[0] != gen or active_page.get("name") != "skins":
-                            break
-                        t = step / steps
-                        ease = 1.0 - math.pow(1.0 - t, 3)
-                        current_rot["yaw"] = (start_yaw + diff_yaw * ease) % 360.0
-                        current_rot["pitch"] = start_pitch + diff_pitch * ease
-                        skin_image.src = render_current_character()
-                        try:
-                            skin_image.update()
-                        except Exception:
-                            break
-                        await asyncio.sleep(0.001)
-
-                def handle_pan_start(e):
-                    is_dragging[0] = True
-                    anim_id[0] += 1
-                    velocity["yaw"] = 0.0
-                    velocity["pitch"] = 0.0
-
-                def handle_pan_update(e: ft.DragUpdateEvent):
-                    dx = 0.0
-                    dy = 0.0
-                    if getattr(e, "local_delta", None) is not None:
-                        dx = getattr(e.local_delta, "x", 0.0) or 0.0
-                        dy = getattr(e.local_delta, "y", 0.0) or 0.0
-                    elif getattr(e, "global_delta", None) is not None:
-                        dx = getattr(e.global_delta, "x", 0.0) or 0.0
-                        dy = getattr(e.global_delta, "y", 0.0) or 0.0
-                    elif hasattr(e, "delta_x"):
-                        dx = getattr(e, "delta_x", 0.0) or 0.0
-                        dy = getattr(e.delta_y, 0.0) or 0.0
-
-                    current_rot["yaw"] = (current_rot["yaw"] + dx * 0.70) % 360.0
-                    current_rot["pitch"] = max(-35.0, min(35.0, current_rot["pitch"] + dy * 0.45))
-                    velocity["yaw"] = velocity["yaw"] * 0.35 + dx * 0.55
-                    velocity["pitch"] = velocity["pitch"] * 0.35 + dy * 0.35
-
-                    if skin_view_state["value"] != "3d":
-                        skin_view_state["value"] = "3d"
-                        highlight_active_view("3d")
-
-                    skin_image.src = render_current_character()
-                    try:
-                        skin_image.update()
-                    except Exception:
-                        pass
-
-                def handle_pan_end(e):
-                    is_dragging[0] = False
-                    if abs(velocity["yaw"]) > 0.08 or abs(velocity["pitch"]) > 0.08:
-                        anim_id[0] += 1
-                        page.run_task(coast_task, anim_id[0])
-
-                def handle_double_tap(e):
-                    anim_id[0] += 1
-                    velocity["yaw"] = 0.0
-                    velocity["pitch"] = 0.0
-                    skin_view_state["value"] = "3d"
-                    highlight_active_view("3d")
-                    page.run_task(animate_to, -25.0, 10.0, anim_id[0])
-
-                skin_gesture = ft.GestureDetector(
-                    content=skin_image,
-                    mouse_cursor=ft.MouseCursor.GRAB,
-                    drag_interval=16,
-                    on_pan_start=handle_pan_start,
-                    on_pan_update=handle_pan_update,
-                    on_pan_end=handle_pan_end,
-                    on_double_tap=handle_double_tap,
-                )
-
-                def set_view(view_name):
-                    skin_view_state["value"] = view_name
-                    highlight_active_view(view_name)
-                    velocity["yaw"] = 0.0
-                    velocity["pitch"] = 0.0
-                    anim_id[0] += 1
-                    if view_name == "3d":
-                        page.run_task(animate_to, -25.0, 10.0, anim_id[0])
-                    elif view_name == "front":
-                        page.run_task(animate_to, 0.0, 0.0, anim_id[0])
-                    elif view_name == "back":
-                        page.run_task(animate_to, 180.0, 0.0, anim_id[0])
-
-                view_front_btn = ft.Button(
-                    "Front",
-                    style=inactive_pill_style,
-                    on_click=lambda e: set_view("front"),
-                )
-                view_back_btn = ft.Button(
-                    "Back",
-                    style=inactive_pill_style,
-                    on_click=lambda e: set_view("back"),
-                )
-
-                def set_model(model_name):
-                    skin_model_state["value"] = model_name
-                    is_classic = (model_name == "classic")
-                    model_badge_text.value = (
-                        "Classic Model (Steve • 4px arms)"
-                        if is_classic
-                        else "Slim Model (Alex • 3px arms)"
-                    )
-                    try:
-                        model_badge_text.update()
-                    except Exception:
-                        pass
-                    skins.save_active_skin_choice("ely", model=model_name)
-                    invalidate_skin_cache()
-                    update_preview()
-
-                async def sync_skin_network(force=False):
-                    uname = player_name_state["value"].strip()
-                    if not uname:
-                        status_dot.bgcolor = theme["text_secondary"]
-                        status_text.value = "Default Skin"
-                        invalidate_skin_cache()
-                        update_preview()
-                        page.update()
-                        return
-
-                    if not online_available and force:
-                        notify("Cannot check for updated skin while offline.", ft.Icons.WIFI_OFF)
-                        return
-
-                    if not online_available:
-                        invalidate_skin_cache()
-                        raw_check = get_effective_skin_image()
-                        if raw_check != skins.get_default_skin(skin_model_state["value"]):
-                            status_dot.bgcolor = ft.Colors.GREEN_400
-                            status_text.value = "Skin Active (Offline)"
-                        else:
-                            status_dot.bgcolor = theme["text_secondary"]
-                            status_text.value = "Default Skin"
-                        update_preview()
-                        try:
-                            status_dot.update()
-                            status_text.update()
-                        except Exception:
-                            pass
-                        return
-
-                    status_text.value = "Checking skin..."
-                    status_dot.bgcolor = ft.Colors.AMBER_400
-                    try:
-                        status_text.update()
-                        status_dot.update()
-                    except Exception:
-                        pass
-
-                    skin_bytes, detected_model = await asyncio.to_thread(
-                        skins.fetch_ely_skin, uname, force_refresh=force, timeout=6.0
-                    )
-                    invalidate_skin_cache()
-                    if skin_bytes:
-                        status_dot.bgcolor = ft.Colors.GREEN_400
-                        status_text.value = "Skin Active"
-                        set_model(detected_model)
-                    else:
-                        status_dot.bgcolor = theme["text_secondary"]
-                        status_text.value = "Default Skin"
-                        update_preview()
-                    try:
-                        status_dot.update()
-                        status_text.update()
-                    except Exception:
-                        pass
-
-                page.run_task(sync_skin_network, False)
-
-                def handle_refresh(e):
-                    if not online_available:
-                        notify("Cannot refresh skin while offline.", ft.Icons.WIFI_OFF)
-                        return
-                    notify("Checking for updated skin...", ft.Icons.REFRESH)
-                    page.run_task(sync_skin_network, True)
-
-                refresh_skin_btn = ft.Button(
-                    "Refresh",
-                    icon=ft.Icons.REFRESH,
-                    style=inactive_pill_style,
-                    disabled=not online_available,
-                    tooltip=tooltip("Internet connection required to refresh") if not online_available else None,
-                    on_click=handle_refresh,
-                )
-                manage_skin_btn = ft.Button(
-                    "Manage Skin Online",
-                    icon=ft.Icons.OPEN_IN_NEW,
-                    style=active_pill_style,
-                    disabled=not online_available,
-                    tooltip=tooltip("Internet connection required") if not online_available else None,
-                    on_click=lambda e: open_url("https://ely.by/skins", "Opening skin manager..."),
-                )
-                launcher_log_state["skin_refresh_button"] = refresh_skin_btn
-                launcher_log_state["skin_manage_button"] = manage_skin_btn
-                launcher_log_state["skin_sync_task"] = sync_skin_network
-
-                drag_hint = ft.Row(
-                    alignment=ft.MainAxisAlignment.CENTER,
-                    spacing=6,
-                    controls=[
-                        ft.Icon(ft.Icons.ROTATE_RIGHT, size=13, color=theme["text_secondary"]),
-                        ft.Text("Drag to rotate 360° • Double-click to reset", size=11, color=theme["text_secondary"]),
-                    ],
-                )
-
-                left_preview_card = ft.Container(
-                    width=330,
-                    padding=22,
-                    bgcolor=theme["surface"],
-                    border=ft.Border.all(1, color=theme["border"]),
-                    border_radius=16,
-                    alignment=ft.Alignment.CENTER,
-                    content=ft.Column(
-                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                        alignment=ft.MainAxisAlignment.CENTER,
-                        spacing=14,
-                        controls=[
-                            ft.Container(
-                                content=skin_gesture,
-                                alignment=ft.Alignment.CENTER,
-                                padding=ft.Padding.only(top=5, bottom=5),
-                            ),
-                            ft.Row(
-                                alignment=ft.MainAxisAlignment.CENTER,
-                                spacing=8,
-                                controls=[
-                                    view_front_btn,
-                                    view_back_btn,
-                                ],
-                            ),
-                            drag_hint,
-                        ],
-                    ),
-                )
-
-                right_settings_card = ft.Container(
-                    width=460,
-                    padding=28,
-                    bgcolor=theme["surface"],
-                    border=ft.Border.all(1, color=theme["border"]),
-                    border_radius=16,
-                    content=ft.Column(
-                        spacing=22,
-                        controls=[
-                            ft.Column(
-                                spacing=6,
-                                controls=[
-                                    ft.Text("PLAYER", size=11, weight=ft.FontWeight.BOLD, color=theme["text_secondary"]),
-                                    player_label,
-                                    ft.Row(
-                                        spacing=8,
-                                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                        controls=[status_dot, status_text],
-                                    ),
-                                    ft.Container(height=6),
-                                    ft.Row(
-                                        spacing=10,
-                                        controls=[
-                                            refresh_skin_btn,
-                                            manage_skin_btn,
-                                        ],
-                                    ),
-                                ],
-                            ),
-                            ft.Divider(color=ft.Colors.with_opacity(0.12, theme["border"])),
-                            ft.Column(
-                                spacing=8,
-                                controls=[
-                                    ft.Text("CHARACTER MODEL", size=11, weight=ft.FontWeight.BOLD, color=theme["text_secondary"]),
-                                    model_badge,
-                                ],
-                            ),
-                        ],
-                    ),
-                )
-
-                footer_credit = ft.Container(
-                    content=ft.Text(
-                        "Skin network powered by Ely.by",
-                        size=11,
-                        color=ft.Colors.with_opacity(0.5, theme["text_secondary"]),
-                        text_align=ft.TextAlign.CENTER,
-                    ),
-                    alignment=ft.Alignment.CENTER,
-                    padding=ft.Padding.only(top=14),
-                )
-
-                skins_orb1, skins_orb2 = create_ambient_gradient_orbs()
-                page.run_task(
-                    animate_ambient_gradient_orbs,
-                    skins_orb1,
-                    skins_orb2,
-                    lambda: active_page.get("name") == "skins",
-                )
-
-                return ft.Stack(
-                    expand=True,
-                    alignment=ft.Alignment.CENTER,
-                    controls=[
-                        skins_orb1,
-                        skins_orb2,
-                        ft.Container(
-                            alignment=ft.Alignment.CENTER,
-                            padding=ft.Padding.symmetric(horizontal=20, vertical=16),
-                            content=ft.Column(
-                                alignment=ft.MainAxisAlignment.CENTER,
-                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                                scroll=ft.ScrollMode.AUTO,
-                                controls=[
-                                    ft.Row(
-                                        alignment=ft.MainAxisAlignment.CENTER,
-                                        vertical_alignment=ft.CrossAxisAlignment.START,
-                                        spacing=24,
-                                        controls=[
-                                            left_preview_card,
-                                            right_settings_card,
-                                        ],
-                                    ),
-                                    footer_credit,
-                                ],
-                            ),
-                        ),
-                    ],
-                )
+                return build_skins_view_external(page, theme, notify, open_url=open_url, online_available=online_available, navigate=navigate)
 
             home_status_row = ft.Row(
                 spacing=20,
@@ -6106,17 +3847,26 @@ def main(page: ft.Page):
                 "skins": build_skins_view(),
                 "home": ft.Container(
                     expand=True,
-                    padding=ft.Padding(left=28, top=20, right=28, bottom=16),
-                    content=ft.Column(
+                    content=ft.Stack(
                         expand=True,
-                        spacing=14,
-                        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         controls=[
-                            welcome_row,
-                            selected_installation_card,
-                            library_shelf_container,
-                            home_status_row,
+                            ft.Container(
+                                expand=True,
+                                padding=ft.Padding(left=28, top=20, right=28, bottom=16),
+                                content=ft.Column(
+                                    expand=True,
+                                    spacing=14,
+                                    horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                    controls=[
+                                        welcome_row,
+                                        selected_installation_card,
+                                        library_shelf_container,
+                                        home_status_row,
+                                    ],
+                                ),
+                            ),
+                            floating_logs_window,
                         ],
                     ),
                 ),
@@ -6243,9 +3993,33 @@ def main(page: ft.Page):
                 launcher_log_state["status_control"] = launch_status
                 launcher_log_state["progress_control"] = launch_progress
                 launcher_log_state["eta_control"] = launch_eta
+                launcher_log_state["white_beam"] = white_beam
+                launcher_log_state["set_track_progress"] = set_track_progress
+                launcher_log_state["floating_logs_window"] = floating_logs_window
+                launcher_log_state["bottom_log_toggle_button"] = bottom_log_toggle_button
+                if launcher_log_state.get("running"):
+                    set_track_progress(launcher_log_state.get("progress"), force=True)
+                    if launcher_log_state.get("status"):
+                        launch_status.value = launcher_log_state["status"]
+                    if launcher_log_state.get("eta"):
+                        launch_eta.value = launcher_log_state["eta"]
+                    for card in library_cards.values():
+                        card.disabled = True
+                        card.opacity = 0.5
+                    new_profile_container.disabled = True
+                    new_profile_container.opacity = 0.5
+                    for item in selection_rows:
+                        row = item[1]
+                        row.disabled = True
+                        row.opacity = 0.5
+                        if len(item) > 4 and item[4] is not None:
+                            item[4].mouse_cursor = ft.MouseCursor.BASIC
+                    refresh_launch_button()
                 page.run_task(animate_launcher_log_background)
             elif name == "options":
-                page.run_task(animate_options_background)
+                anim = options_background_state.get("animate")
+                if callable(anim):
+                    page.run_task(anim)
 
             if page_content.content is None:
                 page_content.content = pages[name]
@@ -6528,9 +4302,59 @@ def main(page: ft.Page):
                 )
             await asyncio.sleep(30)
 
+    profiles_json_path = Path(minecraft_directory) / "launcher_profiles.json"
+    last_profiles_mtime = [0.0]
+    if profiles_json_path.is_file():
+        try:
+            last_profiles_mtime[0] = profiles_json_path.stat().st_mtime
+        except Exception:
+            pass
+
+    async def watch_external_profiles():
+        while True:
+            await asyncio.sleep(2.5)
+            if launcher_log_state.get("running"):
+                continue
+            try:
+                if profiles_json_path.is_file():
+                    mtime = profiles_json_path.stat().st_mtime
+                    if mtime != last_profiles_mtime[0]:
+                        last_profiles_mtime[0] = mtime
+                        inst_v = get_installed_versions(force_refresh=True)
+                        new_inst, new_handled, changed = import_external_installations(
+                            installations,
+                            handled_external_profile_ids,
+                            inst_v,
+                            get_external_installations(),
+                            version_catalog,
+                        )
+                        new_inst, disc_changed = discover_local_instances(
+                            minecraft_directory,
+                            new_inst,
+                            inst_v,
+                            version_catalog,
+                        )
+                        if changed or disc_changed:
+                            installations[:] = new_inst
+                            handled_external_profile_ids.clear()
+                            handled_external_profile_ids.update(new_handled)
+                            save_installations(
+                                installations,
+                                handled_external_profile_ids,
+                                latest_release_id,
+                            )
+                            cur_page = active_page.get("name", "home")
+                            if cur_page in ("home", "installations"):
+                                page.controls.clear()
+                                build_page(selected_theme["name"], cur_page)
+                                notify("Synced newly added profile from launcher_profiles.json", ft.Icons.DOWNLOAD_DONE_ROUNDED)
+            except Exception:
+                pass
+
     build_page(theme_choice)
     page.run_task(refresh_version_catalog)
     page.run_task(monitor_connectivity)
+    page.run_task(watch_external_profiles)
     page.run_task(asyncio.to_thread, skins.prune_skin_cache)
 
 if __name__ == "__main__":

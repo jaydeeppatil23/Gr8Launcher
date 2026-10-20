@@ -1,5 +1,5 @@
 """Gr8 Launcher - Skin Engine
-Handles Minecraft skin rendering (2D front/back composite with pixel-art scaling),
+Handles Minecraft skin rendering (3d/front/back),
 validation of 64x64 and legacy 64x32 skin formats, Ely.by skin synchronization,
 local skin preset library, and automatic management of authlib-injector.jar.
 """

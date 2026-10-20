@@ -28,6 +28,7 @@ short-lived failures are recorded in ``index.json`` to avoid hammering sources.
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
 import json
 import re
@@ -908,16 +909,71 @@ def is_valid_banner_key(key: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Custom instance banners
+# Custom profile banners & Base64 Icons
 # ---------------------------------------------------------------------------
 
+def save_custom_banner_image(profile_id: str, source_path: str | Path) -> str | None:
+    """Copies an image from source_path into the persistent banners directory for a profile."""
+    try:
+        src = Path(source_path)
+        if not src.is_file():
+            return None
+        ext = src.suffix.lstrip(".").lower()
+        if ext not in _IMAGE_EXTENSIONS:
+            ext = "png"
+        safe_id = re.sub(r"[^a-zA-Z0-9_\-]", "_", str(profile_id))
+        target_file = get_banner_cache_dir() / f"custom_{safe_id}.{ext}"
+        shutil.copyfile(str(src), str(target_file))
+        return str(target_file)
+    except Exception:
+        return None
+
+
+def save_base64_icon_as_banner(profile_id: str, base64_str: str) -> str | None:
+    """Decodes a base64 or data:image/... URI icon and saves it as a profile banner."""
+    if not base64_str or not isinstance(base64_str, str):
+        return None
+    raw_b64 = base64_str.strip()
+    ext = "png"
+    if raw_b64.startswith("data:image/") and ";base64," in raw_b64:
+        header, raw_b64 = raw_b64.split(";base64,", 1)
+        sub_ext = header.replace("data:image/", "").split("+")[0].strip().lower()
+        if sub_ext in _IMAGE_EXTENSIONS:
+            ext = sub_ext
+
+    try:
+        # Fix missing base64 padding if needed
+        padded = raw_b64 + "=" * (-len(raw_b64) % 4)
+        image_bytes = base64.b64decode(padded)
+        if not image_bytes or len(image_bytes) < 8:
+            return None
+        safe_id = re.sub(r"[^a-zA-Z0-9_\-]", "_", str(profile_id))
+        target_file = get_banner_cache_dir() / f"custom_{safe_id}.{ext}"
+        target_file.write_bytes(image_bytes)
+        return str(target_file)
+    except Exception:
+        return None
+
+
 def get_custom_instance_banner(target: dict | None, minecraft_directory: str | None = None) -> str | None:
-    if not target or not target.get("is_instance"):
+    if not target:
         return None
 
     custom_banner = target.get("custom_banner")
     if custom_banner and Path(custom_banner).is_file():
-        return custom_banner
+        return str(custom_banner)
+
+    # Check if a custom banner for this profile ID exists in banner cache
+    profile_id = target.get("id")
+    if profile_id:
+        safe_id = re.sub(r"[^a-zA-Z0-9_\-]", "_", str(profile_id))
+        for ext in _IMAGE_EXTENSIONS:
+            candidate = get_banner_cache_dir() / f"custom_{safe_id}.{ext}"
+            if candidate.is_file() and candidate.stat().st_size > 0:
+                return str(candidate)
+
+    if not target.get("is_instance"):
+        return None
 
     directories: list[Path] = []
     game_directory = target.get("game_directory")
