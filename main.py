@@ -2340,8 +2340,8 @@ def main(page: ft.Page):
 
             initial_installed = is_target_installed(selected_target)
             hero_status_icon = ft.Icon(
-                ft.Icons.RADIO_BUTTON_CHECKED if initial_installed else ft.Icons.RADIO_BUTTON_UNCHECKED,
-                size=15,
+                ft.Icons.CIRCLE,
+                size=10,
                 color=theme["btn_primary"] if initial_installed else theme["text_secondary"],
             )
             hero_status_text = ft.Text(
@@ -2368,11 +2368,7 @@ def main(page: ft.Page):
 
             def update_hero_status(target):
                 installed = is_target_installed(target)
-                hero_status_icon.name = (
-                    ft.Icons.RADIO_BUTTON_CHECKED
-                    if installed
-                    else ft.Icons.RADIO_BUTTON_UNCHECKED
-                )
+                hero_status_icon.name = ft.Icons.CIRCLE
                 hero_status_icon.color = (
                     theme["btn_primary"] if installed else theme["text_secondary"]
                 )
@@ -2696,6 +2692,46 @@ def main(page: ft.Page):
             HERO_BANNER_FADE_MS = 220
             HERO_BANNER_OPACITY = 1.0
 
+            library_banner_images = {}
+
+            def apply_card_banner(card_key, banner_path):
+                if not banner_path or card_key not in library_banner_images:
+                    return
+                img_ctrl, grad_ctrl, box_ctrl = library_banner_images[card_key]
+                img_ctrl.src = banner_path
+                img_ctrl.visible = True
+                grad_ctrl.visible = True
+                box_ctrl.bgcolor = theme["card"]
+                try:
+                    img_ctrl.update()
+                    grad_ctrl.update()
+                    box_ctrl.update()
+                except Exception:
+                    pass
+
+            async def auto_download_library_banners():
+                for k, tgt in list(launch_targets.items()):
+                    if banners.get_local_banner_for_target(tgt, minecraft_directory):
+                        continue
+                    try:
+                        resolved_path = await banners.ensure_banner_for_target(
+                            tgt, minecraft_directory
+                        )
+                        if resolved_path:
+                            apply_card_banner(k, resolved_path)
+                            if launch_selection.get("key") == k:
+                                img_ctrl = hero_banner_image_ref.get("control")
+                                if img_ctrl is not None and not hero_banner_view.get("src"):
+                                    img_ctrl.src = resolved_path
+                                    img_ctrl.opacity = HERO_BANNER_OPACITY
+                                    hero_banner_view["src"] = resolved_path
+                                    try:
+                                        img_ctrl.update()
+                                    except Exception:
+                                        pass
+                    except Exception:
+                        pass
+
             async def update_hero_banner(target):
                 img_ctrl = hero_banner_image_ref.get("control")
                 if img_ctrl is None:
@@ -2746,6 +2782,8 @@ def main(page: ft.Page):
                 resolved = await banners.ensure_banner_for_target(
                     target, minecraft_directory
                 )
+                if resolved:
+                    apply_card_banner(target_key, resolved)
                 if not resolved or launch_selection["key"] != target_key:
                     return
                 if resolved == hero_banner_view["src"] and (img_ctrl.opacity or 0) > 0:
@@ -2811,7 +2849,8 @@ def main(page: ft.Page):
             def select_launch_target(key):
                 if launcher_log_state["running"]:
                     return
-                if launch_selection["key"] == key:
+                old_key = launch_selection.get("key")
+                if old_key == key:
                     return
                 launch_selection["key"] = key
                 save_profile_options(
@@ -2820,25 +2859,23 @@ def main(page: ft.Page):
                     profile_picture_state["path"],
                 )
                 selected_target = launch_targets[key]
-                for k, card in library_cards.items():
+                for k in (old_key, key):
+                    if not k or k not in library_cards:
+                        continue
+                    card = library_cards[k]
                     is_sel = (k == key)
                     card.border = (
-                        ft.Border.all(2, color=theme["btn_primary"])
+                        ft.Border.all(2, color=theme['btn_primary'])
                         if is_sel
-                        else None
-                    )
-                    card.bgcolor = (
-                        ft.Colors.with_opacity(0.08, theme["btn_primary"])
-                        if is_sel
-                        else theme["card"]
+                        else ft.Border.all(2, color=ft.Colors.with_opacity(0.18, theme['border']))
                     )
                     if k in library_status_markers:
                         st_text, st_icon = library_status_markers[k]
-                        is_inst = launch_targets[k]["version_id"] in local_version_ids
-                        st_text.value = "Installed" if is_inst else "Will install"
-                        st_text.color = theme["btn_primary"] if is_sel else theme["text_muted"]
+                        is_inst = launch_targets[k]['version_id'] in local_version_ids
+                        st_text.value = 'Installed' if is_inst else 'Not installed'
+                        st_text.color = theme['btn_primary'] if is_sel else theme['text_muted']
                         st_icon.name = ft.Icons.CHECK if is_inst else ft.Icons.DOWNLOAD_OUTLINED
-                        st_icon.color = theme["btn_primary"] if is_sel else theme["text_muted"]
+                        st_icon.color = theme['btn_primary'] if is_sel else theme['text_muted']
                         try:
                             st_text.update()
                             st_icon.update()
@@ -2859,133 +2896,188 @@ def main(page: ft.Page):
                 page.run_task(animate_card_selection, selected_target)
 
             def build_library_card(key, target):
-                is_selected = launch_selection["key"] == key
-                is_installed = target["version_id"] in local_version_ids
-                is_inst = bool(target.get("is_instance"))
-                loader = target.get("loader", "Vanilla")
-
-                if key == "latest-release":
-                    card_icon = ft.Icons.STAR_ROUNDED
-                    icon_color = theme["btn_primary"]
-                elif is_inst:
-                    card_icon = ft.Icons.FOLDER_SPECIAL
-                    icon_color = theme["btn_primary"]
-                elif loader == "Fabric":
-                    card_icon = ft.Icons.SETTINGS_SUGGEST
-                    icon_color = theme["text_primary"]
-                elif loader == "Forge":
-                    card_icon = ft.Icons.HARDWARE
-                    icon_color = theme["text_primary"]
-                elif loader == "OptiFine":
-                    card_icon = ft.Icons.AUTO_AWESOME
-                    icon_color = theme["text_primary"]
-                else:
-                    card_icon = ft.Icons.SPORTS_ESPORTS
-                    icon_color = theme["text_secondary"]
+                is_selected = launch_selection['key'] == key
+                is_installed = target['version_id'] in local_version_ids
+                is_inst = bool(target.get('is_instance'))
+                loader = target.get('loader', 'Vanilla')
 
                 status_text = ft.Text(
-                    "Installed" if is_installed else "Will install",
+                    'Installed' if is_installed else 'Not installed',
                     size=11,
                     weight=ft.FontWeight.NORMAL,
-                    color=theme["btn_primary"] if is_selected else theme["text_muted"],
+                    color=theme['btn_primary'] if is_selected else theme['text_muted'],
                 )
                 status_icon = ft.Icon(
                     ft.Icons.CHECK if is_installed else ft.Icons.DOWNLOAD_OUTLINED,
                     size=13,
-                    color=theme["btn_primary"] if is_selected else theme["text_muted"],
+                    color=theme['btn_primary'] if is_selected else theme['text_muted'],
                 )
                 library_status_markers[key] = (status_text, status_icon)
 
-                badge_label = "INSTANCE" if is_inst else (loader.upper() if loader != "Vanilla" else "VANILLA")
+                if loader == 'Fabric':
+                    loader_bg = ft.Colors.with_opacity(0.18, ft.Colors.BLUE_400)
+                    loader_color = ft.Colors.BLUE_300
+                elif loader == 'Forge':
+                    loader_bg = ft.Colors.with_opacity(0.18, ft.Colors.ORANGE_400)
+                    loader_color = ft.Colors.ORANGE_300
+                elif loader == 'OptiFine':
+                    loader_bg = ft.Colors.with_opacity(0.18, ft.Colors.PURPLE_400)
+                    loader_color = ft.Colors.PURPLE_300
+                elif loader == 'NeoForge':
+                    loader_bg = ft.Colors.with_opacity(0.18, ft.Colors.ORANGE_300)
+                    loader_color = ft.Colors.ORANGE_200
+                elif loader == 'Quilt':
+                    loader_bg = ft.Colors.with_opacity(0.18, ft.Colors.PURPLE_300)
+                    loader_color = ft.Colors.PURPLE_200
+                else:
+                    loader_bg = ft.Colors.with_opacity(0.15, theme['surface'])
+                    loader_color = theme['text_secondary']
 
-                card_content = ft.Column(
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    horizontal_alignment=ft.CrossAxisAlignment.START,
-                    controls=[
-                        ft.Row(
-                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                            controls=[
-                                ft.Container(
-                                    width=42,
-                                    height=42,
-                                    border_radius=11,
-                                    bgcolor=ft.Colors.with_opacity(0.12, icon_color),
-                                    alignment=ft.Alignment.CENTER,
-                                    content=ft.Icon(card_icon, size=22, color=icon_color),
-                                ),
-                                ft.Container(
-                                    content=ft.Text(
-                                        badge_label,
-                                        size=10,
+                mc_ver = str(target.get('minecraft_version') or target.get('version_id') or '').strip()
+                if mc_ver.lower() == 'latest-release':
+                    mc_ver = 'Release'
+
+                local_banner_path = (
+                    banners.get_local_banner_for_target(target, minecraft_directory) or ""
+                )
+                has_banner = bool(local_banner_path)
+
+                card_banner_img = ft.Image(
+                    src=local_banner_path,
+                    fit=ft.BoxFit.COVER,
+                    width=245,
+                    height=94,
+                    gapless_playback=True,
+                    visible=has_banner,
+                )
+                card_banner_gradient = ft.Container(
+                    left=0,
+                    right=0,
+                    bottom=0,
+                    height=24,
+                    visible=has_banner,
+                    gradient=ft.LinearGradient(
+                        begin=ft.Alignment.TOP_CENTER,
+                        end=ft.Alignment.BOTTOM_CENTER,
+                        colors=[
+                            ft.Colors.TRANSPARENT,
+                            ft.Colors.with_opacity(0.40, theme['card']),
+                        ],
+                    ),
+                )
+
+                top_banner_section = ft.Container(
+                    left=0,
+                    right=0,
+                    top=0,
+                    bottom=64,
+                    bgcolor=theme['card'] if has_banner else ft.Colors.with_opacity(0.12, theme['surface']),
+                    border_radius=ft.BorderRadius(top_left=16, top_right=16, bottom_left=0, bottom_right=0),
+                    clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+                    content=ft.Stack(
+                        expand=True,
+                        controls=[
+                            card_banner_img,
+                            card_banner_gradient,
+                        ],
+                    ),
+                )
+                library_banner_images[key] = (card_banner_img, card_banner_gradient, top_banner_section)
+
+                bottom_info_section = ft.Container(
+                    left=0,
+                    right=0,
+                    bottom=0,
+                    height=64,
+                    padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+                    bgcolor=ft.Colors.TRANSPARENT,
+                    content=ft.Column(
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        horizontal_alignment=ft.CrossAxisAlignment.START,
+                        spacing=4,
+                        controls=[
+                            ft.Row(
+                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                controls=[
+                                    ft.Text(
+                                        target['name'],
+                                        size=13,
                                         weight=ft.FontWeight.BOLD,
-                                        color=theme["btn_primary"] if is_inst else theme["text_secondary"],
+                                        color=theme['text_primary'],
+                                        max_lines=1,
+                                        overflow=ft.TextOverflow.ELLIPSIS,
+                                        expand=True,
                                     ),
-                                    bgcolor=ft.Colors.with_opacity(0.12, theme["btn_primary"] if is_inst else theme["surface"]),
-                                    padding=ft.Padding.symmetric(horizontal=8, vertical=3),
-                                    border_radius=5,
-                                ),
-                            ],
-                        ),
-                        ft.Column(
-                            spacing=3,
-                            horizontal_alignment=ft.CrossAxisAlignment.START,
-                            controls=[
-                                ft.Text(
-                                    target["name"],
-                                    size=15,
-                                    weight=ft.FontWeight.BOLD,
-                                    color=theme["text_primary"],
-                                    max_lines=1,
-                                    overflow=ft.TextOverflow.ELLIPSIS,
-                                ),
-                                ft.Text(
-                                    f"{target.get('minecraft_version', '')} • {loader}",
-                                    size=12,
-                                    color=theme["text_secondary"],
-                                    max_lines=1,
-                                    overflow=ft.TextOverflow.ELLIPSIS,
-                                ),
-                            ],
-                        ),
-                        ft.Row(
-                            spacing=6,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                            controls=[status_icon, status_text],
-                        ),
-                    ],
+                                    ft.Row(
+                                        spacing=4,
+                                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                        controls=[status_icon, status_text],
+                                    ),
+                                ],
+                            ),
+                            ft.Row(
+                                spacing=6,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                controls=[
+                                    ft.Container(
+                                        content=ft.Text(
+                                            mc_ver,
+                                            size=10,
+                                            weight=ft.FontWeight.W_600,
+                                            color=theme['btn_primary'],
+                                        ),
+                                        bgcolor=ft.Colors.with_opacity(0.14, theme['btn_primary']),
+                                        padding=ft.Padding.symmetric(horizontal=7, vertical=2),
+                                        border_radius=5,
+                                    ),
+                                    ft.Container(
+                                        content=ft.Text(
+                                            loader,
+                                            size=10,
+                                            weight=ft.FontWeight.W_600,
+                                            color=loader_color,
+                                        ),
+                                        bgcolor=loader_bg,
+                                        padding=ft.Padding.symmetric(horizontal=7, vertical=2),
+                                        border_radius=5,
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
                 )
 
                 card = ft.Container(
                     width=235,
                     height=152,
                     border_radius=16,
-                    padding=16,
+                    padding=0,
                     ink=True,
-                    on_click=lambda e, k=key: select_launch_target(k),
-                    bgcolor=(
-                        ft.Colors.with_opacity(0.08, theme["btn_primary"])
-                        if is_selected
-                        else theme["card"]
-                    ),
+                    bgcolor=theme['card'],
                     border=(
-                        ft.Border.all(2, color=theme["btn_primary"])
+                        ft.Border.all(2, color=theme['btn_primary'])
                         if is_selected
-                        else ft.Border.all(1, color=ft.Colors.with_opacity(0.14, theme["border"]))
+                        else ft.Border.all(2, color=ft.Colors.with_opacity(0.18, theme['border']))
                     ),
                     animate=ft.Animation(180, ft.AnimationCurve.EASE_OUT),
-                    content=card_content,
+                    content=ft.Stack(
+                        expand=True,
+                        controls=[
+                            top_banner_section,
+                            bottom_info_section,
+                        ],
+                    ),
                 )
 
                 def on_card_hover(e, c=card, k=key):
-                    if launch_selection["key"] == k:
+                    if launch_selection['key'] == k:
                         return
-                    is_h = e.data == "true"
-                    c.bgcolor = theme.get("card_hover", theme["surface"]) if is_h else theme["card"]
+                    is_h = e.data == 'true'
                     c.border = (
-                        ft.Border.all(1, color=theme["btn_primary"])
+                        ft.Border.all(2, color=theme['btn_primary'])
                         if is_h
-                        else ft.Border.all(1, color=ft.Colors.with_opacity(0.14, theme["border"]))
+                        else ft.Border.all(2, color=ft.Colors.with_opacity(0.18, theme['border']))
                     )
                     try:
                         c.update()
@@ -5271,6 +5363,7 @@ def main(page: ft.Page):
             selected_installation_view_ref["control"] = selected_installation_view
             if selected_target:
                 page.run_task(update_hero_banner, selected_target)
+            page.run_task(auto_download_library_banners)
 
             new_installation_button = ft.TextButton(
                 "New Profile",
