@@ -20,9 +20,10 @@ import threading
 import time
 import urllib.parse
 import uuid
+from collections import OrderedDict
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageEnhance
+from PIL import Image, ImageChops, ImageDraw, ImageEnhance
 import requests
 
 from storage import get_data_dir, load_settings, save_settings
@@ -414,40 +415,14 @@ def _rotate_pt_euler(x, y, z, rx, ry, rz):
     return x, y, z
 
 
-def render_3d_skin(
-    skin: Image.Image,
-    yaw_deg: float = -25.0,
-    pitch_deg: float = 10.0,
-    model: str = "classic",
-    pose: str = "hero",
-    width: int = 240,
-    height: int = 340,
-    scale: float = 8.5,
-) -> Image.Image:
-    """Renders an interactive, lighting-shaded 3D Minecraft player model.
-    Supports 64x64/64x32 skins, Classic (Steve) and Slim (Alex) models,
-    full overlay layers (hat, jacket, sleeves, pants), and directional shading.
-    """
+def _prepare_skin_faces(skin: Image.Image, model: str, pose: str):
+    """Prepare skin textures and posed vertices once, outside the frame loop."""
     if skin.mode != "RGBA":
         skin = skin.convert("RGBA")
     if skin.size[1] == 32:
         skin = ensure_64x64(skin)
-
     is_slim = model.lower() == "slim"
     arm_w = 3.0 if is_slim else 4.0
-
-    yaw_rad = math.radians(yaw_deg)
-    pitch_rad = math.radians(pitch_deg)
-    cy, sy = math.cos(yaw_rad), math.sin(yaw_rad)
-    cp, sp = math.cos(pitch_rad), math.sin(pitch_rad)
-
-    # Directional key light vector (top-left-front)
-    lx, ly, lz = 0.35, 0.75, 0.55
-    l_mag = math.sqrt(lx * lx + ly * ly + lz * lz)
-    lx, ly, lz = lx / l_mag, ly / l_mag, lz / l_mag
-
-    cx = width / 2.0
-    cy_scr = height / 2.0 + 8.0
 
     if pose == "hero":
         poses = {
@@ -457,6 +432,15 @@ def render_3d_skin(
             "left_arm": (-14.0, 0.0, -2.0),
             "right_leg": (-10.0, 0.0, 0.0),
             "left_leg": (10.0, 0.0, 0.0),
+        }
+    elif pose == "flying":
+        poses = {
+            "head": (0.0, 0.0, 0.0),
+            "torso": (0.0, 0.0, 0.0),
+            "right_arm": (0.0, 0.0, -7.0),
+            "left_arm": (0.0, 0.0, 7.0),
+            "right_leg": (0.0, 0.0, -3.5),
+            "left_leg": (0.0, 0.0, 3.5),
         }
     else:
         poses = {
@@ -606,183 +590,179 @@ def render_3d_skin(
         },
     ]
 
-    faces_to_draw = []
-
-    def transform_pt(pt, part_name):
-        px, py, pz = pivots[part_name]
-        rx_deg, ry_deg, rz_deg = poses[part_name]
-        lx, ly, lz = pt[0] - px, pt[1] - py, pt[2] - pz
-        if rx_deg != 0 or ry_deg != 0 or rz_deg != 0:
-            lx, ly, lz = _rotate_pt_euler(
-                lx, ly, lz,
-                math.radians(rx_deg),
-                math.radians(ry_deg),
-                math.radians(rz_deg)
-            )
-        world_x, world_y, world_z = lx + px, ly + py, lz + pz
-        x1 = world_x * cy + world_z * sy
-        y1 = world_y
-        z1 = -world_x * sy + world_z * cy
-        x2 = x1
-        y2 = y1 * cp - z1 * sp
-        z2 = y1 * sp + z1 * cp
-        return x2, y2, z2
-
-    def process_box(b_info, is_overlay=False):
+    faces = []
+    for b_info in boxes:
         part_name = b_info["name"]
-        exp = b_info.get("expand", 0.35) if is_overlay else 0.0
-        x0, x1, y0, y1, z0, z1 = b_info["bounds"]
-        x0, x1 = x0 - exp, x1 + exp
-        y0, y1 = y0 - exp, y1 + exp
-        z0, z1 = z0 - exp, z1 + exp
-        uv_dict = b_info["overlay"] if is_overlay else b_info["uv"]
+        pivot = pivots[part_name]
+        rotation = tuple(math.radians(angle) for angle in poses[part_name])
+        for is_overlay in (False, True):
+            exp = b_info["expand"] if is_overlay else 0.0
+            x0, x1, y0, y1, z0, z1 = b_info["bounds"]
+            x0, x1 = x0 - exp, x1 + exp
+            y0, y1 = y0 - exp, y1 + exp
+            z0, z1 = z0 - exp, z1 + exp
+            uv_dict = b_info["overlay"] if is_overlay else b_info["uv"]
+            face_defs = {
+                "front": {
+                    "pts": [(x0, y1, z1), (x1, y1, z1), (x1, y0, z1), (x0, y0, z1)],
+                    "normal": (0, 0, 1),
+                },
+                "back": {
+                    "pts": [(x1, y1, z0), (x0, y1, z0), (x0, y0, z0), (x1, y0, z0)],
+                    "normal": (0, 0, -1),
+                },
+                "top": {
+                    "pts": [(x0, y1, z0), (x1, y1, z0), (x1, y1, z1), (x0, y1, z1)],
+                    "normal": (0, 1, 0),
+                },
+                "bottom": {
+                    "pts": [(x0, y0, z1), (x1, y0, z1), (x1, y0, z0), (x0, y0, z0)],
+                    "normal": (0, -1, 0),
+                },
+                "right": {
+                    "pts": [(x0, y1, z0), (x0, y1, z1), (x0, y0, z1), (x0, y0, z0)],
+                    "normal": (-1, 0, 0),
+                },
+                "left": {
+                    "pts": [(x1, y1, z1), (x1, y1, z0), (x1, y0, z0), (x1, y0, z1)],
+                    "normal": (1, 0, 0),
+                },
+            }
 
-        face_defs = {
-            "front": {
-                "pts": [(x0, y1, z1), (x1, y1, z1), (x1, y0, z1), (x0, y0, z1)],
-                "normal": (0, 0, 1),
-            },
-            "back": {
-                "pts": [(x1, y1, z0), (x0, y1, z0), (x0, y0, z0), (x1, y0, z0)],
-                "normal": (0, 0, -1),
-            },
-            "top": {
-                "pts": [(x0, y1, z0), (x1, y1, z0), (x1, y1, z1), (x0, y1, z1)],
-                "normal": (0, 1, 0),
-            },
-            "bottom": {
-                "pts": [(x0, y0, z1), (x1, y0, z1), (x1, y0, z0), (x0, y0, z0)],
-                "normal": (0, -1, 0),
-            },
-            "right": {
-                "pts": [(x0, y1, z0), (x0, y1, z1), (x0, y0, z1), (x0, y0, z0)],
-                "normal": (-1, 0, 0),
-            },
-            "left": {
-                "pts": [(x1, y1, z1), (x1, y1, z0), (x1, y0, z0), (x1, y0, z1)],
-                "normal": (1, 0, 0),
-            },
-        }
+            for face_name, f_info in face_defs.items():
+                texture = skin.crop(uv_dict[face_name])
+                if texture.getextrema()[3][1] == 0:
+                    continue
+                points = []
+                for point in f_info["pts"]:
+                    local = tuple(value - origin for value, origin in zip(point, pivot))
+                    rotated = _rotate_pt_euler(*local, *rotation)
+                    points.append(tuple(value + origin for value, origin in zip(rotated, pivot)))
+                normal = _rotate_pt_euler(*f_info["normal"], *rotation)
+                faces.append((points, normal, texture, face_name, is_overlay, part_name))
+    return faces
 
-        for face_name, f_info in face_defs.items():
-            uv_rect = uv_dict.get(face_name)
-            if not uv_rect:
-                continue
 
-            cam_pts = [transform_pt(pt, part_name) for pt in f_info["pts"]]
-            p0, p1, p3 = cam_pts[0], cam_pts[1], cam_pts[3]
-            v1 = (p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2])
-            v2 = (p3[0] - p0[0], p3[1] - p0[1], p3[2] - p0[2])
-            nx = v2[1] * v1[2] - v2[2] * v1[1]
-            ny = v2[2] * v1[0] - v2[0] * v1[2]
-            nz = v2[0] * v1[1] - v2[1] * v1[0]
-            n_len = math.sqrt(nx * nx + ny * ny + nz * nz)
-            if n_len < 1e-6:
-                continue
-            nx, ny, nz = nx / n_len, ny / n_len, nz / n_len
+class SkinRenderer:
+    """Reusable software renderer with prepared geometry and bounded shading cache."""
 
+    def __init__(self, skin: Image.Image, model: str = "classic", pose: str = "hero"):
+        self.faces = _prepare_skin_faces(skin, model, pose)
+        self._shaded = OrderedDict()
+        self._shade_lock = threading.Lock()
+
+    def _texture(self, index, texture, light_mult):
+        if abs(light_mult - 1.0) <= 0.03:
+            return texture
+        # Sub-pixel color differences are rounded to reuse nearby lighting values.
+        shade = round(light_mult, 3)
+        key = (index, shade)
+        with self._shade_lock:
+            cached = self._shaded.get(key)
+            if cached is not None:
+                self._shaded.move_to_end(key)
+                return cached
+            shaded = ImageEnhance.Brightness(texture).enhance(shade)
+            self._shaded[key] = shaded
+            if len(self._shaded) > 256:
+                self._shaded.popitem(last=False)
+            return shaded
+
+    def render(
+        self, yaw_deg=-25.0, pitch_deg=10.0,
+        width=240, height=340, scale=8.5,
+        head_yaw_deg=0.0, head_pitch_deg=0.0,
+    ) -> Image.Image:
+        yaw_rad, pitch_rad = math.radians(yaw_deg), math.radians(pitch_deg)
+        cy, sy = math.cos(yaw_rad), math.sin(yaw_rad)
+        cp, sp = math.cos(pitch_rad), math.sin(pitch_rad)
+        cx, cy_scr = width / 2.0, height / 2.0 + 8.0
+        light_length = math.sqrt(0.35**2 + 0.75**2 + 0.55**2)
+        lx, ly, lz = 0.35 / light_length, 0.75 / light_length, 0.55 / light_length
+
+        def camera(point):
+            x, y, z = point
+            rotated_x, rotated_z = x * cy + z * sy, -x * sy + z * cy
+            return rotated_x, y * cp - rotated_z * sp, y * sp + rotated_z * cp
+
+        head_rotation = (math.radians(head_pitch_deg), math.radians(head_yaw_deg), 0.0)
+
+        def turn_head(point):
+            x, y, z = _rotate_pt_euler(point[0], point[1] - 8.0, point[2], *head_rotation)
+            return x, y + 8.0, z
+
+        visible = []
+        for index, (points, normal, texture, face_name, overlay, part_name) in enumerate(self.faces):
+            if part_name == "head" and (head_yaw_deg or head_pitch_deg):
+                points = [turn_head(point) for point in points]
+                normal = _rotate_pt_euler(*normal, *head_rotation)
+            nx, ny, nz = camera(normal)
             if nz <= 0.001:
                 continue
-
-            screen_pts = []
-            z_sum = 0.0
-            for pt in cam_pts:
-                sx = cx + pt[0] * scale
-                sy_pos = cy_scr - pt[1] * scale
-                screen_pts.append((sx, sy_pos))
-                z_sum += pt[2]
-
-            avg_z = z_sum / 4.0
-            if is_overlay:
-                avg_z += 0.05
-
-            dot = max(0.0, nx * lx + ny * ly + nz * lz)
-            light_mult = 0.55 + 0.45 * dot
+            camera_points = [camera(point) for point in points]
+            screen_points = [(cx + p[0] * scale, cy_scr - p[1] * scale) for p in camera_points]
+            depth = sum(point[2] for point in camera_points) / 4.0 + (0.05 if overlay else 0.0)
+            light_mult = 0.55 + 0.45 * max(0.0, nx * lx + ny * ly + nz * lz)
             if face_name == "top":
                 light_mult *= 1.15
             elif face_name == "bottom":
                 light_mult *= 0.6
             elif face_name in ("right", "left"):
                 light_mult *= 0.88
-            light_mult = min(1.25, max(0.4, light_mult))
+            visible.append((depth, index, screen_points, texture, min(1.25, max(0.4, light_mult))))
+        visible.sort(key=lambda face: face[0])
 
-            faces_to_draw.append({
-                "screen_pts": screen_pts,
-                "avg_z": avg_z,
-                "uv_rect": uv_rect,
-                "light_mult": light_mult,
-                "is_overlay": is_overlay,
-            })
+        canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        shadow_y = cy_scr + 16.0 * scale
+        ImageDraw.Draw(canvas).ellipse(
+            [cx - 42, shadow_y - 10, cx + 42, shadow_y + 10], fill=(0, 0, 0, 40)
+        )
+        for _, index, screen_points, texture, light_mult in visible:
+            min_x = max(0, math.floor(min(point[0] for point in screen_points)))
+            max_x = min(width - 1, math.ceil(max(point[0] for point in screen_points)))
+            min_y = max(0, math.floor(min(point[1] for point in screen_points)))
+            max_y = min(height - 1, math.ceil(max(point[1] for point in screen_points)))
+            bw, bh = max_x - min_x + 1, max_y - min_y + 1
+            if bw <= 0 or bh <= 0:
+                continue
+            relative = [(p[0] - min_x, p[1] - min_y) for p in screen_points]
+            tw, th = texture.size
+            coeffs = _find_affine_coeffs(
+                [relative[0], relative[1], relative[3]], [(0, 0), (tw, 0), (0, th)]
+            )
+            if coeffs is None:
+                continue
+            texture = self._texture(index, texture, light_mult)
+            warped = texture.transform(
+                (bw, bh), Image.Transform.AFFINE, coeffs, resample=Image.Resampling.NEAREST
+            )
+            mask = Image.new("L", (bw, bh), 0)
+            ImageDraw.Draw(mask).polygon(relative, fill=255)
+            warped.putalpha(ImageChops.multiply(warped.getchannel("A"), mask))
+            canvas.alpha_composite(warped, (min_x, min_y))
+        return canvas
 
-    for b in boxes:
-        process_box(b, is_overlay=False)
-        process_box(b, is_overlay=True)
+    def render_bytes(self, yaw_deg=-25.0, pitch_deg=10.0, **kwargs) -> bytes:
+        rendered = self.render(yaw_deg, pitch_deg, **kwargs)
+        buf = io.BytesIO()
+        rendered.save(buf, format="PNG", compress_level=1)
+        return buf.getvalue()
 
-    faces_to_draw.sort(key=lambda f: f["avg_z"])
 
-    canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(canvas)
-
-    # Soft ambient pedestal shadow at character's feet
-    shadow_y = cy_scr - (-16.0) * scale
-    draw.ellipse(
-        [cx - 42, shadow_y - 10, cx + 42, shadow_y + 10],
-        fill=(0, 0, 0, 40)
+def render_3d_skin(
+    skin: Image.Image,
+    yaw_deg: float = -25.0,
+    pitch_deg: float = 10.0,
+    model: str = "classic",
+    pose: str = "hero",
+    width: int = 240,
+    height: int = 340,
+    scale: float = 8.5,
+) -> Image.Image:
+    """Render a still preview; interactive viewers should reuse SkinRenderer."""
+    return SkinRenderer(skin, model, pose).render(
+        yaw_deg, pitch_deg, width=width, height=height, scale=scale
     )
-
-    for f in faces_to_draw:
-        uv = f["uv_rect"]
-        tex = skin.crop(uv)
-        if f["is_overlay"] and tex.getextrema()[3][1] == 0:
-            continue
-
-        mult = f["light_mult"]
-        if abs(mult - 1.0) > 0.03:
-            enhancer = ImageEnhance.Brightness(tex)
-            tex = enhancer.enhance(mult)
-
-        s_pts = f["screen_pts"]
-        dst_p0, dst_p1, dst_p2, dst_p3 = s_pts
-
-        xs = [p[0] for p in s_pts]
-        ys = [p[1] for p in s_pts]
-        min_x = int(math.floor(min(xs)))
-        max_x = int(math.ceil(max(xs)))
-        min_y = int(math.floor(min(ys)))
-        max_y = int(math.ceil(max(ys)))
-
-        bw = max_x - min_x + 1
-        bh = max_y - min_y + 1
-        if bw <= 0 or bh <= 0:
-            continue
-
-        rel_dst = [
-            (dst_p0[0] - min_x, dst_p0[1] - min_y),
-            (dst_p1[0] - min_x, dst_p1[1] - min_y),
-            (dst_p3[0] - min_x, dst_p3[1] - min_y),
-        ]
-
-        tw, th = tex.size
-        src_corners = [(0, 0), (tw, 0), (0, th)]
-
-        coeffs = _find_affine_coeffs(rel_dst, src_corners)
-        if not coeffs:
-            continue
-
-        warped = tex.transform((bw, bh), Image.Transform.AFFINE, coeffs, resample=Image.Resampling.NEAREST)
-
-        mask = Image.new("L", (bw, bh), 0)
-        mask_draw = ImageDraw.Draw(mask)
-        poly_pts = [(p[0] - min_x, p[1] - min_y) for p in s_pts]
-        mask_draw.polygon(poly_pts, fill=255)
-
-        r, g, b_ch, a_ch = warped.split()
-        final_alpha = Image.composite(a_ch, Image.new("L", (bw, bh), 0), mask)
-        warped.putalpha(final_alpha)
-
-        canvas.alpha_composite(warped, (min_x, min_y))
-
-    return canvas
 
 
 def render_3d_skin_bytes(

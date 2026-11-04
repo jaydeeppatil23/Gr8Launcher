@@ -1,104 +1,162 @@
-# Gr8 Launcher
+<div align="center">
+  <img src=".assets/icons/gr8_icon.png" alt="Gr8 Launcher logo" width="96">
+  <h1>Gr8 Launcher · Minecraft Java Edition Launcher</h1>
+  <p><strong>Your worlds, your profiles, your style.</strong></p>
+  <p>
+    <a href="https://github.com/jaydeeppatil23/Gr8Launcher/releases/latest"><img src="https://img.shields.io/github/v/release/jaydeeppatil23/Gr8Launcher?label=Download&style=for-the-badge&logo=github&logoColor=white&color=182842" alt="Download the latest Gr8 Launcher release"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPLv3-f5de9a?style=for-the-badge" alt="Licensed under GNU GPL v3"></a>
+    <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Built with Python 3.10 or newer"></a>
+    <a href="https://flet.dev/"><img src="https://img.shields.io/badge/UI-Flet-182842?style=for-the-badge" alt="User interface built with Flet"></a>
+  </p>
+  <p>
+    <a href="#features">Features</a> ·
+    <a href="#download-gr8-launcher">Download</a> ·
+    <a href="#run-from-source">Run from source</a> ·
+    <a href="#frequently-asked-questions">FAQ</a> ·
+    <a href="#contributing-and-community">Community</a>
+  </p>
+</div>
 
-A sleek, lightweight, and modern Minecraft launcher built with Python and [Flet](https://flet.dev/).
+**Gr8 Launcher** is a free, open-source **Minecraft Java Edition launcher** built with Python and [Flet](https://flet.dev/). Install vanilla releases and snapshots, create modded profiles with **Fabric, Forge, NeoForge, or Quilt**, and sync **Ely.by skins** from a Minecraft-inspired desktop interface.
 
-[![Download Latest Release](https://img.shields.io/github/v/release/jaydeeppatil23/Gr8Launcher?label=Latest%20Release&style=for-the-badge&logo=github&color=2ea44f)](https://github.com/jaydeeppatil23/Gr8Launcher/releases/latest)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg?style=for-the-badge)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
-[![Flet](https://img.shields.io/badge/UI-Flet-FF6F00?style=for-the-badge)](https://flet.dev)
+## Launcher preview
 
----
+![Gr8 Launcher home screen showing Minecraft profiles, a game banner, the launch button, and a 3D player skin preview](docs/screenshots/gr8-launcher-home.png)
 
-## ✨ Features
+<p align="center"><em>The current source build with example profiles. Packaged releases may have a different interface.</em></p>
 
-- **Multi-Loader Support**: Install and launch official releases, snapshots, and popular mod loaders:
-  - Fabric
-  - Quilt
-  - Forge
-  - NeoForge
-- **Custom Skin Integration**:
-  - Full **Ely.by** account authentication and skin syncing.
-  - Offline & local custom skin management (PNG upload, Steve/Alex models).
-  - Built-in Java companion agent (`gr8-skin-bridge`) ensuring custom skins render seamlessly in multiplayer and offline sessions.
-- **Profile & Banner Customization**:
-  - Import existing profiles automatically from the official Minecraft launcher (`launcher_profiles.json`).
-  - Customizable profile banners and visual cards.
-  - Custom usernames and offline UUID generation.
-- **Modern Animated UI**:
-  - 8 Minecraft-inspired dark palettes (*Redstone*, *Sculk*, *Gold*, *Lush*, *Amethyst*, *Cherry Blossom*, *Earth 1*, and *Earth 2*).
-  - Smooth animated navigation pill and profile preview transitions.
-  - Curated Minecraft-themed splash quotes on the home screen.
-- **Configurable Runtime & Performance**:
-  - Memory allocation slider with auto-detected system RAM limits.
-  - Custom Java executable / runtime selector.
-  - Custom window resolution and fullscreen toggles.
-  - Clean background launch (`javaw` on Windows) with real-time download and installation speed tracking.
-- **Offline Resilience**:
-  - Automatic network state detection.
-  - Seamless offline play for all locally installed game versions and skins.
+## Features
 
----
+| Feature | What you can do |
+| --- | --- |
+| **Minecraft versions and mod loaders** | Install and launch vanilla releases, snapshots, Fabric, Forge, NeoForge, and Quilt. Use the latest-release shortcut or pin a profile to a specific version. |
+| **Profiles and instances** | Keep game folders separate, customize icons and banners, reorder profiles, and import installations from the official Minecraft launcher or discover local instances while preserving version pins and game folders. |
+| **Ely.by accounts and skins** | Sign in to Ely.by, sync your skin, rotate Classic/Steve and Slim/Alex previews, and reuse cached skins. A bundled Java skin bridge applies custom skins in-game. |
+| **Java and performance settings** | Choose a Java executable, adjust RAM within detected system limits, set profile JVM arguments, and configure game resolution, fullscreen, and launcher behavior. |
+| **Download progress and game logs** | Follow installation progress and download speed, cancel downloads, and inspect captured game output from the launcher. Windows launches avoid an extra Java console window. |
+| **Offline play** | Launch previously installed versions, reuse cached skin previews, and browse local profiles with automatic connection detection. |
+| **Minecraft-inspired design** | Enjoy a dark blue and warm gold interface, pixel fonts, animated navigation, and a home-screen player model with optional cursor-following head movement. |
 
-## 📋 Prerequisites
+## Download Gr8 Launcher
 
-- **Python 3.10+**
-- **Java Runtime Environment (JRE)**: Appropriate Java version for your target Minecraft release (Java 8, 17, or 21+).
+**[Download the latest release →](https://github.com/jaydeeppatil23/Gr8Launcher/releases/latest)**
 
----
+Windows x64 release builds support a **portable ZIP** and a **Windows installer (`*-setup.exe`)**. Extract the ZIP and run `Gr8Launcher.exe`, or run the installer. You do not need Python for the packaged build; Minecraft still needs a Java runtime appropriate for the version you want to play.
 
-## 🚀 Quick Start
+Visit [all releases and changelogs](https://github.com/jaydeeppatil23/Gr8Launcher/releases) for earlier builds and release notes. To try the current source interface, follow the setup below.
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/jaydeeppatil23/Gr8Launcher.git
-   cd Gr8Launcher
-   ```
+For local packages and automated GitHub releases, see the [Windows build and release guide](docs/releasing.md).
 
-2. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+## Run from source
 
-3. **Run the launcher**:
-   ```bash
-   python main.py
-   ```
+### Requirements
 
----
+- **Python 3.10 or newer**
+- **Java** compatible with your chosen Minecraft version; common versions require Java 8, 17, or 21, and newer releases may require a newer runtime
+- **Git** to clone the repository
 
-## 📂 Project Structure
+### Clone the repository
 
-```text
-├── main.py               # Application entrypoint & page orchestration
-├── launcher.py           # Game installation, verification, and launch logic
-├── storage.py            # Persistent settings and profile manager (.minecraft/gr8launcher)
-├── colors.py             # Palette and theme engine
-├── banners.py            # Profile banners & visual customization
-├── ely_auth.py           # Ely.by authentication integration
-├── skins.py              # Skin rendering, caching, and companion injection
-├── state.py              # Shared application state
-├── ui_components.py      # Reusable UI widgets and dialogs
-├── ui_installations.py   # Profile and version manager view
-├── ui_options.py         # Settings and launcher options view
-├── ui_skins.py           # Skin management interface
-├── .assets/              # Fonts, default skins, thoughts quotes, and icons
-└── tools/                # Java skin-bridge agent & compilation tools
-```
+~~~bash
+git clone https://github.com/jaydeeppatil23/Gr8Launcher.git
+cd Gr8Launcher
+~~~
 
----
+### Install dependencies and start
 
-## 📦 Releases & Version History
+Use a virtual environment to keep the launcher's dependencies together. The commands below use its Python executable directly, so activation is optional.
 
-For release downloads, changelogs, and updates, check out the **[GitHub Releases](https://github.com/jaydeeppatil23/Gr8Launcher/releases)** page.
+**Windows (PowerShell)**
 
----
+~~~powershell
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe main.py
+~~~
 
-## 📄 License
+**macOS / Linux**
 
-This project is licensed under the [GNU General Public License v3.0](LICENSE).
+~~~bash
+python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python main.py
+~~~
 
----
+### Launch your first Minecraft profile
 
-## ⚠️ Disclaimer
+1. Choose an **offline username** or sign in with an **Ely.by account**, the current account options.
+2. Select the latest release, or open **Library → New Profile** to choose a Minecraft version and mod loader.
+3. In **Settings → Java & Memory**, select the appropriate Java runtime and RAM allocation.
+4. Launch the profile. Keep an internet connection available for the first installation so game files, libraries, and assets can download.
 
-Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.
+Existing official launcher profiles and locally discovered instances are imported automatically.
+
+## Frequently asked questions
+
+### Does Gr8 Launcher support Fabric, Forge, NeoForge, and Quilt?
+
+Yes. Choose the loader and a compatible Minecraft version when creating a profile. For mods, use the profile's **Open Game Folder** action and place compatible `.jar` files in its `mods` folder. The in-app **Mods manager is coming soon**.
+
+### How do custom Minecraft skins work?
+
+Sign in with an [Ely.by account](https://ely.by/), change your skin through Ely.by, and refresh the preview in the **Skins** tab. The launcher caches skins locally and includes a Java companion for applying them in-game. Offline username accounts use the default Steve/Alex skins.
+
+### Can I play Minecraft offline?
+
+Yes, when the selected version and its required game files are already installed and a compatible Java runtime is available. Installing new versions or mod loaders and signing in to Ely.by require an internet connection.
+
+### Where are launcher settings, profiles, and cached skins stored?
+
+Gr8 Launcher stores its data in a `gr8launcher` folder inside the default Minecraft directory:
+
+| Operating system | Launcher data folder |
+| --- | --- |
+| Windows | `%APPDATA%\.minecraft\gr8launcher` |
+| macOS | `~/Library/Application Support/minecraft/gr8launcher` |
+| Linux | `~/.minecraft/gr8launcher` |
+
+Separate game instances live in the Minecraft directory's `instances` folder unless a profile uses an existing game folder. Legacy launcher data from the project's `.data` folder is migrated automatically.
+
+## Project structure
+
+<details>
+<summary>Explore the Python modules and bundled assets</summary>
+
+~~~text
+Gr8Launcher/
+├── main.py                # Application entry point and page orchestration
+├── launcher.py            # Minecraft installation, verification, and launch
+├── launcher_services.py   # Connectivity, local discovery, and game logs
+├── storage.py             # Persistent settings, accounts, and profiles
+├── state.py               # Shared runtime state
+├── profile_creation.py    # Profile creation and instance folder handling
+├── ely_auth.py            # Ely.by authentication
+├── credential_store.py    # Native credential storage and session fallback
+├── skins.py               # Skin caching, rendering, and Java companion setup
+├── skin_viewer.py         # Interactive player skin rendering and movement
+├── home_skin_viewer.py    # Home-screen player model and head tracking
+├── banners.py             # Profile artwork and banner caching
+├── ui_profiles.py         # Profile cards and ordering
+├── ui_dialogs.py          # Profile dialogs
+├── ui_motion.py           # Navigation and entrance animations
+├── .assets/               # Fonts, icons, banners, and default skins
+├── docs/screenshots/      # Launcher previews used in this README
+├── tools/gr8-skin-bridge/  # Bundled Java agent, source, and build helper
+└── requirements.txt       # Python dependencies
+~~~
+
+</details>
+
+## Contributing and community
+
+Bug reports, improvements, and documentation contributions are welcome. [Open an issue](https://github.com/jaydeeppatil23/Gr8Launcher/issues) with your launcher version, operating system, Minecraft version, mod loader, and relevant logs, or [submit a pull request](https://github.com/jaydeeppatil23/Gr8Launcher/pulls).
+
+Join the [Gr8 community on Discord](https://dsc.gg/_gr8) to discuss the launcher and share feedback.
+
+## License
+
+Gr8 Launcher is licensed under the [GNU General Public License v3.0](LICENSE).
+
+*Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.*

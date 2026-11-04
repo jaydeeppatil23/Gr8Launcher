@@ -1,0 +1,11 @@
+some details abt the theme/appearance of the launcher:
+this is a minimal minecraft launcher.
+the main colors are "#f5de9a"-primary(usually for texts or buttons) "#182842"-secondary(usually for bg).
+all elements are either sharp or have a simple rounded rectangle style having radius of 5px.
+usually there are no hover colors to the interactive elements.
+containers/spaces have no bg color for most of the time, but when they do, they use the black_26.
+animations are minimal which includes fade in and fade out simultaneously.
+there are no borders to elements except for some rare cases.
+the ui looks modern and clean.
+custom font "ps" for major elements(most of the time) and normal system font for other elements but making sure that it looks good.
+custom icons/assets(most of the time) if they are not there, user provides them. he will decide- use flet lib icons or custom.

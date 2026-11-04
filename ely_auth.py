@@ -62,7 +62,8 @@ def authenticate(
         ElyAuthError: For general connection or API errors.
     """
     clean_login = login.strip()
-    clean_password = password.strip()
+    # Spaces can be part of a password; only the login identifier is trimmed.
+    clean_password = password
     if not clean_login or not clean_password:
         raise ElyInvalidCredentialsError("Username/email and password cannot be empty.")
 
@@ -103,14 +104,28 @@ def authenticate(
         except ValueError as exc:
             raise ElyAuthError("Invalid response format received from Ely.by.") from exc
 
-        selected_profile = data.get("selectedProfile", {})
-        user_info = data.get("user", {})
+        if not isinstance(data, dict):
+            raise ElyAuthError("Invalid response format received from Ely.by.")
+        selected_profile = data.get("selectedProfile")
+        user_info = data.get("user") or {}
+        if not isinstance(selected_profile, dict) or not isinstance(user_info, dict):
+            raise ElyAuthError("Invalid account information received from Ely.by.")
+        access_token = data.get("accessToken")
+        returned_client_token = data.get("clientToken", client_token)
+        username = selected_profile.get("name")
+        profile_id = selected_profile.get("id")
+        if not all(isinstance(value, str) and value for value in (access_token, returned_client_token, username, profile_id)):
+            raise ElyAuthError("Incomplete account information received from Ely.by. Please try signing in again.")
+        try:
+            profile_id = uuid.UUID(profile_id).hex
+        except ValueError as exc:
+            raise ElyAuthError("Invalid account UUID received from Ely.by.") from exc
 
         return {
-            "access_token": data.get("accessToken", ""),
-            "client_token": data.get("clientToken", client_token),
-            "username": selected_profile.get("name", clean_login),
-            "uuid": selected_profile.get("id", ""),
+            "access_token": access_token,
+            "client_token": returned_client_token,
+            "username": username,
+            "uuid": profile_id,
             "user_id": user_info.get("id"),
         }
 
@@ -186,7 +201,11 @@ def refresh_token(access_token: str, client_token: str) -> dict[str, Any] | None
             return None
 
         data = response.json()
+        if not isinstance(data, dict) or not isinstance(data.get("accessToken"), str) or not data["accessToken"]:
+            return None
         selected_profile = data.get("selectedProfile", {})
+        if not isinstance(selected_profile, dict):
+            return None
         return {
             "access_token": data.get("accessToken", ""),
             "client_token": data.get("clientToken", client_token),

@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import threading
@@ -18,7 +19,9 @@ from storage import (
 	load_pending_installations,
 	save_pending_installations,
 	get_active_account,
-	add_or_update_account,
+	update_account_session,
+	get_data_dir,
+	load_latest_release_id,
 )
 from skins import (
 	prepare_skin_launch,
@@ -167,6 +170,37 @@ def get_version_catalog() -> tuple[list[dict], str | None, bool]:
 		return versions, latest_release, False
 
 
+def get_latest_release_version() -> tuple[str | None, bool]:
+	"""Resolve Mojang's latest release, retaining a usable offline fallback."""
+	try:
+		with requests.get(
+			"https://launchermeta.mojang.com/mc/game/version_manifest_v2.json",
+			timeout=5,
+		) as response:
+			response.raise_for_status()
+			latest = response.json()["latest"]["release"]
+			if isinstance(latest, str) and latest.strip():
+				return latest.strip(), True
+	except (requests.RequestException, ValueError, KeyError, TypeError):
+		pass
+
+	cached = load_latest_release_id()
+	if cached:
+		return cached, False
+
+	versions, _ = get_local_version_catalog()
+	vanilla_ids = {
+		version["version_id"] for version in get_installed_versions()
+		if version["loader"] == "Vanilla"
+	}
+	latest_local = max(
+		(version for version in versions
+		 if version.get("type") == "release" and version["id"] in vanilla_ids),
+		key=lambda version: version["releaseTime"], default=None,
+	)
+	return (latest_local["id"] if latest_local else None), False
+
+
 _installed_versions_cache: list[dict[str, str]] | None = None
 
 
@@ -281,6 +315,68 @@ def _loader_version_from_id(
 	return remainder[: -len(suffix)] if remainder.endswith(suffix) else remainder
 
 
+def save_base64_profile_icon(profile_id: str, base64_str: str) -> str | None:
+	"""Decodes a base64 or data:image/... URI icon and saves it as a profile icon file."""
+	if not base64_str or not isinstance(base64_str, str):
+		return None
+	raw_b64 = base64_str.strip()
+	ext = "png"
+	if raw_b64.startswith("data:image/") and ";base64," in raw_b64:
+		header, raw_b64 = raw_b64.split(";base64,", 1)
+		sub_ext = header.replace("data:image/", "").split("+")[0].strip().lower()
+		if sub_ext in ("png", "jpg", "jpeg", "webp", "ico"):
+			ext = sub_ext
+	try:
+		padded = raw_b64 + "=" * (-len(raw_b64) % 4)
+		import base64 as b64_module
+		image_bytes = b64_module.b64decode(padded)
+		if not image_bytes or len(image_bytes) < 8:
+			return None
+		safe_id = re.sub(r"[^a-zA-Z0-9_\-]", "_", str(profile_id))
+		icons_dir = get_data_dir() / "icons"
+		icons_dir.mkdir(parents=True, exist_ok=True)
+		target_file = icons_dir / f"icon_{safe_id}.{ext}"
+		target_file.write_bytes(image_bytes)
+		return str(target_file)
+	except Exception:
+		return None
+
+
+def delete_external_profile(external_id: str) -> bool:
+	"""Removes a profile from launcher_profiles.json matching external_id."""
+	if not external_id:
+		return False
+	profiles_path = Path(minecraft_directory) / "launcher_profiles.json"
+	if not profiles_path.is_file():
+		return False
+	try:
+		document = json.loads(profiles_path.read_text(encoding="utf-8"))
+		if not isinstance(document, dict):
+			return False
+		profiles = document.get("profiles")
+		if not isinstance(profiles, dict):
+			return False
+		matched_key = None
+		if external_id in profiles:
+			matched_key = external_id
+		else:
+			for k, p in profiles.items():
+				if isinstance(p, dict) and p.get("id") == external_id:
+					matched_key = k
+					break
+		if not matched_key:
+			return False
+		del profiles[matched_key]
+		if document.get("selectedProfile") == matched_key:
+			document["selectedProfile"] = next(iter(profiles.keys()), "")
+		temp_file = profiles_path.with_suffix(".tmp")
+		temp_file.write_text(json.dumps(document, indent=2), encoding="utf-8")
+		temp_file.replace(profiles_path)
+		return True
+	except Exception:
+		return False
+
+
 def get_external_installations() -> list[dict[str, object]]:
 	profiles_path = Path(minecraft_directory) / "launcher_profiles.json"
 	try:
@@ -347,6 +443,7 @@ def import_external_installations(
 	external_profiles: list[dict[str, object]],
 	version_catalog: list[dict],
 ) -> tuple[list[dict[str, object]], set[str], bool]:
+	"""Import new profiles without changing settings of existing installations."""
 	installed_by_id = {
 		version["version_id"]: version for version in installed_versions
 	}
@@ -405,9 +502,9 @@ def import_external_installations(
 			if inst.get("external_profile_id") == external_id or inst.get("id") == f"minecraft-launcher:{external_id}":
 				matched_inst = inst
 				break
-			if is_inst and inst.get("is_instance") and ext_game_dir and inst.get("game_directory"):
+			if is_inst and inst.get("is_instance") and ext_game_dir:
 				try:
-					if Path(inst["game_directory"]).resolve() == Path(ext_game_dir).resolve():
+					if get_profile_game_directory(inst) == Path(ext_game_dir).resolve():
 						matched_inst = inst
 						break
 				except Exception:
@@ -416,44 +513,27 @@ def import_external_installations(
 				matched_inst = inst
 				break
 
+		# A shared game folder is not permission to replace a locally pinned loader.
+		# Imported profiles can also have been customized since their first import.
+		if matched_inst is not None:
+			if external_id not in handled_ids:
+				handled_ids.add(external_id)
+				changed = True
+			continue
+
 		icon_data = str(external_profile.get("icon") or "").strip()
 		custom_banner_path = None
+		custom_icon_path = None
 		if icon_data.startswith("data:image/") or len(icon_data) > 100:
-			# Decode base64 icon and save it as custom banner
+			# Decode base64 icon and save it as custom icon and banner
 			custom_banner_path = banners.save_base64_icon_as_banner(f"minecraft-launcher:{external_id}", icon_data)
 			if not custom_banner_path:
 				custom_banner_path = banners.save_base64_icon_as_banner(external_id, icon_data)
+			custom_icon_path = save_base64_profile_icon(f"minecraft-launcher:{external_id}", icon_data)
+			if not custom_icon_path:
+				custom_icon_path = save_base64_profile_icon(external_id, icon_data)
 
-		if matched_inst is not None:
-			if custom_banner_path and not matched_inst.get("custom_banner"):
-				matched_inst["custom_banner"] = custom_banner_path
-				changed = True
-			if ext_name and matched_inst.get("name") != ext_name:
-				matched_inst["name"] = ext_name
-				changed = True
-			if matched_inst.get("external_profile_id") != external_id:
-				matched_inst["external_profile_id"] = external_id
-				changed = True
-			if matched_inst.get("source") != "minecraft_launcher":
-				matched_inst["source"] = "minecraft_launcher"
-				changed = True
-			if is_inst:
-				if not matched_inst.get("is_instance") or matched_inst.get("game_directory") != ext_game_dir:
-					matched_inst["is_instance"] = True
-					matched_inst["instance_name"] = str(external_profile.get("instance_name", ""))
-					matched_inst["game_directory"] = ext_game_dir
-					changed = True
-			if matched_inst.get("loader") != version_info["loader"]:
-				matched_inst["loader"] = version_info["loader"]
-				changed = True
-			if matched_inst.get("loader_version") != version_info["loader_version"]:
-				matched_inst["loader_version"] = version_info["loader_version"]
-				changed = True
-			if matched_inst.get("minecraft_version") != version_info["minecraft_version"]:
-				matched_inst["minecraft_version"] = version_info["minecraft_version"]
-				changed = True
-			handled_ids.add(external_id)
-		elif external_id not in handled_ids:
+		if external_id not in handled_ids:
 			imported_installations.append(
 				{
 					"id": f"minecraft-launcher:{external_id}",
@@ -472,6 +552,7 @@ def import_external_installations(
 					"is_instance": is_inst,
 					"instance_name": str(external_profile.get("instance_name", "")),
 					"game_directory": ext_game_dir,
+					"icon": custom_icon_path or "",
 					"custom_banner": custom_banner_path or "",
 				}
 			)
@@ -489,171 +570,94 @@ def _detect_instance_configuration(
 	installed_ids: set[str],
 	version_catalog: list[dict],
 ) -> dict[str, str] | None:
-	mc_version = None
-	loader = "Vanilla"
-	loader_version = ""
-
-	# 1. Custom instance metadata if present
-	for meta_name in ("instance.json", "profile.json", "minecraft_instance.json"):
-		meta_file = folder / meta_name
-		if meta_file.is_file():
-			try:
-				meta_data = json.loads(meta_file.read_text(encoding="utf-8"))
-				if isinstance(meta_data, dict):
-					mc_version = meta_data.get("minecraft_version") or meta_data.get("mc_version") or mc_version
-					loader = meta_data.get("loader") or loader
-					loader_version = meta_data.get("loader_version") or loader_version
-			except Exception:
-				pass
-
-	# 2. Check logs (latest.log or recent logs)
-	log_files = []
-	latest_log = folder / "logs" / "latest.log"
-	if latest_log.is_file():
-		log_files.append(latest_log)
-	logs_dir = folder / "logs"
-	if logs_dir.is_dir():
-		log_files.extend(sorted(logs_dir.glob("*.log"), reverse=True)[:3])
-
-	for log_file in log_files:
-		if mc_version and loader != "Vanilla" and loader_version:
-			break
+	"""Discover only configurations supported by metadata or unambiguous evidence."""
+	metadata = {}
+	for name in ("instance.json", "profile.json", "minecraft_instance.json"):
 		try:
-			with log_file.open("r", encoding="utf-8", errors="ignore") as f:
-				for _ in range(80):
-					line = f.readline()
-					if not line:
-						break
-					m = re.search(
-						r"Loading Minecraft\s+([^\s]+)\s+with\s+(\w+)\s+Loader\s+([^\s]+)",
-						line,
-						re.IGNORECASE,
-					)
-					if m:
-						mc_version = m.group(1)
-						loader = m.group(2).capitalize()
-						loader_version = m.group(3)
-						break
-					m2 = re.search(r"Loading Minecraft\s+([^\s]+)", line, re.IGNORECASE)
-					if m2 and not mc_version:
-						mc_version = m2.group(1)
-					if "Fabric Loader" in line:
-						loader = "Fabric"
-					elif "NeoForge" in line:
-						loader = "NeoForge"
-					elif "Forge" in line:
-						loader = "Forge"
-		except Exception:
+			document = json.loads((folder / name).read_text(encoding="utf-8"))
+			if isinstance(document, dict):
+				for key in ("version_id", "minecraft_version", "loader", "loader_version"):
+					value = document.get(key)
+					if isinstance(value, str) and value.strip():
+						metadata.setdefault(key, value.strip())
+				if isinstance(document.get("mc_version"), str):
+					metadata.setdefault("minecraft_version", document["mc_version"])
+		except (OSError, UnicodeError, ValueError):
 			pass
 
-	# 3. Indicator directories
-	if loader == "Vanilla":
-		if (folder / ".fabric").exists():
-			loader = "Fabric"
-		elif (folder / ".quilt").exists():
-			loader = "Quilt"
+	if metadata.get("version_id"):
+		installed = installed_by_id.get(metadata["version_id"])
+		if installed:
+			if any(metadata.get(key) and metadata[key].casefold() != str(installed.get(key, "")).casefold()
+				   for key in ("minecraft_version", "loader", "loader_version")):
+				return None
+			return dict(installed)
 
-	# 4. Check mods folder
-	mods_dir = folder / "mods"
-	if mods_dir.is_dir():
-		for mod in mods_dir.glob("*.jar"):
-			m_mod = re.search(
-				r"[+\-_]mc([0-9]+\.[0-9]+(?:\.[0-9]+)?)", mod.name, re.IGNORECASE
-			)
-			if m_mod and not mc_version:
-				mc_version = m_mod.group(1)
-			mod_lower = mod.name.lower()
-			if "fabric" in mod_lower and loader == "Vanilla":
-				loader = "Fabric"
-			elif "neoforge" in mod_lower:
-				loader = "NeoForge"
-			elif "forge" in mod_lower and loader == "Vanilla":
-				loader = "Forge"
+	configuration = dict(metadata)
+	logs_dir = folder / "logs"
+	log_files = [logs_dir / "latest.log"]
+	if logs_dir.is_dir():
+		log_files.extend(sorted(logs_dir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)[:3])
+	for log_file in log_files:
+		try:
+			with log_file.open(encoding="utf-8", errors="replace") as stream:
+				for _ in range(80):
+					line = stream.readline()
+					if not line:
+						break
+					match = re.search(r"Loading Minecraft\s+(\S+)\s+with\s+(\w+)\s+Loader\s+(\S+)", line, re.IGNORECASE)
+					if match:
+						evidence = dict(zip(("minecraft_version", "loader", "loader_version"), match.groups()))
+						# Logs from another configuration must not supply part of a metadata pin.
+						if all(not metadata.get(key) or metadata[key].casefold() == value.casefold()
+							   for key, value in evidence.items()):
+							for key, value in evidence.items():
+								configuration.setdefault(key, value)
+						break
+		except OSError:
+			pass
 
-	# 5. Check folder name for clues if version is still missing
-	if not mc_version:
-		clean_name = folder.name.replace("_", ".")
-		for v_id in sorted(installed_ids, key=len, reverse=True):
-			if v_id in clean_name or clean_name in v_id:
-				if v_id in installed_by_id:
-					v_info = installed_by_id[v_id]
-					mc_version = v_info["minecraft_version"]
-					if loader == "Vanilla":
-						loader = v_info["loader"]
-						loader_version = v_info.get("loader_version", "")
+	if not configuration.get("loader"):
+		for indicator, loader_name in ((".fabric", "Fabric"), (".quilt", "Quilt")):
+			if (folder / indicator).exists():
+				configuration["loader"] = loader_name
 				break
+		if not configuration.get("loader"):
+			match = re.match(r"(fabric|quilt|neoforge|forge|vanilla)(?:[ _.-]|$)", folder.name, re.IGNORECASE)
+			if match:
+				configuration["loader"] = match.group(1)
+			elif (folder / "mods").is_dir():
+				return None
 
-	# 6. Resolve version_id against installed_versions
-	version_id = None
-	if loader == "Fabric":
-		if loader_version and mc_version:
-			target_id = f"fabric-loader-{loader_version}-{mc_version}"
-			if target_id in installed_ids:
-				version_id = target_id
-		if not version_id and mc_version:
-			for v_id in installed_ids:
-				if v_id.startswith("fabric-loader-") and v_id.endswith(f"-{mc_version}"):
-					version_id = v_id
-					v_info = installed_by_id[v_id]
-					loader_version = v_info.get("loader_version", loader_version)
-					break
-		if not version_id and mc_version:
-			version_id = f"fabric-loader-{loader_version or '0.16.0'}-{mc_version}"
-	elif loader == "NeoForge" and mc_version:
-		for v_id in installed_ids:
-			if "neoforge" in v_id.lower() and mc_version in v_id:
-				version_id = v_id
-				break
-	elif loader == "Forge" and mc_version:
-		for v_id in installed_ids:
-			if "forge" in v_id.lower() and mc_version in v_id:
-				version_id = v_id
-				break
-	elif loader == "Vanilla" and mc_version:
-		version_id = mc_version
-
-	if not version_id and mc_version:
-		version_id = mc_version
-
-	if not version_id:
-		for v_id in installed_ids:
-			if v_id.lower() in folder.name.lower():
-				version_id = v_id
-				v_info = installed_by_id[v_id]
-				mc_version = v_info["minecraft_version"]
-				loader = v_info["loader"]
-				loader_version = v_info.get("loader_version", "")
-				break
-
-	if not version_id:
-		is_mc_folder = any(
-			(folder / item).exists()
-			for item in ("saves", "mods", "resourcepacks", "options.txt", "config")
-		)
-		if not is_mc_folder:
-			return None
-		if installed_ids:
-			first_id = sorted(installed_ids)[0]
-			version_id = first_id
-			v_info = installed_by_id.get(first_id, {})
-			mc_version = v_info.get("minecraft_version", first_id)
-			loader = v_info.get("loader", "Vanilla")
-			loader_version = v_info.get("loader_version", "")
+	# An exact installed ID in the folder name is useful; partial names are not pins.
+	if not configuration.get("minecraft_version"):
+		candidates = [info for version_id, info in installed_by_id.items()
+					  if version_id.casefold() == folder.name.replace("_", ".").casefold()]
+		if len(candidates) == 1:
+			for key in ("minecraft_version", "loader", "loader_version"):
+				configuration.setdefault(key, candidates[0].get(key, ""))
 		else:
-			return None
+			match = re.search(r"(?<![0-9.])([0-9]+\.[0-9]+(?:\.[0-9]+)?)(?![0-9.])", folder.name.replace("_", "."))
+			if match:
+				configuration["minecraft_version"] = match.group(1)
 
-	if version_id in installed_by_id:
-		v_info = installed_by_id[version_id]
-		mc_version = v_info["minecraft_version"]
-		loader = v_info["loader"]
-		loader_version = v_info.get("loader_version", loader_version)
-
-	return {
-		"version_id": version_id,
-		"minecraft_version": mc_version or version_id,
-		"loader": loader,
-		"loader_version": loader_version,
-	}
+	mc_version = configuration.get("minecraft_version")
+	loader = configuration.get("loader", "Vanilla")
+	loader = {"fabric": "Fabric", "quilt": "Quilt", "forge": "Forge", "neoforge": "NeoForge", "vanilla": "Vanilla"}.get(loader.casefold(), loader)
+	loader_version = configuration.get("loader_version", "")
+	if not mc_version:
+		return None
+	if loader != "Vanilla" and not loader_version:
+		return None
+	result = {"minecraft_version": mc_version, "loader": loader, "loader_version": loader_version}
+	try:
+		version_id = get_profile_version_id(result)
+	except (KeyError, ValueError):
+		return None
+	if not version_id or (metadata.get("version_id") and metadata["version_id"] != version_id):
+		return None
+	result["version_id"] = version_id
+	return result
 
 
 def discover_local_instances(
@@ -967,6 +971,68 @@ def get_mod_loader(loader_name: str):
 	return minecraft_launcher_lib.mod_loader.get_mod_loader(loader_name.casefold())
 
 
+def get_profile_version_id(profile):
+	"""Resolve older profiles that store Minecraft and loader versions separately."""
+	version_id = profile.get("version_id")
+	if version_id:
+		return version_id
+	if str(profile.get("loader", "Vanilla")).casefold() == "vanilla":
+		return profile.get("minecraft_version", "")
+	if not profile.get("loader_version"):
+		return ""
+	try:
+		return get_mod_loader(profile["loader"]).get_installed_version(
+			profile["minecraft_version"], profile.get("loader_version", "")
+		)
+	except (KeyError, ValueError):
+		return ""
+
+
+def get_profile_game_directory(profile, mc_dir=None):
+	"""Resolve an instance folder without falling back to a different game folder."""
+	root = Path(mc_dir or minecraft_directory).resolve()
+	game_dir = str(profile.get("game_directory") or "").strip()
+	if not game_dir and profile.get("instance_name"):
+		name = str(profile["instance_name"])
+		if name in (".", "..") or Path(name).name != name or "/" in name or "\\" in name:
+			raise ValueError("Invalid instance folder name.")
+		game_dir = str(root / "instances" / name)
+	if profile.get("is_instance") and not game_dir:
+		raise ValueError("This instance has no game folder. Select its existing folder before launching.")
+	resolved = Path(game_dir).resolve() if game_dir else root
+	if profile.get("is_instance") and resolved in (root, root / "instances"):
+		raise ValueError("This instance must use its own game folder.")
+	return resolved
+
+
+def prepare_launch_profile(profile, installed_versions):
+	"""Require consistent, pinned versions before an install can select a loader."""
+	target = dict(profile)
+	version_id = get_profile_version_id(target)
+	if not version_id:
+		raise ValueError("Choose a Minecraft version and a specific loader version for this profile.")
+	target["version_id"] = version_id
+	installed = next((v for v in installed_versions if v["version_id"] == version_id), None)
+	if installed:
+		for key in ("loader", "minecraft_version", "loader_version"):
+			actual = installed.get(key, "")
+			configured = target.get(key)
+			if configured and str(configured).casefold() != str(actual).casefold():
+				raise ValueError("This profile's version ID conflicts with its Minecraft or loader version. Correct the profile before launching.")
+			target[key] = actual
+	elif str(target.get("loader", "Vanilla")).casefold() != "vanilla":
+		if not target.get("loader_version"):
+			raise ValueError("Select a specific loader version before installing or repairing this profile.")
+		expected = get_mod_loader(target["loader"]).get_installed_version(
+			target["minecraft_version"], target["loader_version"]
+		)
+		if version_id != expected:
+			raise ValueError("This profile's version ID conflicts with its pinned loader version.")
+	elif version_id != target.get("minecraft_version"):
+		raise ValueError("This profile's version ID conflicts with its Minecraft version.")
+	return target
+
+
 async def start_game(
 	target,
 	username: str,
@@ -975,8 +1041,13 @@ async def start_game(
 	settings=None,
 	cancel_event=None,
 ):
+	game_folder = get_profile_game_directory(target)
+	if target.get("is_instance") and not game_folder.is_dir():
+		raise FileNotFoundError(f"Instance folder is missing: {game_folder}. Restore it or select its existing folder before launching.")
+	installed_versions = get_installed_versions()
+	target = prepare_launch_profile(target, installed_versions)
 	version_id = target["version_id"]
-	installed_ids = {item["version_id"] for item in get_installed_versions()}
+	installed_ids = {item["version_id"] for item in installed_versions}
 	if version_id not in installed_ids:
 		if not online_available:
 			raise RuntimeError(
@@ -1007,13 +1078,15 @@ async def start_game(
 				install_callback,
 			)
 		else:
-			version_id = await asyncio.to_thread(
+			installed_version_id = await asyncio.to_thread(
 				get_mod_loader(target["loader"]).install,
 				target["minecraft_version"],
 				minecraft_directory,
 				loader_version=target["loader_version"],
 				callback=install_callback,
 			)
+			if installed_version_id != version_id:
+				raise RuntimeError("The installer returned a different version than the pinned profile. Launch stopped.")
 		pending_versions.add(version_id)
 		if not save_pending_installations(pending_versions):
 			raise RuntimeError("Could not record the completed version for verification.")
@@ -1030,22 +1103,25 @@ async def start_game(
 		invalidate_installed_versions_cache()
 
 	callback["setStatus"]("Building launch command...")
-	game_dir = str(target.get("game_directory") or minecraft_directory)
-	Path(game_dir).mkdir(parents=True, exist_ok=True)
+	game_dir = str(game_folder)
+	if not target.get("is_instance"):
+		game_folder.mkdir(parents=True, exist_ok=True)
 
-	active_account = get_active_account()
+	active_account = await asyncio.to_thread(get_active_account, include_credentials=online_available)
 	account_type = active_account.get("type", "offline")
 	account_username = str(active_account.get("username", username)).strip() or username or "Player"
 
 	offline_uuid = generate_offline_uuid(account_username)
 	active_uuid = offline_uuid
 	active_token = ""
+	sensitive_values = []
 	skin_server_instance = None
 
 	if account_type == "ely":
 		ely_uuid = str(active_account.get("uuid", "")).replace("-", "").strip()
 		access_token = str(active_account.get("access_token", "")).strip()
 		client_token = str(active_account.get("client_token", "")).strip()
+		sensitive_values.extend((access_token, client_token))
 
 		if ely_uuid:
 			active_uuid = ely_uuid
@@ -1057,18 +1133,35 @@ async def start_game(
 				callback["setStatus"]("Refreshing Ely.by session...")
 				refreshed = await asyncio.to_thread(ely_auth.refresh_token, access_token, client_token)
 				if refreshed and refreshed.get("access_token"):
-					active_account["access_token"] = refreshed["access_token"]
-					if refreshed.get("uuid"):
-						active_account["uuid"] = refreshed["uuid"]
-						active_uuid = str(refreshed["uuid"]).replace("-", "")
-					if refreshed.get("username"):
-						active_account["username"] = refreshed["username"]
-						account_username = refreshed["username"]
-					access_token = refreshed["access_token"]
-					add_or_update_account(active_account)
+					sensitive_values.extend((refreshed["access_token"], refreshed.get("client_token") or client_token))
+					updated = await asyncio.to_thread(
+						update_account_session, active_account["id"], access_token, refreshed,
+					)
+					if not updated:
+						# Removal or re-login may have happened during the request.
+						# Never restore that account or retain the discarded token.
+						await asyncio.to_thread(
+							ely_auth.invalidate_token, refreshed["access_token"],
+							refreshed.get("client_token") or client_token,
+						)
+						refreshed = None
+					if refreshed and refreshed.get("access_token"):
+						active_account["access_token"] = refreshed["access_token"]
+						if refreshed.get("uuid"):
+							active_account["uuid"] = refreshed["uuid"]
+							active_uuid = str(refreshed["uuid"]).replace("-", "")
+						if refreshed.get("username"):
+							active_account["username"] = refreshed["username"]
+							account_username = refreshed["username"]
+						access_token = refreshed["access_token"]
+						client_token = refreshed.get("client_token") or client_token
+					else:
+						access_token = ""
 				else:
 					access_token = ""
 			active_token = access_token
+		if online_available and not active_token:
+			callback["setStatus"]("Ely.by session unavailable; playing offline. Sign in again for multiplayer.")
 
 	launch_options = {
 		"username": account_username,
@@ -1101,6 +1194,13 @@ async def start_game(
 		)
 		launch_options["jvmArguments"].extend(skin_jvm_args)
 		launch_options["uuid"] = active_uuid
+
+	profile_jvm = str((target or {}).get("jvm_arguments") or "").strip()
+	if profile_jvm:
+		try:
+			launch_options["jvmArguments"].extend(shlex.split(profile_jvm))
+		except Exception:
+			launch_options["jvmArguments"].extend(profile_jvm.split())
 	java_path = str((settings or {}).get("java_path", "")).strip()
 	if java_path:
 		launch_options["executablePath"] = java_path
@@ -1140,6 +1240,8 @@ async def start_game(
 		log_path = Path(minecraft_directory) / "logs" / "gr8-launcher.log"
 		log_path.parent.mkdir(parents=True, exist_ok=True)
 		log_file = log_path.open("a", encoding="utf-8", errors="replace")
+		log_file.write(f"\n[Gr8 Launcher] Profile: {target.get('id', '')}; version: {version_id}; game directory: {game_dir}\n")
+		log_file.flush()
 	try:
 		process = await asyncio.to_thread(
 			subprocess.Popen,
@@ -1154,6 +1256,7 @@ async def start_game(
 			bufsize=1,
 			**process_options,
 		)
+		process.gr8_sensitive_values = tuple(value for value in sensitive_values if value)
 	except Exception:
 		if log_file is not None:
 			log_file.close()

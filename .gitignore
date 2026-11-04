@@ -1,10 +1,71 @@
+# Python bytecode and local runtime artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# App/runtime caches
 .flet/
 .data/
-__pycache__/
+.vscode/
 logs/
-temp.py
+log/
 temp/
+temp.py
+tests/
+
+# Editor and tooling state
 .agents/
 skills-lock.json
 *.log
-tools/**/build/
+
+# Local Python environments
+.venv*/
+venv/
+
+# Generated build folders and Python package metadata
+build/
+dist/
+*.build/
+*.dist/
+*.onefile-build/
+.eggs/
+*.egg-info/
+pip-wheel-metadata/
+
+# Generated binaries and PyInstaller intermediate files
+*.spec
+*.toc
+*.pkg
+*.pyz
+*.exe
+*.dll
+*.class
+
+# Release archives, installers, and checksums
+*.zip
+*.7z
+*.tar.gz
+*.tgz
+*.whl
+*.egg
+*.msi
+*.msix
+*.msixbundle
+*.appx
+*.appxbundle
+SHA256SUMS.txt
+*.sha256
+
+# Generated Java archives; the bundled skin bridge is a required release input
+*.jar
+!tools/gr8-skin-bridge/gr8-skin-bridge.jar
+
+# Keep build scripts, requirements-build.txt, packaging/, and .github/ versioned.
+
+# OS noise
+.DS_Store
+Thumbs.db

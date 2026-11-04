@@ -2,3 +2,4 @@ flet
 minecraft-launcher-lib
 pillow
 requests
+keyring>=25
