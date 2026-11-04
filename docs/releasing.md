@@ -10,10 +10,12 @@ Minecraft still requires a suitable Java runtime.
 
 | Trigger | Result |
 | --- | --- |
-| Push to `main` or `master`, or open/update a pull request | Build a Windows x64 ZIP and installer; upload them to the workflow run. |
+| Push to `main` with a new version in `VERSION` | Build packages, automatically create the version tag, publish the release, and attach downloads. |
+| Push to `main` without changing a released version | Build preview downloads; keep the published release as it is. |
+| Push to `master`, or open/update a pull request | Build a Windows x64 ZIP and installer; upload them to the workflow run. |
 | Run the workflow manually | Build downloads using the supplied preview version. |
-| Push a tag such as `v2.0.0` | Build downloads, create a GitHub release with generated notes, and attach the ZIP, installer, and checksums. |
-| Push a tag such as `v2.0.0-beta.1` | Build and publish a GitHub prerelease. |
+| Use a prerelease version such as `2.2.0-beta.1` in `VERSION` | Automatically publish a GitHub prerelease on the next push to `main`. |
+| Push a tag such as `v2.2.0` manually | Build and publish that tagged version; manual tags are also supported. |
 
 The workflow is [release.yml](../.github/workflows/release.yml). Its release job
 uses GitHub's built-in token with `contents: write`; you do not need to create a
@@ -21,28 +23,40 @@ personal access token or add a repository secret.
 
 ## Publish a release
 
-Commit and push the application source, `.assets` files, Java companion JAR, and
-build files first. Actions builds the committed source at the tag, so local edits
-and untracked files must be committed before they can appear in a release.
+Choose the exact version in the root [VERSION](../VERSION) file. For example,
+use `2.0.1` for a small fix or `2.2.0` for the larger update you want to publish.
+The workflow uses this value for both the installer and the GitHub release.
 
-From the commit you want to release:
+Commit and push the application source, `.assets` files, Java companion JAR,
+build files, and updated `VERSION` together. From the project folder:
 
 ```powershell
-git tag -a v2.0.0 -m "Gr8 Launcher 2.0.0"
-git push origin v2.0.0
+Set-Content -LiteralPath VERSION -Value "2.0.1" -Encoding utf8
+git add .
+git commit -m "Release Gr8 Launcher 2.0.1"
+git push origin main
 ```
+
+The workflow automatically creates `v2.0.1` at the exact commit it built and
+publishes the release after the build succeeds. There are no manual tag commands.
+Local edits and untracked files must be committed to appear in the downloads.
 
 Open the repository's **Actions** tab to follow the build. When it succeeds,
 the release appears under **Releases** with:
 
-- `Gr8Launcher-2.0.0-windows-x64-setup.exe`
-- `Gr8Launcher-2.0.0-windows-x64.zip`
+- `Gr8Launcher-2.0.1-windows-x64-setup.exe`
+- `Gr8Launcher-2.0.1-windows-x64.zip`
 - `SHA256SUMS.txt`
 
-Use a new version tag for each release. Versions use `major.minor.patch` with
-an optional prerelease suffix, for example `v2.0.0-rc.1`. Rerunning a release
-workflow replaces the attachments for that tag and preserves existing release
-notes.
+Choose a new, higher version for each release. Versions use `major.minor.patch`
+with an optional prerelease suffix, for example `2.2.0-rc.1`. The initial
+`VERSION` value is `2.0.0`, matching the existing release. Keeping that value while
+pushing more commits produces a `2.0.0-dev` preview rather than another release.
+
+Rerunning the original release workflow replaces attachments using that same
+version and commit, and preserves its existing notes. The workflow checks that an
+existing tag points to the built commit before updating its release. Publication
+runs are serialized so pushes cannot race to publish the same version.
 
 To try the pipeline before publishing, open **Actions → Build and release Windows
 packages → Run workflow**. Select a branch and enter a version such as
@@ -58,8 +72,12 @@ The workflow uses Inno Setup 6.7.4; the installer script also supports Inno Setu
 ```powershell
 py -3.14 -m venv .venv-build
 .\.venv-build\Scripts\python.exe -m pip install -r requirements-build.txt
-.\.venv-build\Scripts\python.exe tools\build_windows.py --version 2.0.0
+.\.venv-build\Scripts\python.exe tools\build_windows.py
 ```
+
+The local builder reads `VERSION` by default. Add `--version 2.2.0-beta.1` to
+override the version for a test build. Each package also includes a `VERSION`
+file containing the version actually built.
 
 If the compiler is installed in a custom location, add
 `--iscc "C:\path\to\ISCC.exe"` or set the `ISCC_PATH` environment variable.
@@ -94,7 +112,7 @@ Minecraft instances stay in their existing Minecraft data folders when the
 application is uninstalled.
 
 Update [requirements-build.txt](../requirements-build.txt) when upgrading the
-launcher or packaging dependencies, then try a manual build before tagging a
-release. The workflow pins GitHub Actions and verifies the compiler download's
+launcher or packaging dependencies, then try a manual build before updating
+`VERSION` and pushing a release. The workflow pins GitHub Actions and verifies the compiler download's
 SHA-256 hash. When upgrading either, update the corresponding pinned commit or
 compiler version and hash together.

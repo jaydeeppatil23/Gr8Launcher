@@ -37,6 +37,12 @@ def parse_version(value: str) -> tuple[str, str]:
     return value.removeprefix("v"), ".".join(match.group(1, 2, 3))
 
 
+def read_project_version(path: Path | None = None) -> str:
+    """Read the version selected for the next release, including UTF-8 BOM files."""
+    path = path if path is not None else PROJECT_ROOT / "VERSION"
+    return parse_version(path.read_text(encoding="utf-8-sig").strip())[0]
+
+
 def find_compiler(explicit_path: str | None) -> Path:
     candidates = [explicit_path, os.environ.get("ISCC_PATH"), shutil.which("ISCC")]
     for directory in ("ProgramFiles", "ProgramFiles(x86)"):
@@ -105,6 +111,7 @@ def build(version: str, compiler: Path | None) -> list[Path]:
         raise RuntimeError("The pack command did not produce the launcher executable.")
     for filename in ("LICENSE", "README.md"):
         shutil.copy2(PROJECT_ROOT / filename, app_dir / filename)
+    (app_dir / "VERSION").write_text(f"{version}\n", encoding="utf-8", newline="\n")
 
     archive_name = f"{APP_NAME}-{version}-windows-x64"
     # zipfile (used by make_archive) also includes dot directories and files.
@@ -133,20 +140,21 @@ def build(version: str, compiler: Path | None) -> list[Path]:
         with package.open("rb") as stream:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
         checksum_lines.append(f"{digest}  {package.name}\n")
-    (output_dir / "SHA256SUMS.txt").write_text("".join(checksum_lines), encoding="utf-8")
+    (output_dir / "SHA256SUMS.txt").write_text("".join(checksum_lines), encoding="utf-8", newline="\n")
     return packages
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", default="0.0.0-dev")
+    parser.add_argument("--version", help="Package version (defaults to the VERSION file)")
     parser.add_argument("--iscc", help="Path to Inno Setup's ISCC.exe compiler")
     parser.add_argument("--portable-only", action="store_true")
     args = parser.parse_args()
     try:
-        parse_version(args.version)
+        version = args.version if args.version is not None else read_project_version()
+        parse_version(version)
         compiler = None if args.portable_only else find_compiler(args.iscc)
-        packages = build(args.version, compiler)
+        packages = build(version, compiler)
     except (ValueError, RuntimeError, OSError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"Build failed: {error}\n")
     for package in packages:

@@ -17,16 +17,23 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  group: windows-${{ github.event_name == 'pull_request' && github.ref || 'release' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     runs-on: windows-2022
     timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      publish: ${{ steps.version.outputs.publish }}
+      commit: ${{ steps.version.outputs.commit }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -38,23 +45,14 @@ jobs:
             requirements.txt
             requirements-build.txt
 
-      - name: Validate package version
+      - name: Choose package and release version
+        id: version
         env:
           PREVIEW_VERSION: ${{ inputs.version || '0.0.0-dev' }}
-        shell: pwsh
-        run: |
-          @'
-          import os
-          from tools.build_windows import parse_version
-          requested = (
-              os.environ["GITHUB_REF_NAME"]
-              if os.environ["GITHUB_REF_TYPE"] == "tag"
-              else os.environ["PREVIEW_VERSION"]
-          )
-          version, _ = parse_version(requested)
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as output:
-              output.write(f"BUILD_VERSION={version}\n")
-          '@ | python -
+        run: python tools/release_plan.py
+
+      - name: Check release version selection
+        run: python -m unittest discover -s tools -p test_release_plan.py
 
       - name: Install build dependencies
         run: |
@@ -102,7 +100,10 @@ jobs:
           compression-level: 0
 
   release:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      needs.build.result == 'success' && needs.build.outputs.publish == 'true' &&
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -120,16 +121,32 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          RELEASE_SHA: ${{ needs.build.outputs.commit }}
         run: |
           set -euo pipefail
           cd dist
           sha256sum --check SHA256SUMS.txt
           assets=( *.zip *-setup.exe SHA256SUMS.txt )
+          existing_sha=$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq '.sha' 2>/dev/null || true)
+          if [[ -n "$existing_sha" && "$existing_sha" != "$RELEASE_SHA" ]]; then
+            echo "Tag $RELEASE_TAG points to another commit. Choose a new version in VERSION."
+            exit 1
+          fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+            update_options=( --draft=false --target "$RELEASE_SHA" )
+            if [[ "$RELEASE_TAG" == *-* ]]; then
+              update_options+=( --prerelease=true )
+            else
+              update_options+=( --prerelease=false )
+            fi
+            gh release edit "$RELEASE_TAG" "${update_options[@]}"
           else
-            options=( --verify-tag --generate-notes --title "Gr8 Launcher ${RELEASE_TAG#v}" )
+            options=( --target "$RELEASE_SHA" --generate-notes --title "Gr8 Launcher ${RELEASE_TAG#v}" )
+            if [[ -n "$existing_sha" ]]; then
+              options+=( --verify-tag )
+            fi
             if [[ "$RELEASE_TAG" == *-* ]]; then
               options+=( --prerelease )
             fi
