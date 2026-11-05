@@ -1,9 +1,12 @@
 # Release builds use the dependency versions verified with this launcher.
 -r requirements.txt
-flet[cli,desktop]==1.0.5
+flet[cli,desktop,web]==1.0.5
 minecraft-launcher-lib==8.0
 pillow==12.3.0
 requests==2.34.2
 keyring==25.7.0
+pypresence==4.6.2
 pyinstaller==6.22.3
 pyinstaller-hooks-contrib==2026.8
+# Headless screenshots use the Flet web client and Chromium's DevTools socket.
+websockets==16.1.1

@@ -1,5 +1,5 @@
 <div align="center">
-  <img src=".assets/icons/gr8_icon.png" alt="Gr8 Launcher logo" width="96">
+  <img src=".assets/titles/Gr8_title.png" alt="Gr8 Launcher logo" width="250">
   <h1>Gr8 Launcher · Minecraft Java Edition Launcher</h1>
   <p><strong>Your worlds, your profiles, your style.</strong></p>
   <p>
@@ -21,9 +21,9 @@
 
 ## Launcher preview
 
-![Gr8 Launcher home screen showing Minecraft profiles, a game banner, the launch button, and a 3D player skin preview](docs/screenshots/gr8-launcher-home.png)
+![Gr8 Launcher home screen showing Minecraft profiles, a game banner, the launch button, and a 3D player skin preview](https://raw.githubusercontent.com/jaydeeppatil23/Gr8Launcher/launcher-preview/gr8-launcher-home.png)
 
-<p align="center"><em>The current source build with example profiles. Packaged releases may have a different interface.</em></p>
+<p align="center"><em>Automatically captured from the latest successful main build with example profiles. Each release includes its own screenshot in the release notes. <a href="docs/screenshots/gr8-launcher-home.png">View the bundled preview.</a></em></p>
 
 ## Features
 
@@ -35,6 +35,7 @@
 | **Java and performance settings** | Choose a Java executable, adjust RAM within detected system limits, set profile JVM arguments, and configure game resolution, fullscreen, and launcher behavior. |
 | **Download progress and game logs** | Follow installation progress and download speed, cancel downloads, and inspect captured game output from the launcher. Windows launches avoid an extra Java console window. |
 | **Offline play** | Launch previously installed versions, reuse cached skin previews, and browse local profiles with automatic connection detection. |
+| **[Discord Rich Presence](docs/discord-presence.md)** | Show your current launcher page or the Minecraft version and mod loader you are playing, with your skin face, elapsed time, and an on/off switch in Settings. |
 | **Minecraft-inspired design** | Enjoy a dark blue and warm gold interface, pixel fonts, animated navigation, and a home-screen player model with optional cursor-following head movement. |
 
 ## Download Gr8 Launcher
@@ -142,7 +143,7 @@ Gr8Launcher/
 ├── ui_dialogs.py          # Profile dialogs
 ├── ui_motion.py           # Navigation and entrance animations
 ├── .assets/               # Fonts, icons, banners, and default skins
-├── docs/screenshots/      # Launcher previews used in this README
+├── docs/screenshots/      # Bundled launcher preview for offline viewing
 ├── tools/gr8-skin-bridge/  # Bundled Java agent, source, and build helper
 └── requirements.txt       # Python dependencies
 ~~~

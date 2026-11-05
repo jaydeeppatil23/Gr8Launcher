@@ -10,14 +10,14 @@ Minecraft still requires a suitable Java runtime.
 
 | Trigger | Result |
 | --- | --- |
-| Push to `main` with a new version in `VERSION` | Build packages, automatically create the version tag, publish the release, and attach downloads. |
-| Push to `main` without changing a released version | Build preview downloads; keep the published release as it is. |
-| Push to `master`, or open/update a pull request | Build a Windows x64 ZIP and installer; upload them to the workflow run. |
-| Run the workflow manually | Build downloads using the supplied preview version. |
+| Push to `main` with a new version in `VERSION` | Build packages, refresh the README screenshot, automatically create the version tag, and publish downloads and an illustrated release note. |
+| Push to `main` without changing a released version | Build preview downloads and refresh the README screenshot; keep the published release as it is. |
+| Push to `master`, or open/update a pull request | Build a Windows x64 ZIP, installer, and screenshot; upload them to the workflow run. |
+| Run the workflow manually | Build downloads and a screenshot using the supplied preview version. |
 | Use a prerelease version such as `2.2.0-beta.1` in `VERSION` | Automatically publish a GitHub prerelease on the next push to `main`. |
 | Push a tag such as `v2.2.0` manually | Build and publish that tagged version; manual tags are also supported. |
 
-The workflow is [release.yml](../.github/workflows/release.yml). Its release job
+The workflow is [release.yml](../.github/workflows/release.yml). Its release and preview jobs
 uses GitHub's built-in token with `contents: write`; you do not need to create a
 personal access token or add a repository secret.
 
@@ -47,6 +47,7 @@ the release appears under **Releases** with:
 - `Gr8Launcher-2.0.1-windows-x64-setup.exe`
 - `Gr8Launcher-2.0.1-windows-x64.zip`
 - `SHA256SUMS.txt`
+- `gr8-launcher-home.png`, also displayed in the release notes
 
 Choose a new, higher version for each release. Versions use `major.minor.patch`
 with an optional prerelease suffix, for example `2.2.0-rc.1`. The initial
@@ -54,7 +55,8 @@ with an optional prerelease suffix, for example `2.2.0-rc.1`. The initial
 pushing more commits produces a `2.0.0-dev` preview rather than another release.
 
 Rerunning the original release workflow replaces attachments using that same
-version and commit, and preserves its existing notes. The workflow checks that an
+version and commit, and preserves its existing notes while refreshing the generated
+launcher preview section. The workflow checks that an
 existing tag points to the built commit before updating its release. Publication
 runs are serialized so pushes cannot race to publish the same version.
 
@@ -63,6 +65,44 @@ packages → Run workflow**. Select a branch and enter a version such as
 `0.0.0-dev`. Download `windows-x64` from the completed run's **Artifacts** section
 and try the installer and extracted portable app. Manual branch builds upload
 downloads to Actions without creating a release.
+
+## Automatic screenshots
+
+Every build runs [capture_screenshot.py](../tools/capture_screenshot.py) after
+packaging. It opens the real Flet launcher in headless Edge or Chrome at 1100×650,
+using a temporary offline `Player` account and sample Survival/Fabric profiles.
+It uses bundled artwork and skins, disables Discord presence and ambient motion,
+and waits for the home screen to render before saving the PNG. Local launcher
+accounts, settings, caches, and Minecraft installations are kept in a separate
+directory from this fixture. Capture failures fail the build, so a blank preview
+cannot replace the published image. The screenshot is included in the build
+artifact and `SHA256SUMS.txt`.
+
+After a successful push build on the repository's default branch (`main`),
+[publish_screenshot.py](../tools/publish_screenshot.py) updates the generated
+`launcher-preview` branch with the PNG and a `source.json` identifying the built
+commit and version. The README loads its image from that branch. The workflow
+creates the branch automatically on its first successful run; no personal token
+or manual branch setup is needed. The branch contains only preview files, and
+its updates do not trigger another build. Older reruns are skipped when `main`
+has newer commits. GitHub's image cache may take a few minutes to show an update.
+
+Published releases attach the same PNG and embed its version-specific download
+URL in the release notes. Reruns replace only the section between
+`<!-- gr8-launcher-preview:start -->` and `<!-- gr8-launcher-preview:end -->`;
+generated changelogs and handwritten notes outside those markers are preserved.
+Pull requests and manual preview runs capture images but do not update the README
+or publish releases.
+
+To capture a preview locally after installing `requirements-build.txt`:
+
+```powershell
+python tools/capture_screenshot.py --output docs/screenshots/gr8-launcher-home.png
+```
+
+Edge or Chrome must be installed. Pass `--browser "C:\path\to\msedge.exe"` if
+auto-detection cannot find it. `docs/screenshots/gr8-launcher-home.png` remains a
+bundled preview for offline viewing; the online README uses the generated branch.
 
 ## Build locally on Windows
 

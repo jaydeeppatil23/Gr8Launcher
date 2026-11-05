@@ -25,6 +25,7 @@ from storage import (
 )
 from skins import (
 	prepare_skin_launch,
+	render_head_avatar_bytes,
 	sync_playerdata_uuids,
 )
 import banners
@@ -1257,6 +1258,17 @@ async def start_game(
 			**process_options,
 		)
 		process.gr8_sensitive_values = tuple(value for value in sensitive_values if value)
+		process.gr8_presence_player = {
+			"username": account_username,
+			"type": account_type if (settings or {}).get("enable_custom_skins", True) else "offline",
+		}
+		process.gr8_presence_face = None
+		cached_skin_bytes = getattr(skin_server_instance, "cached_bytes", None)
+		if cached_skin_bytes and (settings or {}).get("discord_rpc", True):
+			try:
+				process.gr8_presence_face = render_head_avatar_bytes(cached_skin_bytes, scale=1)
+			except (OSError, ValueError):
+				pass
 	except Exception:
 		if log_file is not None:
 			log_file.close()

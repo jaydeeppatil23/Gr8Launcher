@@ -3,3 +3,4 @@ minecraft-launcher-lib
 pillow
 requests
 keyring>=25
+pypresence>=4.6.2,<5

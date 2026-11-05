@@ -44,6 +44,7 @@ import state
 import storage
 import profile_creation
 from credential_store import redact_credentials
+from discord_presence import DiscordPresence, SkinPortraitCache
 from launcher_services import (
     check_internet_connection,
     read_game_output,
@@ -170,6 +171,10 @@ def build_profile_icon_content(
 
 
 def main(page: ft.Page):
+    discord_presence = DiscordPresence(
+        enabled=bool(storage.load_settings().get("discord_rpc", True)),
+        portrait_cache=SkinPortraitCache(storage.DATA_DIR / "discord_portraits.json"),
+    )
     page.title = "Gr8 Launcher"
     page.window.icon = str(ASSETS_DIR / "icons" / "gr8_icon.ico")
     page.fonts = {
@@ -198,7 +203,14 @@ def main(page: ft.Page):
         page.update()
 
     async def close_window(e):
+        await asyncio.to_thread(discord_presence.stop)
         await page.window.close()
+
+    async def stop_discord_presence(e):
+        await asyncio.to_thread(discord_presence.stop)
+
+    page.on_disconnect = stop_discord_presence
+    page.on_close = stop_discord_presence
 
     minimize_btn = ft.Container(
         content=ft.Text(
@@ -741,6 +753,7 @@ def main(page: ft.Page):
             control.offset = ft.Offset(0, 0)
 
         active_tab = key
+        discord_presence.set_page(key)
         for k, _, icon_name in tabs:
             is_active = k == active_tab
             icon_controls[k].src = (
@@ -1428,7 +1441,7 @@ def main(page: ft.Page):
     # ---------------------------
     # ACCOUNTS TAB VIEW
     # ---------------------------
-    def get_account_avatar_bytes(acc: dict) -> bytes | None:
+    def get_account_avatar_bytes(acc: dict, *, scale: int = 4) -> bytes | None:
         acc_type = acc.get("type", "offline")
         username = acc.get("username", "Player")
         skin_img = None
@@ -1442,9 +1455,19 @@ def main(page: ft.Page):
         if skin_img is None:
             skin_img = skins.get_default_skin("classic")
         try:
-            return skins.render_head_avatar_bytes(skin_img, scale=4)
+            return skins.render_head_avatar_bytes(skin_img, scale=scale)
         except Exception:
             return None
+
+    def refresh_discord_player(account: dict | None = None):
+        if not has_saved_account():
+            discord_presence.set_player("", None)
+            return
+        account = account if account is not None else storage.get_active_account()
+        username = str(account.get("username") or "Player").strip()
+        discord_presence.set_player(
+            username, get_account_avatar_bytes(account, scale=1),
+        )
 
     accounts_list_column = ft.Column(
         spacing=8,
@@ -1503,6 +1526,7 @@ def main(page: ft.Page):
         open_login(is_add_account=True, account=account)
 
     def rebuild_accounts_view():
+        refresh_discord_player()
         accounts_data = storage.load_accounts()
         saved_accounts = accounts_data.get("accounts", [])
         active_id = accounts_data.get("active_account_id")
@@ -2358,6 +2382,7 @@ def main(page: ft.Page):
 
     def update_home_skin_model(*, render_immediately=True):
         active_acc = storage.get_active_account()
+        refresh_discord_player(active_acc)
         uname = active_acc.get("username", "Player")
         home_gamertag_text.value = uname
         home_skin_viewer.set_renderer(load_home_skin_renderer())
@@ -2842,6 +2867,10 @@ def main(page: ft.Page):
             )
             return
 
+        discord_presence.set_player(
+            username, get_account_avatar_bytes(active_acc, scale=1),
+        )
+
         if not target.get("loader"):
             target["loader"] = "Vanilla"
         if not target.get("minecraft_version"):
@@ -2857,6 +2886,7 @@ def main(page: ft.Page):
         state.launcher_log_state["cancel_event"] = threading.Event()
         state.launcher_log_state["target_version_id"] = target.get("version_id")
         state.launcher_log_state["target_profile_id"] = target.get("id")
+        discord_presence.prepare_game(target, installing=is_downloading)
 
         refresh_launch_button()
         rebuild_profiles_view()
@@ -2883,6 +2913,8 @@ def main(page: ft.Page):
             ):
                 if not state.launcher_log_state.get("downloading"):
                     state.launcher_log_state["downloading"] = True
+                    if not state.launcher_log_state.get("game_started"):
+                        discord_presence.prepare_game(target, installing=True)
                     refresh_launch_button()
             elif status_str in (
                 "Building launch command...",
@@ -2891,6 +2923,8 @@ def main(page: ft.Page):
             ):
                 if state.launcher_log_state.get("downloading"):
                     state.launcher_log_state["downloading"] = False
+                    if not state.launcher_log_state.get("game_started"):
+                        discord_presence.prepare_game(target)
                     refresh_launch_button()
 
         def set_progress_maximum(maximum):
@@ -2939,6 +2973,9 @@ def main(page: ft.Page):
                 state.launcher_log_state["downloading"] = (
                     target["version_id"] not in installed_ids
                 )
+                discord_presence.prepare_game(
+                    target, installing=state.launcher_log_state["downloading"],
+                )
                 refresh_launch_button()
             progress_task = asyncio.create_task(progress_ui_loop())
             process, log_file = await start_game(
@@ -2952,6 +2989,15 @@ def main(page: ft.Page):
             tracker.finish()
             state.launcher_log_state["game_started"] = True
             state.launcher_log_state["downloading"] = False
+            game_account = getattr(process, "gr8_presence_player", active_acc)
+            game_face = getattr(process, "gr8_presence_face", None)
+            if game_face is None:
+                game_face = get_account_avatar_bytes(game_account, scale=1)
+            discord_presence.game_started(
+                target,
+                player_name=str(game_account.get("username") or username),
+                face_png=game_face,
+            )
             update_launch_progress("Minecraft is running...", value=1.0, eta="")
             refresh_launch_button()
 
@@ -2968,7 +3014,7 @@ def main(page: ft.Page):
                 page.window.visible = False
                 page.update()
             elif launch_action == "Close launcher":
-                page.run_task(page.window.close)
+                page.run_task(close_window, None)
 
             exit_code = await asyncio.to_thread(process.wait)
             if output_task is not None:
@@ -2998,6 +3044,7 @@ def main(page: ft.Page):
                     pass
             update_launch_progress(f"Launch failed: {error}", value=0.0, eta="")
         finally:
+            discord_presence.game_finished()
             if progress_task is not None:
                 progress_task.cancel()
                 try:
@@ -4347,6 +4394,7 @@ def main(page: ft.Page):
         def do_reset(e):
             page.pop_dialog()
             storage.save_settings(storage.DEFAULT_SETTINGS.copy())
+            discord_presence.set_enabled(storage.DEFAULT_SETTINGS["discord_rpc"])
             home_skin_viewer.set_enabled(storage.DEFAULT_SETTINGS["enable_head_tracking"])
             bg_gradient_layer.opacity = 1.0
             try:
@@ -4474,11 +4522,31 @@ def main(page: ft.Page):
             on_change=on_capture_logs_change,
         )
 
+        def on_discord_rpc_change(e):
+            s = storage.load_settings()
+            enabled = bool(e.control.value)
+            s["discord_rpc"] = enabled
+            storage.save_settings(s)
+            discord_presence.set_enabled(enabled)
+
+        discord_rpc_switch = ft.Switch(
+            value=bool(settings.get("discord_rpc", True)),
+            active_color=accent_color,
+            track_color="#2b3b55",
+            on_change=on_discord_rpc_change,
+        )
+
         cards = [
+
             make_setting_card(
                 title="Launch Behavior",
                 description="Action to take with the launcher window when Minecraft launches.",
                 control=launch_action_dd,
+            ),
+            make_setting_card(
+                title="Discord Rich Presence",
+                description="Share your skin face, launcher activity, Minecraft version, and mod loader on Discord.",
+                control=discord_rpc_switch,
             ),
             make_setting_card(
                 title="Roaming Background Glow",
@@ -6883,6 +6951,7 @@ def main(page: ft.Page):
         else:
             return
 
+        discord_presence.set_page(active_tab if route_name == "home" else route_name)
         if content_area.content != target:
             home_skin_viewer.suspend()
             nav_page_transition_id[0] += 1
@@ -6968,6 +7037,9 @@ def main(page: ft.Page):
         ],
     )
     page.add(root_layout)
+    refresh_discord_player()
+    discord_presence.set_page(active_tab if is_initial_logged_in else "login")
+    discord_presence.start()
 
     if is_initial_logged_in:
         page.run_task(run_home_entrance_animation)

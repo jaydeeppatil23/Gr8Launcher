@@ -54,6 +54,9 @@ jobs:
       - name: Check release version selection
         run: python -m unittest discover -s tools -p test_release_plan.py
 
+      - name: Check screenshot publication
+        run: python -m unittest discover -s tools -p test_publish_screenshot.py
+
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
@@ -87,6 +90,9 @@ jobs:
       - name: Build portable ZIP and installer
         run: python tools/build_windows.py --version "$env:BUILD_VERSION"
 
+      - name: Capture launcher screenshot
+        run: python tools/capture_screenshot.py --output dist/gr8-launcher-home.png --checksum-file dist/SHA256SUMS.txt
+
       - name: Upload build downloads
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -95,9 +101,43 @@ jobs:
             dist/*.zip
             dist/*-setup.exe
             dist/SHA256SUMS.txt
+            dist/gr8-launcher-home.png
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+
+  preview:
+    if: >-
+      needs.build.result == 'success' && github.event_name == 'push' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Check out screenshot publisher
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+
+      - name: Download built preview
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-x64
+          path: dist
+
+      - name: Refresh README screenshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_COMMIT: ${{ needs.build.outputs.commit }}
+          SOURCE_BRANCH: ${{ github.event.repository.default_branch }}
+          BUILD_VERSION: ${{ needs.build.outputs.version }}
+        run: python tools/publish_screenshot.py preview
 
   release:
     if: >-
@@ -110,6 +150,14 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out screenshot publisher
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+
       - name: Download built packages
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -127,7 +175,7 @@ jobs:
           set -euo pipefail
           cd dist
           sha256sum --check SHA256SUMS.txt
-          assets=( *.zip *-setup.exe SHA256SUMS.txt )
+          assets=( *.zip *-setup.exe SHA256SUMS.txt gr8-launcher-home.png )
           existing_sha=$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq '.sha' 2>/dev/null || true)
           if [[ -n "$existing_sha" && "$existing_sha" != "$RELEASE_SHA" ]]; then
             echo "Tag $RELEASE_TAG points to another commit. Choose a new version in VERSION."
@@ -152,3 +200,10 @@ jobs:
             fi
             gh release create "$RELEASE_TAG" "${assets[@]}" "${options[@]}"
           fi
+
+      - name: Display screenshot in release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+        run: python tools/publish_screenshot.py release --tag "$RELEASE_TAG"
