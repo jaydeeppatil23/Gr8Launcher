@@ -1,5 +1,5 @@
 <div align="center">
-  <img src=".assets/icons/gr8_icon.png" alt="Gr8 Launcher logo" width="96">
+  <img src=".assets/titles/Gr8_title.png"" alt="Gr8 Launcher logo" width="250">
   <h1>Gr8 Launcher · Minecraft Java Edition Launcher</h1>
   <p><strong>Your worlds, your profiles, your style.</strong></p>
   <p>
