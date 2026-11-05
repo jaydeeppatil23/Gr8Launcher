@@ -47,7 +47,6 @@ the release appears under **Releases** with:
 - `Gr8Launcher-2.0.1-windows-x64-setup.exe`
 - `Gr8Launcher-2.0.1-windows-x64.zip`
 - `SHA256SUMS.txt`
-- `gr8-launcher-home.png`, also displayed in the release notes
 
 Choose a new, higher version for each release. Versions use `major.minor.patch`
 with an optional prerelease suffix, for example `2.2.0-rc.1`. The initial
@@ -85,8 +84,8 @@ It uses bundled artwork and skins, disables Discord presence and ambient motion,
 and waits for the home screen to render before saving the PNG. Local launcher
 accounts, settings, caches, and Minecraft installations are kept in a separate
 directory from this fixture. Capture failures fail the build, so a blank preview
-cannot replace the published image. The screenshot is included in the build
-artifact and `SHA256SUMS.txt`.
+cannot replace the published image. The screenshot is included in the Actions
+build artifact; `SHA256SUMS.txt` covers the downloadable ZIP and installer.
 
 After a successful push build on the repository's default branch (`main`),
 [publish_screenshot.py](../tools/publish_screenshot.py) updates the generated
@@ -97,8 +96,13 @@ or manual branch setup is needed. The branch contains only preview files, and
 its updates do not trigger another build. Older reruns are skipped when `main`
 has newer commits. GitHub's image cache may take a few minutes to show an update.
 
-Published releases attach the same PNG and embed its version-specific download
-URL in the release notes. Reruns replace only the section between
+Published releases archive the PNG on the generated `release-previews` branch
+and embed its immutable raw commit URL in the release notes. The screenshot
+does not appear in release Assets; those contain the ZIP, installer, and checksums.
+Older screenshot commits remain in the branch history, so later releases cannot
+change an earlier release's preview. Republishing with this workflow removes an
+old PNG attachment after the notes have been updated to the archived image.
+Reruns replace only the section between
 `<!-- gr8-launcher-preview:start -->` and `<!-- gr8-launcher-preview:end -->`;
 generated changelogs and handwritten notes outside those markers are preserved.
 Pull requests and manual preview runs capture images but do not update the README

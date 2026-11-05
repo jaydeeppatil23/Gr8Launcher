@@ -94,7 +94,7 @@ jobs:
         run: python tools/build_windows.py --version "$env:BUILD_VERSION"
 
       - name: Capture launcher screenshot
-        run: python tools/capture_screenshot.py --output dist/gr8-launcher-home.png --checksum-file dist/SHA256SUMS.txt
+        run: python tools/capture_screenshot.py --output dist/gr8-launcher-home.png
 
       - name: Upload build downloads
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -186,7 +186,7 @@ jobs:
           set -euo pipefail
           cd dist
           sha256sum --check SHA256SUMS.txt
-          assets=( *.zip *-setup.exe SHA256SUMS.txt gr8-launcher-home.png )
+          assets=( *.zip *-setup.exe SHA256SUMS.txt )
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
             update_options=( --draft=false --target "$RELEASE_SHA" )

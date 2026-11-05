@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 
 
 PREVIEW_BRANCH = "launcher-preview"
+RELEASE_PREVIEW_BRANCH = "release-previews"
 IMAGE_NAME = "gr8-launcher-home.png"
 START_MARKER = "<!-- gr8-launcher-preview:start -->"
 END_MARKER = "<!-- gr8-launcher-preview:end -->"
@@ -40,6 +41,8 @@ class GitHubAPI:
                                    "User-Agent": "Gr8Launcher-screenshot-workflow"})
         try:
             with urlopen(request, timeout=30) as response:
+                if response.status == 204:
+                    return None
                 return json.load(response)
         except HTTPError as error:
             if allow_missing and error.code == 404:
@@ -48,8 +51,7 @@ class GitHubAPI:
                                f"{error.read().decode('utf-8', errors='replace')}") from error
 
 
-def update_release_notes(body: str, repository: str, tag: str) -> str:
-    image_url = f"https://github.com/{repository}/releases/download/{quote(tag, safe='')}/{IMAGE_NAME}"
+def update_release_notes(body: str, image_url: str) -> str:
     block = (
         f"{START_MARKER}\n## Launcher preview\n\n"
         f"![Gr8 Launcher home screen]({image_url})\n\n"
@@ -103,15 +105,45 @@ def publish_preview(api: GitHubAPI, image: bytes, commit: str, source_branch: st
     return True
 
 
-def publish_release_notes(api: GitHubAPI, tag: str) -> None:
+def archive_release_image(api: GitHubAPI, tag: str, image: bytes) -> str:
+    reference = api.request("GET", f"git/ref/heads/{RELEASE_PREVIEW_BRANCH}", allow_missing=True)
+    blob = api.request("POST", "git/blobs", {
+        "content": base64.b64encode(image).decode("ascii"), "encoding": "base64",
+    })
+    tree = api.request("POST", "git/trees", {"tree": [
+        {"path": IMAGE_NAME, "mode": "100644", "type": "blob", "sha": blob["sha"]},
+        {"path": "source.json", "mode": "100644", "type": "blob",
+         "content": json.dumps({"tag": tag}, indent=2) + "\n"},
+    ]})
+    generated = api.request("POST", "git/commits", {
+        "message": f"Archive launcher screenshot for {tag}", "tree": tree["sha"],
+        "parents": [reference["object"]["sha"]] if reference else [],
+    })
+    if reference:
+        api.request("PATCH", f"git/refs/heads/{RELEASE_PREVIEW_BRANCH}",
+                    {"sha": generated["sha"], "force": False})
+    else:
+        api.request("POST", "git/refs", {
+            "ref": f"refs/heads/{RELEASE_PREVIEW_BRANCH}", "sha": generated["sha"],
+        })
+    # Pin the notes to this commit so future image updates cannot change them.
+    return f"https://raw.githubusercontent.com/{api.repository}/{generated['sha']}/{IMAGE_NAME}"
+
+
+def publish_release_notes(api: GitHubAPI, tag: str, image: bytes) -> None:
     release = api.request("GET", f"releases/tags/{quote(tag, safe='')}")
-    if not any(asset["name"] == IMAGE_NAME for asset in release["assets"]):
-        raise ValueError(f"Upload {IMAGE_NAME} before updating release notes.")
     body = release.get("body") or ""
-    updated = update_release_notes(body, api.repository, tag)
+    # Check the markers before making any repository changes.
+    update_release_notes(body, "preview")
+    image_url = archive_release_image(api, tag, image)
+    updated = update_release_notes(body, image_url)
     if updated != body:
         api.request("PATCH", f"releases/{release['id']}", {"body": updated})
-    print(f"Release {tag} displays its attached screenshot.")
+    # Migrate old releases only after their notes point to the archived image.
+    for asset in release["assets"]:
+        if asset["name"] == IMAGE_NAME:
+            api.request("DELETE", f"releases/assets/{asset['id']}")
+    print(f"Release {tag} displays its screenshot in the notes without a PNG download.")
 
 
 def main() -> None:
@@ -122,17 +154,18 @@ def main() -> None:
     preview.add_argument("--commit", default=os.environ.get("SOURCE_COMMIT", ""))
     preview.add_argument("--source-branch", default=os.environ.get("SOURCE_BRANCH", "main"))
     preview.add_argument("--version", default=os.environ.get("BUILD_VERSION", ""))
-    release = commands.add_parser("release", help="Embed the uploaded image in release notes")
+    release = commands.add_parser("release", help="Archive the image and embed it in release notes")
     release.add_argument("--tag", required=True)
+    release.add_argument("--image", type=Path, default=Path("dist") / IMAGE_NAME)
     args = parser.parse_args()
     api = GitHubAPI()
+    image = args.image.read_bytes()
+    if not image.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ValueError("The build preview must be a PNG image.")
     if args.command == "preview":
-        image = args.image.read_bytes()
-        if not image.startswith(b"\x89PNG\r\n\x1a\n"):
-            raise ValueError("The build preview must be a PNG image.")
         publish_preview(api, image, args.commit, args.source_branch, args.version)
     else:
-        publish_release_notes(api, args.tag)
+        publish_release_notes(api, args.tag, image)
 
 
 if __name__ == "__main__":
