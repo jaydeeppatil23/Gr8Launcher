@@ -54,6 +54,9 @@ jobs:
       - name: Check release version selection
         run: python -m unittest discover -s tools -p test_release_plan.py
 
+      - name: Check remote tag validation
+        run: python -m unittest discover -s tools -p test_release_tag.py
+
       - name: Check screenshot publication
         run: python -m unittest discover -s tools -p test_publish_screenshot.py
 
@@ -164,6 +167,13 @@ jobs:
           name: windows-x64
           path: dist
 
+      - name: Verify remote release tag
+        id: release_tag
+        env:
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          RELEASE_SHA: ${{ needs.build.outputs.commit }}
+        run: python tools/check_release_tag.py
+
       - name: Publish GitHub release
         shell: bash
         env:
@@ -171,16 +181,12 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.build.outputs.tag }}
           RELEASE_SHA: ${{ needs.build.outputs.commit }}
+          EXISTING_TAG_SHA: ${{ steps.release_tag.outputs.existing_sha }}
         run: |
           set -euo pipefail
           cd dist
           sha256sum --check SHA256SUMS.txt
           assets=( *.zip *-setup.exe SHA256SUMS.txt gr8-launcher-home.png )
-          existing_sha=$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq '.sha' 2>/dev/null || true)
-          if [[ -n "$existing_sha" && "$existing_sha" != "$RELEASE_SHA" ]]; then
-            echo "Tag $RELEASE_TAG points to another commit. Choose a new version in VERSION."
-            exit 1
-          fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
             update_options=( --draft=false --target "$RELEASE_SHA" )
@@ -192,7 +198,7 @@ jobs:
             gh release edit "$RELEASE_TAG" "${update_options[@]}"
           else
             options=( --target "$RELEASE_SHA" --generate-notes --title "Gr8 Launcher ${RELEASE_TAG#v}" )
-            if [[ -n "$existing_sha" ]]; then
+            if [[ -n "$EXISTING_TAG_SHA" ]]; then
               options+=( --verify-tag )
             fi
             if [[ "$RELEASE_TAG" == *-* ]]; then

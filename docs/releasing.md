@@ -18,7 +18,7 @@ Minecraft still requires a suitable Java runtime.
 | Push a tag such as `v2.2.0` manually | Build and publish that tagged version; manual tags are also supported. |
 
 The workflow is [release.yml](../.github/workflows/release.yml). Its release and preview jobs
-uses GitHub's built-in token with `contents: write`; you do not need to create a
+use GitHub's built-in token with `contents: write`; you do not need to create a
 personal access token or add a repository secret.
 
 ## Publish a release
@@ -59,6 +59,16 @@ version and commit, and preserves its existing notes while refreshing the genera
 launcher preview section. The workflow checks that an
 existing tag points to the built commit before updating its release. Publication
 runs are serialized so pushes cannot race to publish the same version.
+
+Before uploading, [check_release_tag.py](../tools/check_release_tag.py) queries
+the exact remote Git tag. A missing tag is allowed and will be created at the
+built commit. Existing lightweight and annotated tags must resolve to that commit;
+a real mismatch reports both commit SHAs. Connection and authentication failures
+stop publication with their own errors.
+
+If an earlier run incorrectly reported a conflict for a tag that does not exist,
+keep the intended version in `VERSION` and commit/push the workflow fix. The new
+run uses the corrected check; rerunning the old commit uses its old workflow.
 
 To try the pipeline before publishing, open **Actions → Build and release Windows
 packages → Run workflow**. Select a branch and enter a version such as
