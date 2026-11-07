@@ -708,7 +708,6 @@ class InstallationProgressTracker:
 		self.pass_num = 0
 		self.stage_name = "Setup"
 		self.highest_ratio = 0.0
-		self.current_ratio = 0.0
 		self.current_stage_val = 0
 		self.current_stage_max = 0
 		self.start_time = None
@@ -781,20 +780,16 @@ class InstallationProgressTracker:
 		return self.get_display_state()
 
 	def get_display_state(self) -> tuple[float | None, str, str]:
-		now = time.monotonic()
 		with self._lock:
 			if self.is_finished:
 				return 1.0, "Installation complete • 100%", ""
+			download_label = f"Downloading {self.stage_name if self.stage_name != 'Setup' else 'Minecraft'}"
 			if self.current_stage_max <= 0:
-				return None, self.last_status, ""
+				status_text = f"{download_label}..." if self.last_status.startswith("Download ") else self.last_status
+				return None, status_text, ""
 
-			diff = self.highest_ratio - self.current_ratio
-			if abs(diff) < 0.001:
-				self.current_ratio = self.highest_ratio
-			else:
-				self.current_ratio += diff * 0.35
-
-			render_ratio = min(0.99, max(0.0, self.current_ratio))
+			# Reading progress must not advance it; the client animates the fill.
+			render_ratio = min(0.99, max(0.0, self.highest_ratio))
 
 			eta_text = ""
 			if self.ema_speed and self.ema_speed > 0.1:
@@ -813,8 +808,7 @@ class InstallationProgressTracker:
 					f"Downloading {self.stage_name} ({val_disp:,} / {max_disp:,}) • {pct_text}"
 				)
 			elif self.last_status.startswith("Download "):
-				fname = self.last_status[9:].strip()
-				status_text = f"Downloading {fname} • {pct_text}"
+				status_text = f"{download_label} • {pct_text}"
 			else:
 				status_text = f"{self.last_status} • {pct_text}"
 
@@ -823,7 +817,6 @@ class InstallationProgressTracker:
 	def finish(self):
 		with self._lock:
 			self.is_finished = True
-			self.current_ratio = 1.0
 			self.highest_ratio = 1.0
 			self.last_eta = ""
 

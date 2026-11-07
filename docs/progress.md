@@ -14,6 +14,18 @@ required dependencies. Verification and installation return to the animated
 state. Brief operations finish before the default 180 ms display delay, avoiding
 flashes during cached lookups and quick local changes.
 
+Minecraft installation and repair publish tracker snapshots through one UI loop.
+Per-file callbacks stay in the logs and cannot reset measured progress to the
+animated state or replace the stage label with an asset hash.
+Measured fills animate on the client over 240 ms, retargeting smoothly when new
+counts arrive. Progress snapshots retain the measured value regardless of how
+often callbacks or UI reads occur. Returning to idle cancels the animation.
+While measured work is incomplete, a 90px feathered gradient beam moves from left
+to right inside the gold fill, including when counts pause. It reuses v1.2.0's
+gradient shape with a navy tint. Each sweep animates on the client; the launcher
+only resets it between sweeps. Unknown totals, completion, idle, and shutdown
+stop the shimmer.
+
 Concurrent tasks retain separate handles. The highest priority is displayed,
 with the newest task winning ties and a `+N more` indicator for other visible
 tasks. Finishing the displayed operation resumes the next one. When all work
@@ -80,6 +92,8 @@ are not included in a clone or required by the GitHub build.
 
 ```powershell
 python -B -m unittest temp.test_ui_progress temp.test_ui_mods temp.test_mod_services
+python -B temp/check_progress_motion.py
+python -B temp/check_progress_motion.py --shimmer-only
 py -3.14 -B temp/check_mods_ui.py --progress-only
 ```
 
@@ -90,3 +104,7 @@ verifies [search loading](screenshots/gr8-launcher-progress-fetch.png),
 [navigation during a download](screenshots/gr8-launcher-progress-navigation.png),
 [idle restoration](screenshots/gr8-launcher-progress-idle.png), and
 [skin refresh](screenshots/gr8-launcher-progress-skin.png).
+The motion check samples rendered fill positions at 1100x650 and 1366x768,
+including interrupted transitions, unknown progress, and immediate idle reset.
+The shimmer check verifies moving beams at a steady percentage, clipping to the
+fill, left-to-right movement, gradient fading, and stopping at completion.

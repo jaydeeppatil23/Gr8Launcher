@@ -85,6 +85,140 @@ def track_progress(host: ProgressHost | None, label: str, **kwargs) -> ProgressT
     return host.begin(label, **kwargs) if host else ProgressTask(None)
 
 
+class _SmoothProgressBar(ft.Container):
+    """Animate measured changes on the client, independently of callback timing."""
+
+    TRANSITION_MS = 240
+    BEAM_WIDTH = 90
+    BEAM_SPEED = 320  # Pixels per second, matching the v1.2.0 shimmer.
+
+    def __init__(self, page):
+        self._page = page
+        self._value: float | None = 0.0
+        self._track_width = 0.0
+        self._closed = False
+        self._shimmer_active = False
+        self._shimmer_generation = 0
+        self._shimmer_future = None
+        self._shimmer = ft.Container(
+            left=-self.BEAM_WIDTH, top=0, bottom=0, width=self.BEAM_WIDTH,
+            opacity=0, visible=False,
+            # Reuse v1.2.0's feathered beam, tinted with the launcher background.
+            gradient=ft.LinearGradient(
+                begin=ft.Alignment.CENTER_LEFT, end=ft.Alignment.CENTER_RIGHT,
+                colors=[ft.Colors.with_opacity(alpha, "#182842")
+                        for alpha in (0.0, 0.08, 0.22, 0.40, 0.22, 0.08, 0.0)],
+                stops=[0.0, 0.20, 0.38, 0.50, 0.62, 0.80, 1.0],
+            ),
+            animate_position=ft.Animation(0, ft.AnimationCurve.LINEAR),
+        )
+        self._fill = ft.Container(
+            bgcolor="#f5de9a", border_radius=5,
+            content=ft.Stack([self._shimmer], fit=ft.StackFit.EXPAND),
+            clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+            # Slide a full-width fill under the clipped track. Fractional offsets
+            # stay accurate across window resizes without measuring pixel widths.
+            offset=ft.Offset(-1, 0),
+            animate_offset=ft.Animation(0, ft.AnimationCurve.EASE_OUT_CUBIC),
+        )
+        self._unknown = ft.ProgressBar(
+            value=None, bar_height=6, color="#f5de9a",
+            bgcolor=ft.Colors.TRANSPARENT, border_radius=5, visible=False,
+        )
+        self._semantics = ft.Semantics(
+            label="Progress", value="0%", container=True, exclude_semantics=True,
+            content=ft.Stack([self._fill, self._unknown], fit=ft.StackFit.EXPAND,
+                             on_size_change=self._measure_width),
+        )
+        super().__init__(
+            height=6, bgcolor=ft.Colors.BLACK_26, border_radius=5,
+            clip_behavior=ft.ClipBehavior.ANTI_ALIAS, content=self._semantics,
+        )
+
+    @property
+    def value(self) -> float | None:
+        return self._value
+
+    @value.setter
+    def value(self, value: float | None) -> None:
+        value = _ratio(value)
+        if value == self._value:
+            return
+        # Mode changes and resets must cancel an old animation immediately.
+        animate = value is not None and value > 0 and (
+            self._value is None or value >= self._value
+        )
+        self._fill.animate_offset = ft.Animation(
+            self.TRANSITION_MS if animate else 0, ft.AnimationCurve.EASE_OUT_CUBIC,
+        )
+        self._fill.offset = ft.Offset((value if value is not None else 0) - 1, 0)
+        self._fill.opacity = 0 if value is None else 1
+        self._unknown.visible = value is None
+        self._semantics.value = "Loading" if value is None else f"{value:.0%}"
+        restart = value is not None and self._value is not None and value < self._value
+        self._value = value
+        self._sync_shimmer(restart=restart)
+
+    async def _measure_width(self, event) -> None:
+        width = max(0.0, float(event.width))
+        if self._closed or width == self._track_width:
+            return
+        self._track_width = width
+        self._sync_shimmer(restart=True)
+        try:
+            self.update()
+        except RuntimeError:
+            pass
+
+    def _sync_shimmer(self, *, restart: bool = False) -> None:
+        active = not self._closed and self._track_width > 0 and self._value is not None and 0 < self._value < 1
+        if active == self._shimmer_active and not restart:
+            return
+        self._shimmer_generation += 1
+        self._shimmer_active = active
+        if self._shimmer_future is not None:
+            self._shimmer_future.cancel()
+            self._shimmer_future = None
+        self._shimmer.visible = active
+        self._reset_beam()
+        if active:
+            self._shimmer_future = self._page.run_task(self._play_shimmer, self._shimmer_generation)
+
+    def _reset_beam(self) -> None:
+        self._shimmer.opacity = 0
+        self._shimmer.animate_position = ft.Animation(0, ft.AnimationCurve.LINEAR)
+        # The fill is translated under the track; start just outside its visible left edge.
+        self._shimmer.left = self._track_width * (1 - (self._value or 0)) - self.BEAM_WIDTH
+
+    async def _play_shimmer(self, generation: int) -> None:
+        while self._shimmer_active and generation == self._shimmer_generation:
+            # Commit the hidden reset before starting another forward sweep.
+            await asyncio.sleep(0.06)
+            if not self._shimmer_active or generation != self._shimmer_generation:
+                return
+            distance = self._track_width - self._shimmer.left
+            duration_ms = max(700, min(2200, int(distance / self.BEAM_SPEED * 1000)))
+            self._shimmer.animate_position = ft.Animation(duration_ms, ft.AnimationCurve.LINEAR)
+            self._shimmer.opacity = 1
+            self._shimmer.left = self._track_width
+            try:
+                self._shimmer.update()
+            except RuntimeError:
+                return
+            await asyncio.sleep(duration_ms / 1000)
+            if not self._shimmer_active or generation != self._shimmer_generation:
+                return
+            self._reset_beam()
+            try:
+                self._shimmer.update()
+            except RuntimeError:
+                return
+
+    def close(self) -> None:
+        self._closed = True
+        self._sync_shimmer()
+
+
 class ProgressHost(ft.Container):
     """Display the highest-priority operation, retaining every active task.
 
@@ -111,8 +245,7 @@ class ProgressHost(ft.Container):
                                    expand=True, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
         self.detail_text = ft.Text("", size=12, color="#929db1", text_align=ft.TextAlign.RIGHT,
                                    max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
-        self.bar = ft.ProgressBar(value=0.0, bar_height=6, color="#f5de9a",
-                                  bgcolor=ft.Colors.BLACK_26, border_radius=5, expand=True)
+        self.bar = _SmoothProgressBar(page)
         self.text_row = ft.Row([self.status_text, self.detail_text], spacing=12,
                                height=18, vertical_alignment=ft.CrossAxisAlignment.CENTER, visible=show_text)
         super().__init__(padding=ft.Padding.only(left=20, right=24, top=4, bottom=8),
@@ -229,3 +362,4 @@ class ProgressHost(ft.Container):
         with self._lock:
             self._closed = True
             self._operations.clear()
+        self.bar.close()

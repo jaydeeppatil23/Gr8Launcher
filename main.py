@@ -2887,8 +2887,6 @@ def main(page: ft.Page):
             status_str = str(status)
             add_log_line(f"[*] {status_str}")
             tracker.on_status(status_str)
-            if not state.launcher_log_state.get("cancelling"):
-                update_launch_progress(status_str, value=None, eta="")
             lower = status_str.lower()
             if (
                 "download" in lower
@@ -2912,6 +2910,11 @@ def main(page: ft.Page):
                     if not state.launcher_log_state.get("game_started"):
                         discord_presence.prepare_game(target)
                     refresh_launch_button()
+
+            # During installation, only the UI loop publishes tracker snapshots.
+            # Per-file statuses must not reset measured progress to indeterminate.
+            if not state.launcher_log_state.get("downloading") and not state.launcher_log_state.get("cancelling"):
+                update_launch_progress(status_str, value=None, eta="")
 
         def set_progress_maximum(maximum):
             tracker.on_max(maximum)
@@ -3997,9 +4000,8 @@ def main(page: ft.Page):
         def report_status(status):
             status_str = str(status)
             add_log_line(f"[*] {status_str}")
+            # Keep raw file statuses in the log; the UI loop renders progress.
             tracker.on_status(status_str)
-            if not state.launcher_log_state.get("cancelling"):
-                update_launch_progress(status_str, value=None, eta="")
 
         def set_progress_maximum(maximum):
             tracker.on_max(maximum)
