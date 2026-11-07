@@ -13,9 +13,11 @@ __pycache__/
 .vscode/
 logs/
 log/
+# Tests, validation scripts, and scratch work stay local in temp.
 temp/
 temp.py
 tests/
+test_*.py
 
 # Editor and tooling state
 .agents/

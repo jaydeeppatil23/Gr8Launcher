@@ -30,7 +30,7 @@
 | Feature | What you can do |
 | --- | --- |
 | **Minecraft versions and mod loaders** | Install and launch vanilla releases, snapshots, Fabric, Forge, NeoForge, and Quilt. Use the latest-release shortcut or pin a profile to a specific version. |
-| **Profiles and instances** | Keep game folders separate, customize icons and banners, reorder profiles, and import installations from the official Minecraft launcher or discover local instances while preserving version pins and game folders. |
+| **Profiles and instances** | Keep game folders separate, customize icons, reorder profiles, and import installations from the official Minecraft launcher or discover local instances while preserving version pins and game folders. |
 | **Ely.by accounts and skins** | Sign in to Ely.by, sync your skin, rotate Classic/Steve and Slim/Alex previews, and reuse cached skins. A bundled Java skin bridge applies custom skins in-game. |
 | **Java and performance settings** | Choose a Java executable, adjust RAM within detected system limits, set profile JVM arguments, and configure game resolution, fullscreen, and launcher behavior. |
 | **Download progress and game logs** | Follow installation progress and download speed, cancel downloads, and inspect captured game output from the launcher. Windows launches avoid an extra Java console window. |
@@ -138,17 +138,26 @@ Gr8Launcher/
 ├── skins.py               # Skin caching, rendering, and Java companion setup
 ├── skin_viewer.py         # Interactive player skin rendering and movement
 ├── home_skin_viewer.py    # Home-screen player model and head tracking
-├── banners.py             # Profile artwork and banner caching
 ├── ui_profiles.py         # Profile cards and ordering
 ├── ui_dialogs.py          # Profile dialogs
 ├── ui_motion.py           # Navigation and entrance animations
 ├── .assets/               # Fonts, icons, banners, and default skins
 ├── docs/screenshots/      # Bundled launcher preview for offline viewing
-├── tools/gr8-skin-bridge/  # Bundled Java agent, source, and build helper
+├── tools/                 # Build, release, and Java skin bridge utilities
+├── temp/                  # AI tests and local scratch work
 └── requirements.txt       # Python dependencies
 ~~~
 
 </details>
+
+Keep all test scripts, validation scripts, and scratch output local in the
+ignored `temp/` directory. They are not included in a clone or required by the
+GitHub build. If you have these local test files, run them from the project root
+after installing the build dependencies:
+
+~~~powershell
+python -B -m unittest temp.test_release_plan temp.test_release_tag temp.test_publish_screenshot temp.test_ui_toasts
+~~~
 
 ## Contributing and community
 

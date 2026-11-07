@@ -1,5 +1,5 @@
 """Gr8 Launcher - Skin Engine
-Handles Minecraft skin rendering (3d/front/back),
+Handles Minecraft skin rendering (3D previews and head avatars),
 validation of 64x64 and legacy 64x32 skin formats, Ely.by skin synchronization,
 local skin preset library, and automatic management of authlib-injector.jar.
 """
@@ -12,7 +12,6 @@ import http.server
 import io
 import json
 import math
-import os
 import shutil
 import socket
 import sys
@@ -187,31 +186,6 @@ def ensure_skin_bridge() -> Path | None:
     return target_jar if target_jar.is_file() else None
 
 
-def validate_skin_file(file_path: Path | str) -> tuple[bool, str, tuple[int, int] | None]:
-    """Validates that a file is a valid Minecraft skin (PNG format, 64x64 or 64x32)."""
-    target = Path(file_path)
-    if not target.is_file():
-        return False, "File does not exist.", None
-    if target.stat().st_size > 2 * 1024 * 1024:
-        return False, "Skin file is too large (must be under 2MB).", None
-
-    try:
-        with Image.open(target) as img:
-            format_name = (img.format or "").upper()
-            if format_name != "PNG":
-                return False, f"File format is {format_name}; Minecraft skins must be PNG.", None
-            width, height = img.size
-            if (width, height) not in ((64, 64), (64, 32)):
-                return (
-                    False,
-                    f"Invalid dimensions {width}x{height}. Minecraft skins must be 64x64 or 64x32.",
-                    (width, height),
-                )
-            return True, "Valid Minecraft skin.", (width, height)
-    except Exception as error:
-        return False, f"Could not read image: {error}", None
-
-
 def ensure_64x64(skin: Image.Image) -> Image.Image:
     """Converts a legacy 64x32 skin to modern 64x64 format by mirroring right limbs."""
     if skin.size == (64, 64):
@@ -274,114 +248,6 @@ def get_default_skin_bytes(model: str = "classic") -> bytes:
             pass
     buf = io.BytesIO()
     get_default_skin(model).save(buf, format="PNG")
-    return buf.getvalue()
-
-
-def render_character(
-    skin: Image.Image,
-    view: str = "front",
-    model: str = "classic",
-    scale: int = 8,
-) -> Image.Image:
-    """Renders a pixel-perfect 2D character preview (front or back) scaled by `scale`."""
-    skin_64 = ensure_64x64(skin)
-    is_slim = model.lower() == "slim"
-
-    canvas = Image.new("RGBA", (16, 32), (0, 0, 0, 0))
-
-    if view.lower() == "front":
-        # 1. Head & Hat (8x8) at (4, 0)
-        canvas.alpha_composite(skin_64.crop((8, 8, 16, 16)), (4, 0))
-        canvas.alpha_composite(skin_64.crop((40, 8, 48, 16)), (4, 0))
-
-        # 2. Torso & Jacket (8x12) at (4, 8)
-        canvas.alpha_composite(skin_64.crop((20, 20, 28, 32)), (4, 8))
-        canvas.alpha_composite(skin_64.crop((20, 36, 28, 48)), (4, 8))
-
-        # 3. Right Arm & Sleeve (viewer's left)
-        rx = 1 if is_slim else 0
-        r_box = (44, 20, 47, 32) if is_slim else (44, 20, 48, 32)
-        r_over = (44, 36, 47, 48) if is_slim else (44, 36, 48, 48)
-        canvas.alpha_composite(skin_64.crop(r_box), (rx, 8))
-        canvas.alpha_composite(skin_64.crop(r_over), (rx, 8))
-
-        # 4. Left Arm & Sleeve (viewer's right)
-        lx = 12
-        l_box = (36, 52, 39, 64) if is_slim else (36, 52, 40, 64)
-        l_over = (52, 52, 55, 64) if is_slim else (52, 52, 56, 64)
-        canvas.alpha_composite(skin_64.crop(l_box), (lx, 8))
-        canvas.alpha_composite(skin_64.crop(l_over), (lx, 8))
-
-        # 5. Right Leg & Pants (viewer's left) at (4, 20)
-        canvas.alpha_composite(skin_64.crop((4, 20, 8, 32)), (4, 20))
-        canvas.alpha_composite(skin_64.crop((4, 36, 8, 48)), (4, 20))
-
-        # 6. Left Leg & Pants (viewer's right) at (8, 20)
-        canvas.alpha_composite(skin_64.crop((20, 52, 24, 64)), (8, 20))
-        canvas.alpha_composite(skin_64.crop((4, 52, 8, 64)), (8, 20))
-
-    else:
-        # Back view (character rotated 180 degrees)
-        # 1. Head Back (8x8) at (4, 0)
-        canvas.alpha_composite(skin_64.crop((24, 8, 32, 16)), (4, 0))
-        canvas.alpha_composite(skin_64.crop((56, 8, 64, 16)), (4, 0))
-
-        # 2. Torso Back (8x12) at (4, 8)
-        canvas.alpha_composite(skin_64.crop((32, 20, 40, 32)), (4, 8))
-        canvas.alpha_composite(skin_64.crop((32, 36, 40, 48)), (4, 8))
-
-        # 3. Left Arm Back (viewer's left)
-        lx = 1 if is_slim else 0
-        l_box = (43, 52, 46, 64) if is_slim else (44, 52, 48, 64)
-        l_over = (59, 52, 62, 64) if is_slim else (60, 52, 64, 64)
-        canvas.alpha_composite(skin_64.crop(l_box), (lx, 8))
-        canvas.alpha_composite(skin_64.crop(l_over), (lx, 8))
-
-        # 4. Right Arm Back (viewer's right)
-        rx = 12
-        r_box = (51, 20, 54, 32) if is_slim else (52, 20, 56, 32)
-        r_over = (51, 36, 54, 48) if is_slim else (52, 36, 56, 48)
-        canvas.alpha_composite(skin_64.crop(r_box), (rx, 8))
-        canvas.alpha_composite(skin_64.crop(r_over), (rx, 8))
-
-        # 5. Left Leg Back (viewer's left) at (4, 20)
-        canvas.alpha_composite(skin_64.crop((28, 52, 32, 64)), (4, 20))
-        canvas.alpha_composite(skin_64.crop((12, 52, 16, 64)), (4, 20))
-
-        # 6. Right Leg Back (viewer's right) at (8, 20)
-        canvas.alpha_composite(skin_64.crop((12, 20, 16, 32)), (8, 20))
-        canvas.alpha_composite(skin_64.crop((12, 36, 16, 48)), (8, 20))
-
-    target_size = (16 * scale, 32 * scale)
-    return canvas.resize(target_size, Image.Resampling.NEAREST)
-
-
-def render_character_bytes(
-    skin_input: Path | str | bytes | Image.Image,
-    view: str = "front",
-    model: str = "classic",
-    scale: int = 8,
-) -> bytes:
-    """Renders a character preview and returns the PNG encoded bytes."""
-    img = None
-    if isinstance(skin_input, Image.Image):
-        img = skin_input
-    elif isinstance(skin_input, (str, Path)):
-        path = Path(skin_input)
-        if path.is_file():
-            img = Image.open(path)
-    elif isinstance(skin_input, (bytes, bytearray)):
-        img = Image.open(io.BytesIO(skin_input))
-
-    if img is None:
-        img = get_default_skin(model)
-
-    if view.lower() == "3d":
-        return render_3d_skin_bytes(img, model=model)
-
-    rendered = render_character(img, view=view, model=model, scale=scale)
-    buf = io.BytesIO()
-    rendered.save(buf, format="PNG")
     return buf.getvalue()
 
 

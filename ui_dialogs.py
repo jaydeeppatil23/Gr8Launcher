@@ -174,6 +174,10 @@ class ProfileDialogHost(ft.Container):
             if control._i in visited:
                 continue
             visited.add(control._i)
+            # Flet supplies immutable icons for dropdowns after mounting.
+            # Their mutable parents already inherit the modal's disabled state.
+            if hasattr(control, "_frozen"):
+                continue
             if control._i not in self._disabled_states:
                 self._disabled_states[control._i] = (control, control.disabled)
                 if not control.disabled:

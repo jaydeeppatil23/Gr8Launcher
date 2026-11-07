@@ -49,6 +49,10 @@ notification_state: Dict[str, Any] = {
     "epoch": 0,
 }
 
+progress_state: Dict[str, Any] = {
+    "host": None,
+}
+
 selected_theme: Dict[str, Any] = {
     "name": "Dark",
 }

@@ -1,11 +1,11 @@
 import asyncio
 import ctypes
 import hashlib
+import heapq
 import json
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import threading
 import time
@@ -15,6 +15,7 @@ from pathlib import Path
 import requests
 import minecraft_launcher_lib
 import ely_auth
+from mod_services import ModManager
 from storage import (
 	load_pending_installations,
 	save_pending_installations,
@@ -28,7 +29,6 @@ from skins import (
 	render_head_avatar_bytes,
 	sync_playerdata_uuids,
 )
-import banners
 
 
 minecraft_directory = minecraft_launcher_lib.utils.get_minecraft_directory()
@@ -63,73 +63,6 @@ def get_system_memory_mb() -> int:
 		return max(256, page_size * page_count // (1024 * 1024))
 	except (AttributeError, OSError, TypeError, ValueError):
 		return 8192
-
-
-def remove_installed_version(version_id: str) -> bool:
-	if not version_id or Path(version_id).name != version_id:
-		return False
-
-	version_root = Path(minecraft_directory) / "versions"
-	version_path = version_root / version_id
-	loose_version_files = (
-		version_root / f"{version_id}.json",
-		version_root / f"{version_id}.jar",
-	)
-	try:
-		if version_path.resolve().parent != version_root.resolve():
-			return False
-		if any(path.resolve().parent != version_root.resolve() for path in loose_version_files):
-			return False
-	except OSError:
-		return False
-
-	profile_updates = []
-	for filename in ("launcher_profiles.json", "launch_profiles.json"):
-		profiles_path = Path(minecraft_directory) / filename
-		if not profiles_path.exists():
-			continue
-		try:
-			document = json.loads(profiles_path.read_text(encoding="utf-8"))
-			if not isinstance(document, dict):
-				return False
-			profiles = document.get("profiles", {})
-			if not isinstance(profiles, dict):
-				return False
-			updated_profiles = {
-				profile_id: profile
-				for profile_id, profile in profiles.items()
-				if not isinstance(profile, dict)
-				or profile.get("lastVersionId") != version_id
-			}
-			if len(updated_profiles) != len(profiles):
-				document["profiles"] = updated_profiles
-				profile_updates.append((profiles_path, document))
-		except (OSError, UnicodeError, json.JSONDecodeError):
-			return False
-
-	temporary_files = []
-	try:
-		for profiles_path, document in profile_updates:
-			temporary_file = profiles_path.with_suffix(profiles_path.suffix + ".tmp")
-			temporary_file.write_text(json.dumps(document, indent=2), encoding="utf-8")
-			temporary_files.append((temporary_file, profiles_path))
-		for temporary_file, profiles_path in temporary_files:
-			temporary_file.replace(profiles_path)
-		if version_path.exists():
-			shutil.rmtree(version_path)
-		for version_file in loose_version_files:
-			version_file.unlink(missing_ok=True)
-		if version_path.exists() or any(path.exists() for path in loose_version_files):
-			return False
-	except (OSError, TypeError, ValueError):
-		for temporary_file, _ in temporary_files:
-			try:
-				temporary_file.unlink(missing_ok=True)
-			except OSError:
-				pass
-		return False
-	invalidate_installed_versions_cache()
-	return True
 
 
 def generate_offline_uuid(player_name: str) -> str:
@@ -523,13 +456,9 @@ def import_external_installations(
 			continue
 
 		icon_data = str(external_profile.get("icon") or "").strip()
-		custom_banner_path = None
 		custom_icon_path = None
 		if icon_data.startswith("data:image/") or len(icon_data) > 100:
-			# Decode base64 icon and save it as custom icon and banner
-			custom_banner_path = banners.save_base64_icon_as_banner(f"minecraft-launcher:{external_id}", icon_data)
-			if not custom_banner_path:
-				custom_banner_path = banners.save_base64_icon_as_banner(external_id, icon_data)
+			# Decode the imported profile's base64 icon.
 			custom_icon_path = save_base64_profile_icon(f"minecraft-launcher:{external_id}", icon_data)
 			if not custom_icon_path:
 				custom_icon_path = save_base64_profile_icon(external_id, icon_data)
@@ -554,7 +483,6 @@ def import_external_installations(
 					"instance_name": str(external_profile.get("instance_name", "")),
 					"game_directory": ext_game_dir,
 					"icon": custom_icon_path or "",
-					"custom_banner": custom_banner_path or "",
 				}
 			)
 			handled_ids.add(external_id)
@@ -568,8 +496,6 @@ def import_external_installations(
 def _detect_instance_configuration(
 	folder: Path,
 	installed_by_id: dict[str, dict[str, str]],
-	installed_ids: set[str],
-	version_catalog: list[dict],
 ) -> dict[str, str] | None:
 	"""Discover only configurations supported by metadata or unambiguous evidence."""
 	metadata = {}
@@ -596,9 +522,13 @@ def _detect_instance_configuration(
 
 	configuration = dict(metadata)
 	logs_dir = folder / "logs"
-	log_files = [logs_dir / "latest.log"]
+	latest_log = logs_dir / "latest.log"
+	log_files = [latest_log]
 	if logs_dir.is_dir():
-		log_files.extend(sorted(logs_dir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)[:3])
+		log_files.extend(
+			path for path in heapq.nlargest(3, logs_dir.glob("*.log"), key=lambda p: p.stat().st_mtime)
+			if path != latest_log
+		)
 	for log_file in log_files:
 		try:
 			with log_file.open(encoding="utf-8", errors="replace") as stream:
@@ -632,13 +562,15 @@ def _detect_instance_configuration(
 
 	# An exact installed ID in the folder name is useful; partial names are not pins.
 	if not configuration.get("minecraft_version"):
+		folder_version = folder.name.replace("_", ".")
+		folded_folder_version = folder_version.casefold()
 		candidates = [info for version_id, info in installed_by_id.items()
-					  if version_id.casefold() == folder.name.replace("_", ".").casefold()]
+					  if version_id.casefold() == folded_folder_version]
 		if len(candidates) == 1:
 			for key in ("minecraft_version", "loader", "loader_version"):
 				configuration.setdefault(key, candidates[0].get(key, ""))
 		else:
-			match = re.search(r"(?<![0-9.])([0-9]+\.[0-9]+(?:\.[0-9]+)?)(?![0-9.])", folder.name.replace("_", "."))
+			match = re.search(r"(?<![0-9.])([0-9]+\.[0-9]+(?:\.[0-9]+)?)(?![0-9.])", folder_version)
 			if match:
 				configuration["minecraft_version"] = match.group(1)
 
@@ -688,7 +620,6 @@ def discover_local_instances(
 
 	existing_ids = {str(item["id"]) for item in installations}
 	installed_by_id = {v["version_id"]: v for v in installed_versions}
-	installed_ids = set(installed_by_id.keys())
 	version_types = {v["id"]: v.get("type") for v in version_catalog}
 
 	updated_installations = list(installations)
@@ -706,7 +637,7 @@ def discover_local_instances(
 			continue
 
 		detected = _detect_instance_configuration(
-			folder, installed_by_id, installed_ids, version_catalog
+			folder, installed_by_id
 		)
 		if not detected:
 			continue
@@ -741,83 +672,37 @@ def discover_local_instances(
 	return updated_installations, changed
 
 
-def resolve_installation_files(target: dict, mc_dir: str | Path) -> int:
-	mc_dir = str(mc_dir)
-	version_id = target.get("minecraft_version") or target.get("version_id", "")
-	v_dir = os.path.join(mc_dir, "versions", version_id)
-	v_json_path = os.path.join(v_dir, f"{version_id}.json")
-	vdata = None
-
-	if os.path.isfile(v_json_path):
-		try:
-			with open(v_json_path, "r", encoding="utf-8") as f:
-				vdata = json.load(f)
-		except Exception:
-			pass
-
-	if not vdata:
-		try:
-			manifest_url = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
-			r = requests.get(manifest_url, timeout=4).json()
-			entry = next((v for v in r.get("versions", []) if v.get("id") == version_id), None)
-			if entry and "url" in entry:
-				vdata = requests.get(entry["url"], timeout=4).json()
-				os.makedirs(v_dir, exist_ok=True)
-				with open(v_json_path, "w", encoding="utf-8") as f:
-					json.dump(vdata, f)
-		except Exception:
-			pass
-
-	if not vdata:
-		return 0
-
-	libs_count = len(vdata.get("libraries", []))
-	assets_count = 0
-	asset_info = vdata.get("assetIndex")
-	if asset_info:
-		asset_id = vdata.get("assets", asset_info.get("id", ""))
-		asset_dir = os.path.join(mc_dir, "assets", "indexes")
-		asset_local = os.path.join(asset_dir, f"{asset_id}.json")
-		if os.path.isfile(asset_local):
-			try:
-				with open(asset_local, "r", encoding="utf-8") as f:
-					assets_count = len(json.load(f).get("objects", {}))
-			except Exception:
-				pass
-		else:
-			try:
-				aindex = requests.get(asset_info["url"], timeout=4).json()
-				assets_count = len(aindex.get("objects", {}))
-				os.makedirs(asset_dir, exist_ok=True)
-				with open(asset_local, "w", encoding="utf-8") as f:
-					json.dump(aindex, f)
-			except Exception:
-				pass
-
-	runtime_count = 0
-	if "javaVersion" in vdata:
-		comp = vdata["javaVersion"].get("component", "java-runtime-delta")
-		try:
-			plat = minecraft_launcher_lib.runtime._get_jvm_platform_string()
-			v_file = os.path.join(mc_dir, "runtime", comp, plat, ".version")
-			if not os.path.isfile(v_file):
-				runtime_count = 150
-		except Exception:
-			pass
-
-	loader_count = 0
-	if target.get("loader") and target["loader"] != "Vanilla":
-		loader_count = 30
-
-	return libs_count + assets_count + runtime_count + loader_count
-
-
-# Backward-compatible alias
-estimate_installation_total = resolve_installation_files
-
-
 class InstallationProgressTracker:
-	def __init__(self, total_files: int = 0, is_modded: bool = False):
+	_VANILLA_RANGES = {
+		"setup": (0.0, 0.05),
+		"libraries": (0.05, 0.20),
+		"assets": (0.20, 0.90),
+		"java runtime": (0.90, 0.98),
+		"verifying": (0.98, 0.99),
+	}
+	_MODDED_RANGES = (
+		{
+			"setup": (0.0, 0.02),
+			"libraries": (0.02, 0.12),
+			"assets": (0.12, 0.65),
+			"java runtime": (0.65, 0.70),
+		},
+		{
+			"mod installer": (0.70, 0.75),
+			"libraries": (0.75, 0.82),
+			"mod loader": (0.75, 0.82),
+			"assets": (0.80, 0.85),
+			"java runtime": (0.82, 0.85),
+		},
+		{
+			"libraries": (0.85, 0.95),
+			"assets": (0.92, 0.96),
+			"mod loader": (0.90, 0.97),
+			"verifying": (0.97, 0.99),
+		},
+	)
+
+	def __init__(self, is_modded: bool = False):
 		self._lock = threading.Lock()
 		self.is_modded = bool(is_modded)
 		self.pass_num = 0
@@ -870,37 +755,10 @@ class InstallationProgressTracker:
 			self.history.append((now, self.current_stage_val))
 			self.history = [h for h in self.history if now - h[0] <= 2.5]
 
-			if not self.is_modded:
-				ranges = {
-					"setup": (0.0, 0.05),
-					"libraries": (0.05, 0.20),
-					"assets": (0.20, 0.90),
-					"java runtime": (0.90, 0.98),
-					"verifying": (0.98, 0.99),
-				}
-			else:
-				if self.pass_num == 0:
-					ranges = {
-						"setup": (0.0, 0.02),
-						"libraries": (0.02, 0.12),
-						"assets": (0.12, 0.65),
-						"java runtime": (0.65, 0.70),
-					}
-				elif self.pass_num == 1:
-					ranges = {
-						"mod installer": (0.70, 0.75),
-						"libraries": (0.75, 0.82),
-						"mod loader": (0.75, 0.82),
-						"assets": (0.80, 0.85),
-						"java runtime": (0.82, 0.85),
-					}
-				else:
-					ranges = {
-						"libraries": (0.85, 0.95),
-						"assets": (0.92, 0.96),
-						"mod loader": (0.90, 0.97),
-						"verifying": (0.97, 0.99),
-					}
+			ranges = self._VANILLA_RANGES
+			if self.is_modded:
+				pass_index = 0 if self.pass_num == 0 else 1 if self.pass_num == 1 else 2
+				ranges = self._MODDED_RANGES[pass_index]
 
 			s_key = self.stage_name.lower()
 			r_low, r_high = ranges.get(s_key, (self.highest_ratio, min(0.98, self.highest_ratio + 0.08)))
@@ -922,11 +780,13 @@ class InstallationProgressTracker:
 
 		return self.get_display_state()
 
-	def get_display_state(self) -> tuple[float, str, str]:
+	def get_display_state(self) -> tuple[float | None, str, str]:
 		now = time.monotonic()
 		with self._lock:
 			if self.is_finished:
 				return 1.0, "Installation complete • 100%", ""
+			if self.current_stage_max <= 0:
+				return None, self.last_status, ""
 
 			diff = self.highest_ratio - self.current_ratio
 			if abs(diff) < 0.001:
@@ -1045,6 +905,7 @@ async def start_game(
 	game_folder = get_profile_game_directory(target)
 	if target.get("is_instance") and not game_folder.is_dir():
 		raise FileNotFoundError(f"Instance folder is missing: {game_folder}. Restore it or select its existing folder before launching.")
+	await asyncio.to_thread(ModManager(game_folder).recover_pending)
 	installed_versions = get_installed_versions()
 	target = prepare_launch_profile(target, installed_versions)
 	version_id = target["version_id"]

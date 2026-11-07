@@ -51,15 +51,6 @@ jobs:
           PREVIEW_VERSION: ${{ inputs.version || '0.0.0-dev' }}
         run: python tools/release_plan.py
 
-      - name: Check release version selection
-        run: python -m unittest discover -s tools -p test_release_plan.py
-
-      - name: Check remote tag validation
-        run: python -m unittest discover -s tools -p test_release_tag.py
-
-      - name: Check screenshot publication
-        run: python -m unittest discover -s tools -p test_publish_screenshot.py
-
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip

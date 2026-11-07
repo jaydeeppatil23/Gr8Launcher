@@ -1,6 +1,7 @@
 """Short, interruptible entrance animations for tab content."""
 
 import asyncio
+from concurrent.futures import Future
 from dataclasses import dataclass
 
 import flet as ft
@@ -43,6 +44,15 @@ class StaggeredReveal:
         self.host = host
         self.generation = 0
         self._items: list[_RevealItem] = []
+        self._completion: Future = Future()
+        self._completion.set_result(None)
+
+    async def wait_until_finished(self) -> None:
+        """Let data work run during an entrance, then commit after it settles."""
+        while not self._completion.done():
+            # Navigation can finish a reveal from Flet's event worker thread.
+            # Shield the shared future from cancellation of any one waiter.
+            await asyncio.shield(asyncio.wrap_future(self._completion))
 
     def finish(self, *, update=True):
         self.generation += 1
@@ -50,6 +60,8 @@ class StaggeredReveal:
         for item in self._items:
             item.restore()
         self._items.clear()
+        if not self._completion.done():
+            self._completion.set_result(None)
         if update and had_items:
             self._update()
 
@@ -85,6 +97,8 @@ class StaggeredReveal:
                 control.opacity = 0.0
                 control.offset = ft.Offset(0, 0.035)
 
+        if self._items:
+            self._completion = Future()
         if not self._update():
             self.finish(update=False)
             return

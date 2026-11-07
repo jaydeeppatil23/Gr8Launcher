@@ -36,7 +36,8 @@ class ProfileList(ft.Container):
     AUTO_SCROLL_MAX_SPEED = 420
     AUTO_SCROLL_SPEED_TOLERANCE = 60
 
-    def __init__(self, on_order_changed: Callable[[list[str]], bool]):
+    def __init__(self, on_order_changed: Callable[[list[str]], bool], *, cache_extent: float = 10000):
+        self._cache_extent = cache_extent
         super().__init__(
             expand=True,
             on_size_change=self._measure_view,
@@ -81,7 +82,7 @@ class ProfileList(ft.Container):
     def _new_view(self):
         return ft.ListView(
             expand=True, scroll=ft.ScrollMode.AUTO,
-            on_scroll=self._scrolled, scroll_interval=16, cache_extent=10000,
+            on_scroll=self._scrolled, scroll_interval=16, cache_extent=self._cache_extent,
         )
 
     async def scroll_to(self, **kwargs):
@@ -101,7 +102,7 @@ class ProfileList(ft.Container):
         """Whether the pointer is still holding a profile, excluding snap-back."""
         return self._holding
 
-    def set_cards(self, cards, *, header=None, footer=None):
+    def set_cards(self, cards, *, header=None, footer=None, update=True):
         if self._dragging:
             self._pending_cards = (cards, header, footer)
             return
@@ -135,7 +136,7 @@ class ProfileList(ft.Container):
         if header is not None:
             header.on_size_change = self._measure_header
         self.footer = footer
-        self._update()
+        self._update(update=update)
 
     def set_order(self, profile_ids):
         """Move existing cards without remounting their icons, text or glow."""
@@ -156,7 +157,7 @@ class ProfileList(ft.Container):
             self._update()
         return True
 
-    def _update(self):
+    def _update(self, *, update=True):
         try:
             page = self.page
         except RuntimeError:
@@ -177,7 +178,7 @@ class ProfileList(ft.Container):
         )
         if self._finishing:
             return
-        if mounted:
+        if mounted and update:
             # Surface update errors on mounted controls so they aren't hidden.
             self.update()
 
@@ -549,6 +550,37 @@ def profile_card_surface(content, *, glow_color, selected=False, horizontal_padd
 def profile_list_surface(view: ProfileList):
     """Let the profile viewport fill the remaining panel height."""
     return ft.Container(expand=True, content=view)
+
+
+def profile_row(profile: dict, *, icon: ft.Control, badges: list[ft.Control],
+                details: str, actions: list[ft.Control], glow_color: str,
+                selected: bool = False, body_builder: Callable | None = None) -> ft.Container:
+    """Build the Library profile row, with actions supplied by its screen."""
+    icon_box = ft.Container(
+        width=36, height=36, border_radius=0, bgcolor=ft.Colors.BLACK_38,
+        alignment=ft.Alignment.CENTER, content=icon,
+    )
+    info = ft.Column([
+        ft.Row([
+            ft.Text(profile.get("name", "Unnamed Profile"), font_family="ps",
+                    color="#ffffff", size=16, weight=ft.FontWeight.W_500,
+                    max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+            *badges,
+        ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        ft.Text(details, size=12, color="#747e95", max_lines=1,
+                overflow=ft.TextOverflow.ELLIPSIS),
+    ], spacing=2, expand=True)
+    body = body_builder(icon_box, info) if body_builder else ft.Row(
+        [icon_box, info], expand=True, spacing=12,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    )
+    return profile_card_surface(
+        glow_color=glow_color, selected=selected, horizontal_padding=16,
+        content=ft.Row([
+            body,
+            ft.Row(actions, spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+    )
 
 
 def profile_drag_region(icon, info, *, color: str, view: ProfileList, profile_id, on_select=None):

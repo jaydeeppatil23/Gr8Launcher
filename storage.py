@@ -761,30 +761,3 @@ def update_account_session(account_id: str, previous_token: str, refreshed: dict
                 account[field] = refreshed[field]
         return save_accounts(data)
     return False
-
-
-@_account_transaction
-def update_offline_username(username: str) -> bool:
-    """Updates the offline account username."""
-    clean_name = username.strip() or "Player"
-    data = load_accounts()
-    accounts = data.get("accounts", [])
-    found = False
-    for acc in accounts:
-        if acc.get("type") == "offline":
-            acc["username"] = clean_name
-            found = True
-            break
-    if not found:
-        accounts.append({"id": "offline_default", "type": "offline", "username": clean_name})
-
-    data["accounts"] = accounts
-    success = save_accounts(data)
-    if success and get_active_account().get("type") == "offline":
-        prof = load_profile_options()
-        save_profile_options(
-            clean_name,
-            prof.get("last_selected_button", ""),
-            prof.get("profile_picture_path", ""),
-        )
-    return success

@@ -5,7 +5,6 @@ Handles authentication, 2FA detection, token validation, refresh, and session re
 
 from __future__ import annotations
 
-import json
 import uuid
 from typing import Any
 import requests

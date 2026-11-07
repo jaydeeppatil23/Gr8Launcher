@@ -1,10 +1,7 @@
 import asyncio
-import base64
 import io
-import json
 import math
 import os
-import platform
 import random
 import re
 import shutil
@@ -53,7 +50,11 @@ from launcher_services import (
 )
 from ui_motion import StaggeredReveal
 from ui_dialogs import ProfileDialogHost
-from ui_profiles import ProfileList, profile_card_surface, profile_drag_region, profile_list_surface
+from ui_toasts import ToastHost
+from ui_progress import ProgressHost, track_progress
+from ui_profiles import ProfileList, profile_card_surface, profile_drag_region, profile_list_surface, profile_row
+from ui_mods import ModsPage
+from ui_controls import SimpleInput, SimpleButton, AcrylicSelector, launcher_back_button
 from skin_viewer import SkinViewer
 from home_skin_viewer import HomeSkinViewer
 
@@ -63,43 +64,7 @@ accent_color = "#f5de9a"
 input_bg_color = ft.Colors.BLACK_26
 ASSETS_DIR = Path(__file__).resolve().parent / ".assets"
 LATEST_RELEASE_PROFILE_ID = "latest-release"
-
-
-class SimpleInput(ft.TextField):
-    def __init__(self, hint_text="Enter text", **kwargs):
-        defaults = {
-            "hint_text": hint_text,
-            "bgcolor": input_bg_color,
-            "border": ft.NoInputBorder(),
-            "hover_color": ft.Colors.TRANSPARENT,
-            "color": "#ffffff",
-            "hint_style": ft.TextStyle(color=ft.Colors.WHITE_24),
-            "cursor_color": accent_color,
-            # "content_padding": 12,
-        }
-        defaults.update(kwargs)
-        super().__init__(**defaults)
-
-
-class SimpleButton(ft.Button):
-    def __init__(self, content=None, on_click=None, style=None, **kwargs):
-        base_style = ft.ButtonStyle(
-            bgcolor=ft.Colors.TRANSPARENT,
-            overlay_color=ft.Colors.TRANSPARENT,
-            shadow_color=ft.Colors.TRANSPARENT,
-            mouse_cursor=ft.MouseCursor.CLICK,
-            side=ft.BorderSide(0, ft.Colors.TRANSPARENT),
-            padding=0,
-            shape=ft.RoundedRectangleBorder(radius=0),
-        )
-
-
-        super().__init__(
-            content=content,
-            on_click=on_click,
-            style=style or base_style,
-            **kwargs,
-        )
+_PROGRESS_UNCHANGED = object()
 
 
 AVAILABLE_BLOCK_ICONS = [
@@ -194,6 +159,24 @@ def main(page: ft.Page):
     page.vertical_alignment = ft.MainAxisAlignment.START
     page.horizontal_alignment = ft.CrossAxisAlignment.START
 
+    toasts = ToastHost(page)
+    progress_host = ProgressHost(page, show_text=False)
+    state.progress_state["host"] = progress_host
+
+    def notify(message, kind="info", title=None, **kwargs):
+        toasts.show(redact_credentials(str(message)), kind, title, **kwargs)
+
+    state.notification_state["show"] = notify
+
+    def save_settings_with_notification(settings, *, message="Settings saved."):
+        if settings == storage.load_settings():
+            return True
+        if not storage.save_settings(settings):
+            notify("Could not save settings. Check the launcher data folder permissions and try again.", "error")
+            return False
+        notify(message, "success", "Settings", key="settings", delay=0.6)
+        return True
+
     def minimize_window(e):
         page.window.minimized = True
         page.update()
@@ -203,10 +186,14 @@ def main(page: ft.Page):
         page.update()
 
     async def close_window(e):
+        toasts.close()
+        progress_host.close()
         await asyncio.to_thread(discord_presence.stop)
         await page.window.close()
 
     async def stop_discord_presence(e):
+        toasts.close()
+        progress_host.close()
         await asyncio.to_thread(discord_presence.stop)
 
     page.on_disconnect = stop_discord_presence
@@ -389,20 +376,9 @@ def main(page: ft.Page):
         on_click=lambda e: webbrowser.open("https://account.ely.by/register"),
     )
 
-    back_btn = ft.Container(
-        content=ft.Row(
-            [
-                ft.Icon(
-                    ft.Icons.ARROW_BACK_IOS_NEW_ROUNDED, color=accent_color, size=14
-                ),
-                ft.Text("Cancel", font_family="ps", color=accent_color, size=15),
-            ],
-            spacing=6,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        ),
-        padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+    back_btn = launcher_back_button(
+        lambda e: navigate("home"), label="Cancel",
         visible=False,
-        on_click=lambda e: navigate("home"),
     )
 
     ely_indicator = ft.Container(
@@ -488,6 +464,7 @@ def main(page: ft.Page):
             login_error_text.value = "Username cannot be empty."
             login_error_text.visible = True
             login_error_text.update()
+            notify(login_error_text.value, "warning", "Sign in")
             return
 
         if mode == "offline":
@@ -499,15 +476,18 @@ def main(page: ft.Page):
             }
             login_button.disabled = True
             login_button.update()
+            account_activity = progress_host.begin("Saving account...", priority=60)
             try:
                 saved = await asyncio.to_thread(storage.add_or_update_account, offline_acc, set_as_active=True)
             finally:
+                account_activity.finish()
                 login_button.disabled = False
                 login_button.update()
             if not saved:
                 login_error_text.value = "Could not save the account. Check the launcher data folder permissions and try again."
                 login_error_text.visible = True
                 login_error_text.update()
+                notify(login_error_text.value, "error", "Account could not be saved")
                 return
             rebuild_accounts_view()
             username_field.value = ""
@@ -516,6 +496,7 @@ def main(page: ft.Page):
             totp_field.visible = False
             login_error_text.visible = False
             navigate("home")
+            notify(f"Signed in as {uname}.", "success", "Welcome")
             return
 
         # Ely.by auth
@@ -524,6 +505,7 @@ def main(page: ft.Page):
             login_error_text.value = "Please enter your password."
             login_error_text.visible = True
             login_error_text.update()
+            notify(login_error_text.value, "warning", "Sign in")
             return
 
         login_button.disabled = True
@@ -531,6 +513,7 @@ def main(page: ft.Page):
         login_button.update()
 
         totp = (totp_field.value or "").strip() if totp_field.visible else None
+        auth_activity = progress_host.begin("Signing in to Ely.by...", priority=80)
 
         try:
             auth_data = await asyncio.to_thread(ely_auth.authenticate, uname, pwd, totp)
@@ -559,24 +542,28 @@ def main(page: ft.Page):
             login_error_text.visible = False
             navigate("home")
             if storage.get_account_storage_status(storage.get_active_account()) == "session":
-                page.show_dialog(ft.SnackBar(
-                    content=ft.Text("Signed in for this session. You'll need to sign in again after closing the launcher."),
-                ))
+                notify("Signed in for this session. You'll need to sign in again after closing the launcher.", "warning", "Session sign-in")
+            else:
+                notify(f"Signed in as {new_acc['username']}.", "success", "Welcome")
         except ely_auth.Ely2FARequiredError:
             totp_field.visible = True
             login_error_text.value = "Two-Factor Auth required. Enter code above."
             login_error_text.visible = True
             totp_field.update()
             login_error_text.update()
+            notify(login_error_text.value, "info", "Two-factor authentication")
         except ely_auth.ElyInvalidCredentialsError:
             login_error_text.value = "Invalid username or password."
             login_error_text.visible = True
             login_error_text.update()
+            notify(login_error_text.value, "error", "Sign-in failed")
         except Exception as exc:
             login_error_text.value = str(exc)
             login_error_text.visible = True
             login_error_text.update()
+            notify(login_error_text.value, "error", "Sign-in failed")
         finally:
+            auth_activity.finish()
             login_button.disabled = False
             login_button_label.value = "Login"
             login_button.update()
@@ -696,6 +683,7 @@ def main(page: ft.Page):
     main_content_area = ft.Container(
         content=ft.Container(expand=True),
         expand=True,
+        padding=ft.Padding.only(bottom=ProgressHost.STATUS_AREA_HEIGHT),
     )
 
     tab_reveal = StaggeredReveal(page, main_content_area)
@@ -723,7 +711,7 @@ def main(page: ft.Page):
                 *settings_section_container.content.controls,
             ]
         if key == "mods":
-            return mods_content.content.controls
+            return mods_content.reveal_controls
         return []
 
     rebuild_settings_view_fn = None
@@ -734,10 +722,12 @@ def main(page: ft.Page):
 
     settings_content = ft.Container(expand=True)
 
-    def set_active_tab(key: str, force_refresh: bool = False):
+    def set_active_tab(key: str, force_refresh: bool = False, *, mods_profile_id: str | None = None):
         nonlocal active_tab
         # If user clicks the tab they are already on and not forcing a refresh, ignore to prevent redundant work
         if key == active_tab and not force_refresh:
+            if key == "mods" and mods_profile_id:
+                mods_content.enter(mods_profile_id)
             return
 
         tab_reveal.finish(update=False)
@@ -746,6 +736,8 @@ def main(page: ft.Page):
         library_list_view.cancel_drag()
         skin_viewer.suspend()
         home_skin_viewer.suspend()
+        if active_tab == "mods":
+            mods_content.leave()
         # A tab can be selected while the first home entrance is still playing.
         for control in tab_reveal_controls("home"):
             control.opacity = 1.0
@@ -753,6 +745,10 @@ def main(page: ft.Page):
             control.offset = ft.Offset(0, 0)
 
         active_tab = key
+        main_content_area.padding = ft.Padding.only(
+            bottom=ProgressHost.STATUS_AREA_HEIGHT if key == "home" else 0,
+        )
+        progress_host.set_show_text(key == "home" and content_area.content is home_view)
         discord_presence.set_page(key)
         for k, _, icon_name in tabs:
             is_active = k == active_tab
@@ -780,6 +776,7 @@ def main(page: ft.Page):
             rebuild_library_view()
             target_content = library_content
         elif key == "mods":
+            mods_content.enter(mods_profile_id, defer_load=True)
             target_content = mods_content
         elif key == "accounts":
             rebuild_accounts_view()
@@ -793,9 +790,17 @@ def main(page: ft.Page):
         else:
             target_content = ft.Container(expand=True)
 
-        tab_reveal.show(
-            target_content, tab_reveal_controls(key), animate=not force_refresh
-        )
+        # Keep Mods mounted: remounting its image providers and frosted rows
+        # on every sidebar visit stalls the first frames of the entrance.
+        mods_tab_slot.opacity = 1 if key == "mods" else 0
+        mods_tab_slot.ignore_interactions = key != "mods"
+        mods_tab_slot.disabled = key != "mods"
+        ordinary_tab_host.visible = key != "mods"
+        if key != "mods":
+            ordinary_tab_host.content = target_content
+        tab_reveal.show(main_tab_stack, tab_reveal_controls(key), animate=not force_refresh)
+        if key == "mods":
+            mods_content.start_loading()
         if key == "home":
             home_skin_viewer.request_frame()
         if key == "skins":
@@ -991,7 +996,6 @@ def main(page: ft.Page):
                         weight=ft.FontWeight.BOLD,
                     ),
                     bgcolor=ft.Colors.with_opacity(0.45, ft.Colors.BLACK),
-                    border=ft.Border.all(1, accent_color),
                     border_radius=4,
                     padding=ft.Padding.symmetric(horizontal=6, vertical=2),
                 )
@@ -1009,7 +1013,6 @@ def main(page: ft.Page):
                         weight=ft.FontWeight.BOLD,
                     ),
                     bgcolor=ft.Colors.with_opacity(0.45, ft.Colors.BLACK),
-                    border=ft.Border.all(1, badge_color),
                     border_radius=4,
                     padding=ft.Padding.symmetric(horizontal=6, vertical=2),
                 )
@@ -1051,7 +1054,6 @@ def main(page: ft.Page):
     hero_instance_badge = ft.Container(
         content=hero_instance_badge_text,
         bgcolor=ft.Colors.with_opacity(0.45, ft.Colors.BLACK),
-        border=ft.Border.all(1, accent_color),
         border_radius=4,
         padding=ft.Padding.symmetric(horizontal=6, vertical=2),
         visible=False,
@@ -1067,7 +1069,6 @@ def main(page: ft.Page):
     hero_loader_badge = ft.Container(
         content=hero_loader_badge_text,
         bgcolor=ft.Colors.with_opacity(0.45, ft.Colors.BLACK),
-        border=ft.Border.all(1, ft.Colors.WHITE),
         border_radius=4,
         padding=ft.Padding.symmetric(horizontal=6, vertical=2),
         visible=False,
@@ -1149,6 +1150,7 @@ def main(page: ft.Page):
         bgcolor=ft.Colors.BLACK_26,
         blur=ft.Blur(10, 10),
         border_radius=8,
+        clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
         padding=ft.Padding.symmetric(horizontal=16, vertical=12),
         content=ft.Row(
             tight=True,
@@ -1221,6 +1223,7 @@ def main(page: ft.Page):
 
     def do_copy_logs(e=None):
         if not logs_data_buffer:
+            notify("There are no logs to copy yet.", "info", "Logs")
             return
         full_text = "\n".join(logs_data_buffer)
         try:
@@ -1230,9 +1233,10 @@ def main(page: ft.Page):
             r.clipboard_append(full_text)
             r.update()
             r.destroy()
-            update_launch_progress("Copied logs to clipboard.", eta="")
+            notify("Copied logs to clipboard.", "success", "Logs copied")
         except Exception as err:
             print(f"Failed to copy logs: {err}")
+            notify(f"Could not copy logs: {err}", "error")
 
     def do_clear_logs(e=None):
         logs_data_buffer.clear()
@@ -1241,6 +1245,8 @@ def main(page: ft.Page):
             logs_list_view.update()
         except RuntimeError:
             pass
+
+        notify("The log view has been cleared.", "info", "Logs cleared")
 
     def add_log_lines(lines):
         for line_str in lines:
@@ -1477,14 +1483,13 @@ def main(page: ft.Page):
 
     async def select_active_account(acc_id: str):
         if not await asyncio.to_thread(storage.set_active_account, acc_id):
-            page.show_dialog(ft.SnackBar(
-                content=ft.Text("Could not switch accounts. Please try again."),
-            ))
+            notify("Could not switch accounts. Please try again.", "error")
             return
         account = storage.get_active_account()
         if account.get("type") == "ely":
             account = await asyncio.to_thread(storage.get_active_account, include_credentials=True)
             if not account.get("access_token"):
+                notify("Sign in again to use this Ely.by account.", "warning", "Sign-in required")
                 relogin_account(account)
                 return
         rebuild_accounts_view()
@@ -1494,6 +1499,8 @@ def main(page: ft.Page):
         except Exception:
             pass
 
+        notify(f"Switched to {account.get('username', 'Player')}.", "success", "Account switched")
+
     async def delete_account(acc_id: str):
         accounts_data = await asyncio.to_thread(storage.load_accounts, include_credentials=True)
         account = next(
@@ -1502,9 +1509,7 @@ def main(page: ft.Page):
             {},
         )
         if not await asyncio.to_thread(storage.remove_account, acc_id):
-            page.show_dialog(ft.SnackBar(
-                content=ft.Text("Could not remove the account. Please try again."),
-            ))
+            notify("Could not remove the account. Please try again.", "error")
             return
         if not has_saved_account():
             open_login(is_add_account=False)
@@ -1515,6 +1520,7 @@ def main(page: ft.Page):
             update_home_skin_model()
         except Exception:
             pass
+        notify(f"Removed {account.get('username', 'the account')}.", "success", "Account removed")
         if account.get("type") == "ely":
             await asyncio.to_thread(
                 ely_auth.invalidate_token,
@@ -1789,7 +1795,7 @@ def main(page: ft.Page):
 
     skin_gesture = ft.GestureDetector(
         content=skin_display_img,
-        mouse_cursor=ft.MouseCursor.GRAB,
+        mouse_cursor=ft.MouseCursor.MOVE,
         drag_interval=16,
         on_pan_start=handle_pan_start,
         on_pan_update=handle_pan_update,
@@ -1813,24 +1819,26 @@ def main(page: ft.Page):
             username = str(account.get("username") or "").strip()
             if not username:
                 return
-            await asyncio.to_thread(
-                skins.fetch_ely_skin, username, force_refresh=force, timeout=6.0
-            )
-            if storage.get_active_account().get("id") != account.get("id"):
-                return
-            update_home_skin_model()
-            if active_tab == "skins":
-                load_active_ely_skin(force=force)
-                update_skin_model_preview()
-                skin_model_info_text.value = f"{current_skin_model[0].capitalize()} Model"
-                skin_account_avatar.src = skins.render_head_avatar_bytes(
-                    current_skin_image[0], scale=4
+            with track_progress(progress_host, "Refreshing skin..." if force else "Syncing skin...", priority=50 if force else 20):
+                skin_bytes, _ = await asyncio.to_thread(
+                    skins.fetch_ely_skin, username, force_refresh=force, timeout=6.0
                 )
-                try:
-                    skin_model_info_text.update()
-                    skin_account_avatar.update()
-                except RuntimeError:
-                    pass
+                if storage.get_active_account().get("id") != account.get("id"):
+                    return
+                update_home_skin_model()
+                if active_tab == "skins":
+                    load_active_ely_skin(force=force)
+                    update_skin_model_preview()
+                    skin_model_info_text.value = f"{current_skin_model[0].capitalize()} Model"
+                    skin_account_avatar.src = skins.render_head_avatar_bytes(
+                        current_skin_image[0], scale=4
+                    )
+                    try:
+                        skin_model_info_text.update()
+                        skin_account_avatar.update()
+                    except RuntimeError:
+                        pass
+                return skin_bytes is not None
 
     async def handle_refresh_ely_skin(e):
         refresh_skin_btn_text.value = "Refreshing..."
@@ -1841,8 +1849,15 @@ def main(page: ft.Page):
             pass
 
         try:
-            await sync_active_skin(force=True)
-            skin_status_text.value = "Synced with Ely.by"
+            if await sync_active_skin(force=True):
+                skin_status_text.value = "Synced with Ely.by"
+                notify("Your skin is now synced with Ely.by.", "success", "Skin refreshed")
+            else:
+                skin_status_text.value = "Could not sync with Ely.by"
+                notify("Could not refresh your skin. Check your connection and try again.", "warning", "Skin refresh failed")
+        except Exception as error:
+            skin_status_text.value = "Could not sync with Ely.by"
+            notify(f"Could not refresh your skin: {error}", "error")
         finally:
             refresh_skin_btn_text.value = "Refresh"
             refresh_skin_btn.disabled = False
@@ -2399,60 +2414,38 @@ def main(page: ft.Page):
     update_home_skin_model()
 
     # ---------------------------
-    # BOTTOM PROGRESS BAR & LAUNCH STATUS
+    # SHARED PROGRESS & LEGACY LAUNCH STATUS
     # ---------------------------
-    launch_status_text = ft.Text(
-        "Ready to play",
-        font_family="ps",
-        color=accent_color,
-        size=13,
-        overflow=ft.TextOverflow.ELLIPSIS,
-        expand=True,
-    )
+    launch_status_text = progress_host.status_text
+    launch_eta_text = progress_host.detail_text
+    launch_progress_bar = progress_host.bar
+    launch_activity = {"task": None}
 
-    launch_eta_text = ft.Text(
-        "",
-        font_family="ps",
-        color="#747e95",
-        size=12,
-        text_align=ft.TextAlign.RIGHT,
-    )
+    def finish_launch_progress():
+        if launch_activity["task"]:
+            launch_activity["task"].finish()
+            launch_activity["task"] = None
+        progress_host.set_idle(state.launcher_log_state.get("status") or "Ready to play")
 
-    launch_progress_bar = ft.ProgressBar(
-        value=0.0,
-        bar_height=6,
-        color=accent_color,
-        bgcolor=ft.Colors.BLACK_26,
-        border_radius=5,
-        expand=True,
-    )
-
-    def update_launch_progress(status=None, value=None, eta=None):
+    def update_launch_progress(status=None, value=_PROGRESS_UNCHANGED, eta=None):
         if status is not None:
-            launch_status_text.value = str(status)
-            state.launcher_log_state["status"] = str(status)
-        if value is not None:
-            try:
-                v = max(0.0, min(1.0, float(value)))
-            except (ValueError, TypeError):
-                v = 0.0
-            launch_progress_bar.value = v
-            state.launcher_log_state["progress"] = v
-        elif (
-            value is None and status is not None and "preparing" in str(status).lower()
-        ):
-            launch_progress_bar.value = None
-            state.launcher_log_state["progress"] = None
+            state.launcher_log_state["status"] = redact_credentials(str(status))
+        if value is not _PROGRESS_UNCHANGED:
+            state.launcher_log_state["progress"] = value
         if eta is not None:
-            launch_eta_text.value = str(eta)
             state.launcher_log_state["eta"] = str(eta)
-
-        try:
-            launch_status_text.update()
-            launch_eta_text.update()
-            launch_progress_bar.update()
-        except RuntimeError:
-            pass
+        if state.launcher_log_state.get("running") and not state.launcher_log_state.get("game_started"):
+            if launch_activity["task"] is None:
+                launch_activity["task"] = progress_host.begin(
+                    state.launcher_log_state.get("status") or "Preparing Minecraft...",
+                    priority=100, delay=0, show_percentage=False,
+                )
+            launch_activity["task"].update(
+                state.launcher_log_state.get("status") or "Preparing Minecraft...",
+                value=state.launcher_log_state.get("progress"), detail=state.launcher_log_state.get("eta", ""),
+            )
+        else:
+            finish_launch_progress()
 
     state.launcher_log_state["status_control"] = launch_status_text
     state.launcher_log_state["eta_control"] = launch_eta_text
@@ -2461,24 +2454,6 @@ def main(page: ft.Page):
         value=v
     )
 
-    home_progress_area = ft.Container(
-        padding=ft.Padding.only(left=20, right=24, top=4, bottom=8),
-        content=ft.Column(
-            spacing=4,
-            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-            controls=[
-                ft.Row(
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    controls=[
-                        launch_status_text,
-                        launch_eta_text,
-                    ],
-                ),
-                launch_progress_bar,
-            ],
-        ),
-    )
 
     # ---------------------------
     # PROFILES & LAUNCH SYSTEM
@@ -2521,9 +2496,7 @@ def main(page: ft.Page):
         visible_ids = set(profile_ids)
         if (len(visible_ids) != len(profile_ids)
                 or not visible_ids.issubset(current_ids)):
-            page.show_dialog(ft.SnackBar(
-                content=ft.Text("Profiles changed while dragging. Please try again."),
-            ))
+            notify("Profiles changed while dragging. Please try again.", "warning")
             rebuild_profiles_view()
             rebuild_library_view()
             return False
@@ -2537,9 +2510,7 @@ def main(page: ft.Page):
         ]
         saved = storage.save_profile_order(profile_order)
         if not saved:
-            page.show_dialog(ft.SnackBar(
-                content=ft.Text("Could not save the profile order. Please try again."),
-            ))
+            notify("Could not save the profile order. Please try again.", "error")
             rebuild_profiles_view()
             rebuild_library_view()
         else:
@@ -2548,6 +2519,7 @@ def main(page: ft.Page):
             library_order = [pid for pid in profile_order if pid != LATEST_RELEASE_PROFILE_ID]
             if not library_list_view.set_order(library_order):
                 rebuild_library_view()
+            notify("Your profile order has been saved.", "success", "Profiles reordered")
         return saved
 
     async def refresh_latest_release(force: bool = False) -> bool:
@@ -2558,7 +2530,10 @@ def main(page: ft.Page):
                 and time.monotonic() - checked_at < 60
             ):
                 return latest_release_state["online"]
+            was_online = latest_release_state["online"]
+            previous_version = latest_release_state["version_id"]
             latest_release_state["loading"] = True
+            release_activity = progress_host.begin("Checking latest Minecraft release...", priority=40 if force else 10)
             try:
                 version_id, online = await asyncio.to_thread(get_latest_release_version)
                 latest_release_state["online"] = online
@@ -2572,8 +2547,19 @@ def main(page: ft.Page):
                 latest_release_state["online"] = False
                 print(f"Could not refresh latest release: {error}")
             finally:
+                release_activity.finish()
                 latest_release_state["loading"] = False
                 latest_release_state["checked_at"] = time.monotonic()
+            online = latest_release_state["online"]
+            if checked_at is None and not online:
+                notify("You're offline. Installed versions can still be played.", "info", "Offline mode")
+            elif checked_at is not None and online != was_online:
+                if online:
+                    notify("Your internet connection is back.", "success", "Back online")
+                else:
+                    notify("You're offline. Installed versions can still be played.", "warning", "Connection lost")
+            if online and checked_at is not None and latest_release_state["version_id"] != previous_version:
+                notify(f"Minecraft {latest_release_state['version_id']} is available in Latest Release.", "update", "New Minecraft release")
             rebuild_profiles_view()
             return latest_release_state["online"]
 
@@ -2618,6 +2604,7 @@ def main(page: ft.Page):
                 subprocess.Popen(["xdg-open", str(target_dir)])
         except Exception as err:
             update_launch_progress(f"Could not open folder: {err}")
+            notify(f"Could not open folder: {err}", "error")
 
     def select_profile(profile_id: str):
         if (not profile_id or profile_id == state.launch_selection.get("key")
@@ -2648,15 +2635,8 @@ def main(page: ft.Page):
     def get_profile_mods_count(profile: dict) -> int:
         if not profile:
             return 0
-        game_dir = profile.get("game_directory")
-        if not game_dir and profile.get("instance_name"):
-            game_dir = str(
-                Path(minecraft_directory) / "instances" / profile["instance_name"]
-            )
-        if not game_dir:
-            return 0
         try:
-            mods_path = Path(game_dir) / "mods"
+            mods_path = get_profile_game_directory(profile) / "mods"
             if not mods_path.is_dir():
                 return 0
             jar_files = [f for f in mods_path.glob("*.jar") if f.is_file()]
@@ -2726,7 +2706,6 @@ def main(page: ft.Page):
                 hero_loader_badge.visible = True
                 hero_loader_badge_text.value = badge_text
                 hero_loader_badge_text.color = badge_color
-                hero_loader_badge.border = ft.Border.all(1, badge_color)
             else:
                 hero_loader_badge.visible = False
 
@@ -2856,6 +2835,9 @@ def main(page: ft.Page):
     async def launch_profile(target: dict):
         if state.launcher_log_state.get("running"):
             return
+        if mods_content.busy:
+            notify("Wait for the mod operation to finish before launching Minecraft.", "warning", "Mods")
+            return
 
         active_acc = storage.get_active_account()
         username = active_acc.get("username", "Player").strip() or "Player"
@@ -2865,6 +2847,7 @@ def main(page: ft.Page):
             update_launch_progress(
                 "Invalid username: must be 1-16 letters, numbers, or _."
             )
+            notify("Your username must contain 1–16 letters, numbers, or underscores.", "warning", "Invalid username")
             return
 
         discord_presence.set_player(
@@ -2895,14 +2878,17 @@ def main(page: ft.Page):
         update_launch_progress(
             f"Preparing {target.get('name', 'Minecraft')}...", value=None, eta=""
         )
+        notify(f"Preparing {target.get('name', 'Minecraft')}…", "info", "Getting ready")
 
         is_modded = (target.get("loader") or "Vanilla").lower() != "vanilla"
-        tracker = InstallationProgressTracker(total_files=0, is_modded=is_modded)
+        tracker = InstallationProgressTracker(is_modded=is_modded)
 
         def report_status(status):
             status_str = str(status)
             add_log_line(f"[*] {status_str}")
             tracker.on_status(status_str)
+            if not state.launcher_log_state.get("cancelling"):
+                update_launch_progress(status_str, value=None, eta="")
             lower = status_str.lower()
             if (
                 "download" in lower
@@ -2921,7 +2907,7 @@ def main(page: ft.Page):
                 "Starting Minecraft...",
                 "Minecraft is running...",
             ):
-                if state.launcher_log_state.get("downloading"):
+                if state.launcher_log_state.get("downloading") and not state.launcher_log_state.get("cancelling"):
                     state.launcher_log_state["downloading"] = False
                     if not state.launcher_log_state.get("game_started"):
                         discord_presence.prepare_game(target)
@@ -2943,7 +2929,7 @@ def main(page: ft.Page):
             while state.launcher_log_state.get(
                 "running"
             ) and not state.launcher_log_state.get("game_started"):
-                if state.launcher_log_state.get("downloading"):
+                if state.launcher_log_state.get("downloading") and not state.launcher_log_state.get("cancelling"):
                     ratio, status_text, eta_text = tracker.get_display_state()
                     update_launch_progress(status_text, ratio, eta_text)
                 await asyncio.sleep(0.05)
@@ -2960,6 +2946,7 @@ def main(page: ft.Page):
                 account = await asyncio.to_thread(storage.get_active_account, include_credentials=True)
                 if account.get("type") == "ely" and not account.get("access_token"):
                     update_launch_progress("Sign in to continue.", value=0.0, eta="")
+                    notify("Sign in again to launch Minecraft with your Ely.by account.", "warning", "Sign-in required")
                     relogin_account(account)
                     return
             if target.get("id") == LATEST_RELEASE_PROFILE_ID:
@@ -2999,6 +2986,7 @@ def main(page: ft.Page):
                 face_png=game_face,
             )
             update_launch_progress("Minecraft is running...", value=1.0, eta="")
+            notify(f"{target.get('name', 'Minecraft')} is running.", "success", "Minecraft started")
             refresh_launch_button()
 
             loop = asyncio.get_running_loop()
@@ -3033,8 +3021,13 @@ def main(page: ft.Page):
                 value=0.0,
                 eta="",
             )
+            if exit_code == 0:
+                notify("Minecraft has closed. You're ready to play again.", "info", "Game closed")
+            else:
+                notify(f"Minecraft exited with code {exit_code}. Open the logs for details.", "error", "Minecraft stopped")
         except DownloadCancelled:
             update_launch_progress("Version download cancelled.", value=0.0, eta="")
+            notify("The version download was cancelled.", "info", "Installation cancelled")
         except Exception as error:
             if launch_action == "Hide launcher":
                 try:
@@ -3043,6 +3036,7 @@ def main(page: ft.Page):
                 except Exception:
                     pass
             update_launch_progress(f"Launch failed: {error}", value=0.0, eta="")
+            notify(str(error), "error", "Launch failed")
         finally:
             discord_presence.game_finished()
             if progress_task is not None:
@@ -3064,6 +3058,7 @@ def main(page: ft.Page):
             state.launcher_log_state["cancel_event"] = None
             state.launcher_log_state["target_version_id"] = None
             state.launcher_log_state["target_profile_id"] = None
+            finish_launch_progress()
             refresh_launch_button()
             rebuild_profiles_view()
             rebuild_library_view()
@@ -3082,6 +3077,7 @@ def main(page: ft.Page):
                 if cancel_ev is not None:
                     cancel_ev.set()
                 update_launch_progress("Cancelling installation...", value=None, eta="")
+                notify("Cancelling the installation…", "info")
                 refresh_launch_button()
             return
 
@@ -3090,6 +3086,7 @@ def main(page: ft.Page):
             start_launch(target)
         else:
             update_launch_progress("No installation selected to play.")
+            notify("Select an installation to play.", "warning")
 
     on_main_play_click = handle_main_play_click
 
@@ -3193,6 +3190,7 @@ def main(page: ft.Page):
                         select_icon(selected_file)
                 except Exception as err:
                     print(f"Failed to pick external icon: {err}")
+                    notify(f"Could not select an icon: {err}", "error")
 
             threading.Thread(target=_choose, daemon=True).start()
 
@@ -3264,7 +3262,7 @@ def main(page: ft.Page):
             new_jvm = (jvm_field.value or "").strip()
 
             if is_latest_release:
-                storage.save_latest_release_options({
+                saved = storage.save_latest_release_options({
                     "icon": new_icon,
                     "jvm_arguments": new_jvm,
                 })
@@ -3276,7 +3274,11 @@ def main(page: ft.Page):
                         p["icon"] = new_icon
                         p["jvm_arguments"] = new_jvm
                         break
-                storage.save_installations(all_insts)
+                saved = storage.save_installations(all_insts)
+
+            if not saved:
+                notify("Could not save profile changes. Please try again.", "error")
+                return
 
             profile["name"] = new_name
             profile["icon"] = new_icon
@@ -3288,6 +3290,7 @@ def main(page: ft.Page):
             rebuild_library_view()
             update_hero_banner_info()
             update_launch_progress(f"Saved changes to '{new_name}'.", value=0.0, eta="")
+            notify(f"Saved changes to {new_name}.", "success", "Profile updated")
 
         dialog_content = ft.Column(
             spacing=16,
@@ -3768,37 +3771,34 @@ def main(page: ft.Page):
         ),
     )
 
-    mods_content = ft.Container(
-        expand=True,
-        padding=ft.Padding.only(left=20, right=24, top=10, bottom=4),
-        content=ft.Column(
-            expand=True,
-            spacing=16,
-            controls=[
-                ft.Text("Mods", font_family="ps", color=accent_color, size=32),
-                ft.Container(
-                    expand=True,
-                    alignment=ft.Alignment.CENTER,
-                    content=ft.Column(
-                        alignment=ft.MainAxisAlignment.CENTER,
-                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                        spacing=8,
-                        controls=[
-                            ft.Icon(ft.Icons.EXTENSION_SHARP, size=48, color="#747e95"),
-                            ft.Text(
-                                "Mods manager coming soon",
-                                font_family="ps",
-                                color="#747e95",
-                                size=16,
-                            ),
-                        ],
-                    ),
-                ),
-            ],
-        ),
+    mods_content = ModsPage(
+        page,
+        get_profiles=lambda: get_launch_profiles(),
+        selected_profile=lambda: get_selected_profile(),
+        game_directory=lambda profile: get_profile_game_directory(profile),
+        is_running=lambda: bool(state.launcher_log_state.get("running")),
+        notify=notify,
+        dialogs=lambda: profile_dialogs,
+        open_folder=lambda folder: open_dir_safely(folder),
+        create_profile=lambda: open_new_profile_page(as_instance=True),
+        profile_icon=lambda profile: build_profile_icon_content(profile, size=32, default_icon_size=24),
+        profile_badges=build_profile_badges,
+        profile_details=format_profile_details,
+        progress=progress_host,
+        entrance=tab_reveal,
+        on_changed=lambda: (rebuild_profiles_view(), rebuild_library_view()),
     )
+    mods_tab_slot = ft.Container(expand=True, content=mods_content, opacity=0, ignore_interactions=True, disabled=True)
+    ordinary_tab_host = ft.Container(expand=True)
+    main_tab_stack = ft.Stack([mods_tab_slot, ordinary_tab_host], expand=True)
+
+    def open_profile_mods(profile: dict):
+        set_active_tab("mods", mods_profile_id=profile["id"])
 
     def remove_profile(profile_id: str):
+        if mods_content.busy:
+            notify("Wait for the mod operation to finish before removing a profile.", "warning", "Mods")
+            return
         all_insts = storage.load_installations()
         target_profile = next((p for p in all_insts if p.get("id") == profile_id), None)
         if not target_profile:
@@ -3832,6 +3832,7 @@ def main(page: ft.Page):
                             shutil.rmtree(resolved_dir, ignore_errors=True)
                 except Exception as err:
                     print(f"Error deleting instance directory: {err}")
+                    notify(f"Could not delete the instance folder: {err}", "warning")
 
         updated = [p for p in all_insts if p.get("id") != profile_id]
 
@@ -3848,7 +3849,9 @@ def main(page: ft.Page):
         if target_profile.get("id"):
             ids_to_remove.add(target_profile["id"])
         updated_handled = handled_ids - ids_to_remove
-        storage.save_installations(updated, updated_handled)
+        if not storage.save_installations(updated, updated_handled):
+            notify("Could not remove the profile from the library. Please try again.", "error")
+            return
 
         if ext_pid:
             delete_external_profile(ext_pid)
@@ -3872,10 +3875,14 @@ def main(page: ft.Page):
         if kept_shared_folder:
             removal_message += " Its folder is used by another profile and was kept."
         update_launch_progress(removal_message, value=0.0, eta="")
+        notify(removal_message, "success", "Profile removed")
         rebuild_profiles_view()
         rebuild_library_view()
 
     def confirm_remove_profile(profile: dict):
+        if mods_content.busy:
+            notify("Wait for the mod operation to finish before removing a profile.", "warning", "Mods")
+            return
         p_name = profile.get("name", "Profile")
         is_inst = bool(profile.get("is_instance"))
 
@@ -3943,11 +3950,15 @@ def main(page: ft.Page):
     async def repair_profile(target: dict):
         if state.launcher_log_state.get("running"):
             return
+        if mods_content.busy:
+            notify("Wait for the mod operation to finish before repairing Minecraft.", "warning", "Mods")
+            return
 
         try:
             target = prepare_launch_profile(target, get_installed_versions(force_refresh=True))
         except (KeyError, ValueError) as error:
             update_launch_progress(f"Cannot repair this profile: {error}", value=0.0, eta="")
+            notify(str(error), "error", "Cannot repair profile")
             return
 
         loader = str(target.get("loader") or "Vanilla").strip()
@@ -3962,6 +3973,7 @@ def main(page: ft.Page):
                 value=0.0,
                 eta="",
             )
+            notify("This profile is missing its Minecraft version.", "error", "Cannot repair profile")
             return
 
         state.launcher_log_state["running"] = True
@@ -3977,14 +3989,17 @@ def main(page: ft.Page):
             value=None,
             eta="",
         )
+        notify(f"Repairing and verifying {target.get('name', 'Installation')}…", "info", "Repair started")
 
         is_modded = loader.lower() != "vanilla"
-        tracker = InstallationProgressTracker(total_files=0, is_modded=is_modded)
+        tracker = InstallationProgressTracker(is_modded=is_modded)
 
         def report_status(status):
             status_str = str(status)
             add_log_line(f"[*] {status_str}")
             tracker.on_status(status_str)
+            if not state.launcher_log_state.get("cancelling"):
+                update_launch_progress(status_str, value=None, eta="")
 
         def set_progress_maximum(maximum):
             tracker.on_max(maximum)
@@ -4017,8 +4032,9 @@ def main(page: ft.Page):
             while state.launcher_log_state.get(
                 "running"
             ) and state.launcher_log_state.get("downloading"):
-                ratio, status_text, eta_text = tracker.get_display_state()
-                update_launch_progress(status_text, ratio, eta_text)
+                if not state.launcher_log_state.get("cancelling"):
+                    ratio, status_text, eta_text = tracker.get_display_state()
+                    update_launch_progress(status_text, ratio, eta_text)
                 await asyncio.sleep(0.05)
 
         progress_task = None
@@ -4047,10 +4063,13 @@ def main(page: ft.Page):
             update_launch_progress(
                 f"Successfully repaired {target.get('name')}.", value=0.0, eta=""
             )
+            notify(f"Successfully repaired {target.get('name', 'the profile')}.", "success", "Repair complete")
         except DownloadCancelled:
             update_launch_progress("Repair cancelled.", value=0.0, eta="")
+            notify("The profile repair was cancelled.", "info", "Repair cancelled")
         except Exception as error:
             update_launch_progress(f"Repair failed: {error}", value=0.0, eta="")
+            notify(str(error), "error", "Repair failed")
         finally:
             if progress_task is not None:
                 progress_task.cancel()
@@ -4062,11 +4081,15 @@ def main(page: ft.Page):
             state.launcher_log_state["downloading"] = False
             state.launcher_log_state["cancelling"] = False
             state.launcher_log_state["cancel_event"] = None
+            finish_launch_progress()
             refresh_launch_button()
             rebuild_profiles_view()
             rebuild_library_view()
 
-    def open_new_profile_page():
+    def open_new_profile_page(*, as_instance=False):
+        if as_instance:
+            instance_switch.value = True
+            np_folder_field.visible = True
         update_profile_inputs_defaults()
         navigate("new_profile")
 
@@ -4154,55 +4177,11 @@ def main(page: ft.Page):
                 pid = profile.get("id")
                 is_inst = bool(profile.get("is_instance"))
                 loader_val = (profile.get("loader") or "Vanilla").strip().lower()
-                is_modded_instance = is_inst and (loader_val != "vanilla")
-
-                icon_box = ft.Container(
-                    width=36,
-                    height=36,
-                    border_radius=0,
-                    bgcolor=ft.Colors.BLACK_38,
-                    alignment=ft.Alignment.CENTER,
-                    content=build_profile_icon_content(
-                        profile,
-                        size=32,
-                        default_icon_size=24,
-                        # color=accent_color,
-                    ),
-                )
-
-                title_row_controls = [
-                    ft.Text(
-                        profile.get("name", "Unnamed Profile"),
-                        font_family="ps",
-                        color="#ffffff",
-                        size=16,
-                        weight=ft.FontWeight.W_500,
-                    ),
-                ]
-                title_row_controls.extend(build_profile_badges(profile))
-
-                details_text = ft.Text(
-                    format_profile_details(profile),
-                    size=12,
-                    color="#747e95",
-                )
-
-                info_column = ft.Column(
-                    [
-                        ft.Row(
-                            title_row_controls,
-                            spacing=8,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
-                        details_text,
-                    ],
-                    spacing=2,
-                    expand=True,
-                )
+                is_modded_profile = loader_val in {"fabric", "forge", "neoforge", "quilt"}
 
                 actions = []
 
-                if is_modded_instance:
+                if is_modded_profile:
                     mods_btn = ft.IconButton(
                         icon=ft.Icons.EXTENSION_SHARP,
                         icon_color=accent_color,
@@ -4212,7 +4191,7 @@ def main(page: ft.Page):
                             overlay_color=ft.Colors.TRANSPARENT,
                             padding=4,
                         ),
-                        on_click=lambda e: set_active_tab("mods"),
+                        on_click=lambda e, p=profile: open_profile_mods(p),
                     )
                     actions.append(mods_btn)
 
@@ -4271,12 +4250,6 @@ def main(page: ft.Page):
                 )
                 actions.append(remove_btn)
 
-                actions_row = ft.Row(
-                    actions,
-                    spacing=4,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                )
-
                 card = ft.Container(
                     key=ft.ValueKey(f"library-profile-{pid}"),
                     data=pid,
@@ -4285,19 +4258,16 @@ def main(page: ft.Page):
                     border_radius=5,
                     animate=ft.Animation(180, ft.AnimationCurve.EASE_OUT_CUBIC),
                     animate_scale=ft.Animation(180, ft.AnimationCurve.EASE_OUT_CUBIC),
-                    content=profile_card_surface(
+                    content=profile_row(
+                        profile,
+                        icon=build_profile_icon_content(profile, size=32, default_icon_size=24),
+                        badges=build_profile_badges(profile),
+                        details=format_profile_details(profile),
+                        actions=actions,
                         glow_color=accent_color,
-                        horizontal_padding=16,
-                        content=ft.Row(
-                            [
-                                profile_drag_region(
-                                    icon_box, info_column, color="#747e95",
-                                    view=library_list_view, profile_id=pid,
-                                ),
-                                actions_row,
-                            ],
-                            spacing=12,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        body_builder=lambda icon, info, profile_id=pid: profile_drag_region(
+                            icon, info, color="#747e95",
+                            view=library_list_view, profile_id=profile_id,
                         ),
                     ),
                 )
@@ -4327,7 +4297,8 @@ def main(page: ft.Page):
             if picked_path:
                 s = storage.load_settings()
                 s["java_path"] = picked_path
-                storage.save_settings(s)
+                if not save_settings_with_notification(s):
+                    return
                 rebuild_settings_view()
 
     java_file_picker = ft.FilePicker(on_result=on_java_file_picked)
@@ -4345,6 +4316,7 @@ def main(page: ft.Page):
                 subprocess.Popen(["xdg-open", str(p)])
         except Exception as err:
             print(f"Failed to open directory {p}: {err}")
+            notify(f"Could not open the folder: {err}", "error")
 
     def make_setting_card(
         title: str,
@@ -4393,7 +4365,8 @@ def main(page: ft.Page):
 
         def do_reset(e):
             page.pop_dialog()
-            storage.save_settings(storage.DEFAULT_SETTINGS.copy())
+            if not save_settings_with_notification(storage.DEFAULT_SETTINGS.copy(), message="All settings have been restored to their defaults."):
+                return
             discord_presence.set_enabled(storage.DEFAULT_SETTINGS["discord_rpc"])
             home_skin_viewer.set_enabled(storage.DEFAULT_SETTINGS["enable_head_tracking"])
             bg_gradient_layer.opacity = 1.0
@@ -4455,34 +4428,22 @@ def main(page: ft.Page):
 
         def on_launch_action_change(e):
             s = storage.load_settings()
-            s["launch_action"] = e.control.value
-            storage.save_settings(s)
+            s["launch_action"] = launch_action_dd.value
+            save_settings_with_notification(s)
 
-        launch_action_dd = ft.Dropdown(
-            value=str(settings.get("launch_action", "Hide launcher")),
-            options=[
-                ft.dropdown.Option("Hide launcher", "Hide Launcher"),
-                ft.dropdown.Option("Keep launcher open", "Keep Launcher Open"),
-                ft.dropdown.Option("Close launcher", "Close Launcher"),
-            ],
-            width=200,
-            height=38,
-            border=ft.OutlineInputBorder(
-                border_radius=5,
-                side=ft.BorderSide(1, accent_color),
-            ),
-            # bgcolor=input_bg_color,
-            color=accent_color,
-            text_size=12,
-            text_style=ft.TextStyle(font_family="ps"),
-            on_select=on_launch_action_change,
+        launch_action_dd = AcrylicSelector(
+            [("Hide launcher", "Hide Launcher"), ("Keep launcher open", "Keep Launcher Open"),
+             ("Close launcher", "Close Launcher")],
+            str(settings.get("launch_action", "Hide launcher")), on_launch_action_change,
+            width=240, pixel=True, hint="After launch",
         )
 
         def on_enable_orbs_change(e):
             s = storage.load_settings()
             val = bool(e.control.value)
             s["enable_orbs"] = val
-            storage.save_settings(s)
+            if not save_settings_with_notification(s):
+                return
             bg_gradient_layer.opacity = 1.0 if val else 0.0
             try:
                 bg_gradient_layer.update()
@@ -4500,7 +4461,8 @@ def main(page: ft.Page):
             s = storage.load_settings()
             enabled = bool(e.control.value)
             s["enable_head_tracking"] = enabled
-            storage.save_settings(s)
+            if not save_settings_with_notification(s):
+                return
             home_skin_viewer.set_enabled(enabled)
 
         head_tracking_switch = ft.Switch(
@@ -4513,7 +4475,7 @@ def main(page: ft.Page):
         def on_capture_logs_change(e):
             s = storage.load_settings()
             s["capture_logs"] = bool(e.control.value)
-            storage.save_settings(s)
+            save_settings_with_notification(s)
 
         logs_switch = ft.Switch(
             value=bool(settings.get("capture_logs", True)),
@@ -4526,7 +4488,8 @@ def main(page: ft.Page):
             s = storage.load_settings()
             enabled = bool(e.control.value)
             s["discord_rpc"] = enabled
-            storage.save_settings(s)
+            if not save_settings_with_notification(s):
+                return
             discord_presence.set_enabled(enabled)
 
         discord_rpc_switch = ft.Switch(
@@ -4611,7 +4574,7 @@ def main(page: ft.Page):
                 pass
             s = storage.load_settings()
             s["ram_mb"] = val
-            storage.save_settings(s)
+            save_settings_with_notification(s)
 
         ram_slider.on_change = on_slider_change
 
@@ -4628,7 +4591,7 @@ def main(page: ft.Page):
                     pass
                 s = storage.load_settings()
                 s["ram_mb"] = val
-                storage.save_settings(s)
+                save_settings_with_notification(s)
 
         ram_field.on_change = on_field_change
 
@@ -4643,7 +4606,7 @@ def main(page: ft.Page):
                 pass
             s = storage.load_settings()
             s["ram_mb"] = target_mb
-            storage.save_settings(s)
+            save_settings_with_notification(s)
 
         preset_chips = []
         ram_options = [
@@ -4689,7 +4652,8 @@ def main(page: ft.Page):
         def reset_java_auto(e):
             s = storage.load_settings()
             s["java_path"] = ""
-            storage.save_settings(s)
+            if not save_settings_with_notification(s):
+                return
             rebuild_settings_view()
 
         async def pick_java_binary(e):
@@ -4702,7 +4666,8 @@ def main(page: ft.Page):
                 if picked_path:
                     s = storage.load_settings()
                     s["java_path"] = picked_path
-                    storage.save_settings(s)
+                    if not save_settings_with_notification(s):
+                        return
                     rebuild_settings_view()
 
         java_buttons = [
@@ -4832,7 +4797,7 @@ def main(page: ft.Page):
                     s = storage.load_settings()
                     s["window_width"] = w
                     s["window_height"] = h
-                    storage.save_settings(s)
+                    save_settings_with_notification(s)
 
         w_field.on_change = lambda e: save_resolution()
         h_field.on_change = lambda e: save_resolution()
@@ -4848,7 +4813,7 @@ def main(page: ft.Page):
             s = storage.load_settings()
             s["window_width"] = w
             s["window_height"] = h
-            storage.save_settings(s)
+            save_settings_with_notification(s)
 
         res_presets = [
             ("854 × 480", 854, 480),
@@ -4886,7 +4851,7 @@ def main(page: ft.Page):
         def on_fullscreen_change(e):
             s = storage.load_settings()
             s["fullscreen"] = bool(e.control.value)
-            storage.save_settings(s)
+            save_settings_with_notification(s)
 
         fullscreen_switch = ft.Switch(
             value=bool(settings.get("fullscreen", False)),
@@ -4898,7 +4863,7 @@ def main(page: ft.Page):
         def on_skins_change(e):
             s = storage.load_settings()
             s["enable_custom_skins"] = bool(e.control.value)
-            storage.save_settings(s)
+            save_settings_with_notification(s)
 
         skins_switch = ft.Switch(
             value=bool(settings.get("enable_custom_skins", True)),
@@ -4941,8 +4906,11 @@ def main(page: ft.Page):
                 r.clipboard_append(text)
                 r.update()
                 r.destroy()
-            except Exception:
-                pass
+                notify("Copied to clipboard.", "success", "Copied")
+                return True
+            except Exception as error:
+                notify(f"Could not copy to the clipboard: {error}", "error")
+                return False
 
         def revert_pill(target_btn, original_content):
             time.sleep(1.8)
@@ -4953,7 +4921,8 @@ def main(page: ft.Page):
                 pass
 
         def on_pill_copy(btn, text_to_copy, success_label="Copied!"):
-            copy_text(text_to_copy)
+            if not copy_text(text_to_copy):
+                return
             orig_content = btn.content
             btn.content = ft.Row(
                 [
@@ -5085,7 +5054,7 @@ def main(page: ft.Page):
             content=github_img,
             tooltip="View GitHub Repository",
             ink=True,
-            on_click=lambda e: webbrowser.open("https://github.com/jaydeeppatil23"),
+            on_click=lambda e: webbrowser.open("https://github.com/jaydeeppatil23/Gr8Launcher"),
         )
 
         coffee_img = ft.Image(
@@ -5437,14 +5406,14 @@ def main(page: ft.Page):
     rebuild_settings_view_fn = do_rebuild_settings_view
     do_rebuild_settings_view()
 
-    main_content_area.content = home_content
+    ordinary_tab_host.content = home_content
+    main_content_area.content = main_tab_stack
 
     main_layout = ft.Column(
         expand=True,
         spacing=0,
         controls=[
             main_content_area,
-            home_progress_area,
         ],
     )
 
@@ -5457,20 +5426,8 @@ def main(page: ft.Page):
         ],
     )
 
-    new_profile_back_btn = ft.Container(
-        content=ft.Row(
-            [
-                ft.Icon(
-                    ft.Icons.ARROW_BACK_IOS_NEW_ROUNDED, color=accent_color, size=14
-                ),
-                ft.Text("Cancel", font_family="ps", color=accent_color, size=15),
-            ],
-            spacing=6,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        ),
-        padding=ft.Padding.symmetric(horizontal=12, vertical=8),
-        border_radius=5,
-        on_click=lambda e: navigate("home"),
+    new_profile_back_btn = launcher_back_button(
+        lambda e: navigate("home"), label="Cancel",
     )
 
     np_state = {
@@ -5771,6 +5728,7 @@ def main(page: ft.Page):
         is_instance = bool(instance_switch.value)
         folder_raw = (np_folder_field.value or "").strip()
         if is_instance and not validate_instance_folder():
+            notify(np_folder_error_text.value, "warning", "Check the instance folder")
             return
 
         loader = np_state["loader"]
@@ -5813,6 +5771,7 @@ def main(page: ft.Page):
             )
         except (OSError, ValueError) as error:
             show_profile_creation_error(str(error))
+            notify(str(error), "error", "Could not create profile")
             return
 
         select_profile(new_pid)
@@ -5826,6 +5785,7 @@ def main(page: ft.Page):
         np_folder_error_text.visible = False
 
         navigate("home")
+        notify(f"Created {name}.", "success", "Profile created")
 
     np_create_btn = SimpleButton(
         content=ft.Container(
@@ -5959,6 +5919,7 @@ def main(page: ft.Page):
                     np_select_icon(selected_file)
             except Exception as err:
                 print(f"Failed to pick external icon: {err}")
+                notify(f"Could not select an icon: {err}", "error")
 
         threading.Thread(target=_choose, daemon=True).start()
 
@@ -6292,9 +6253,6 @@ def main(page: ft.Page):
                     alignment=ft.Alignment.CENTER,
                     content=ft.Row(
                         [
-                            ft.ProgressRing(
-                                width=18, height=18, color=accent_color, stroke_width=2
-                            ),
                             ft.Text(
                                 "Loading Minecraft versions...",
                                 size=13,
@@ -6422,6 +6380,7 @@ def main(page: ft.Page):
             return
 
         _cached_mc_versions["loading"] = True
+        catalog_activity = progress_host.begin("Fetching Minecraft versions...", priority=15)
         update_mc_version_list_ui()
 
         def _fetch():
@@ -6442,7 +6401,9 @@ def main(page: ft.Page):
                         trigger_fetch_loader_versions(np_state["loader"], latest, force=True)
             except Exception as err:
                 print(f"Failed to fetch version catalog: {err}")
+                notify("Could not load Minecraft versions. Check your connection and try again.", "warning", "Versions unavailable")
             finally:
+                catalog_activity.finish()
                 _cached_mc_versions["loading"] = False
                 update_mc_version_list_ui()
 
@@ -6512,6 +6473,7 @@ def main(page: ft.Page):
 
         # Mark as actively loading
         _cached_loader_versions[cache_key] = None
+        loader_activity = progress_host.begin(f"Fetching {loader_key} versions...", priority=15)
         update_loader_version_list_ui()
 
         def _fetch():
@@ -6524,7 +6486,10 @@ def main(page: ft.Page):
                 print(
                     f"Failed to fetch loader versions for {loader_key} {mc_ver}: {err}"
                 )
+                notify(f"Could not load {loader_key} versions for Minecraft {mc_ver}.", "warning", "Loader versions unavailable")
                 vers = []
+            finally:
+                loader_activity.finish()
             _cached_loader_versions[cache_key] = vers
             if np_state["loader"] == loader_key and np_state["mc_version"] == mc_ver:
                 if not np_state["loader_version"]:
@@ -6567,9 +6532,6 @@ def main(page: ft.Page):
                     alignment=ft.Alignment.CENTER,
                     content=ft.Row(
                         [
-                            ft.ProgressRing(
-                                width=20, height=20, color=accent_color, stroke_width=2
-                            ),
                             ft.Text(
                                 f"Loading {loader_key} versions...",
                                 size=13,
@@ -6940,6 +6902,11 @@ def main(page: ft.Page):
             await asyncio.sleep(0.08)
 
     def navigate(route_name: str):
+        if active_tab == "mods":
+            if route_name == "home":
+                mods_content.enter()
+            else:
+                mods_content.leave()
         if route_name == "home":
             target = home_view
             if not has_home_animated[0]:
@@ -6951,6 +6918,12 @@ def main(page: ft.Page):
         else:
             return
 
+        progress_host.padding = ft.Padding.only(left=210 if route_name == "home" else 20, right=24, top=4, bottom=8)
+        progress_host.set_show_text(route_name == "home" and active_tab == "home")
+        try:
+            progress_host.update()
+        except RuntimeError:
+            pass
         discord_presence.set_page(active_tab if route_name == "home" else route_name)
         if content_area.content != target:
             home_skin_viewer.suspend()
@@ -7015,13 +6988,27 @@ def main(page: ft.Page):
         spacing=0,
         controls=[
             custom_title_bar,
-            content_area,
+            ft.Stack(
+                expand=True,
+                controls=[
+                    # The sidebar reserves only the bar, matching the Library layout.
+                    ft.Container(
+                        left=0, top=0, right=0, bottom=ProgressHost.BAR_AREA_HEIGHT,
+                        content=content_area,
+                    ),
+                    ft.Container(
+                        left=0, right=0, bottom=0,
+                        content=progress_host,
+                    ),
+                ],
+            ),
         ],
     )
 
     # Root stack isolating the background animation from the UI elements
     root_layout = ft.Stack(
         expand=True,
+        on_size_change=toasts.resize,
         controls=[
             bg_gradient_layer,
             ft.GestureDetector(
@@ -7034,9 +7021,14 @@ def main(page: ft.Page):
                 on_size_change=on_home_pointer_resize,
             ),
             profile_dialogs,
+            toasts,
         ],
     )
     page.add(root_layout)
+    toasts.start()
+    progress_host.padding = ft.Padding.only(left=210 if is_initial_logged_in else 20, right=24, top=4, bottom=8)
+    progress_host.set_show_text(is_initial_logged_in and active_tab == "home")
+    progress_host.start()
     refresh_discord_player()
     discord_presence.set_page(active_tab if is_initial_logged_in else "login")
     discord_presence.start()
@@ -7123,8 +7115,10 @@ def main(page: ft.Page):
             if sync_local_installations():
                 rebuild_profiles_view()
                 rebuild_library_view()
+                notify("Your library is synced with local Minecraft installations.", "update", "Library updated")
         except Exception as err:
             print(f"Error syncing local Minecraft installations: {err}")
+            notify("Could not sync local Minecraft installations.", "warning", "Library sync failed")
 
     sync_external_launcher_profiles()
 
