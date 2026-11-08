@@ -10,7 +10,8 @@ import webbrowser
 
 import flet as ft
 
-from mod_services import LocalMod, ModManager, ModrinthClient, jar_base_name, newer_compatible_version
+from mod_services import (LocalMod, ModManager, ModrinthClient, jar_base_name, newer_compatible_version,
+                          version_loader_compatible, version_matches_environment)
 from mod_markdown import normalize_mod_markdown
 from ui_controls import SimpleInput, AcrylicSelector, launcher_button, launcher_back_button, launcher_icon_button, rounded_artwork, ACCENT, MUTED
 from ui_motion import StaggeredReveal
@@ -225,6 +226,23 @@ class ModDetailsPage(ft.Container):
                                               [] if isinstance(results[1], Exception) else results[1],
                                               [] if isinstance(results[2], Exception) else results[2])
                 error = next((str(result) for result in results if isinstance(result, Exception)), "")
+                profile = (self._get_profile() or {}).copy()
+                current_id = (matched or {}).get("id") or (item.version_id if isinstance(item, LocalMod) else None)
+                current = next((version for version in versions if version.get("id") == current_id), None)
+                if current and str(profile.get("loader", "")).lower() == "fabric" and profile.get("loader_version"):
+                    def check_loader_updates() -> None:
+                        providers, _ = manager.profile_providers(profile.get("minecraft_version", ""), "fabric",
+                                                                  profile["loader_version"], profile.get("version_id", ""), runtime_only=True)
+                        def compatible(version: dict) -> bool:
+                            version["_profile_compatible"] = version_matches_environment(
+                                self.client, version, "fabric", profile["loader_version"], providers)
+                            return version["_profile_compatible"]
+                        # Check each release type so changing the dropdown stays immediate.
+                        # Stop at its first compatible update rather than probing all history.
+                        for release_type in ("release", "beta", "alpha"):
+                            newer_compatible_version(current, versions, profile.get("minecraft_version", ""), "fabric",
+                                                     release_type=release_type, check_loader=compatible)
+                    await asyncio.to_thread(check_loader_updates)
         except Exception as exc:
             error = str(exc)
         finally:
@@ -263,8 +281,11 @@ class ModDetailsPage(ft.Container):
 
     def _compatible(self, version: dict) -> bool:
         profile = self._get_profile() or {}
+        loader = str(profile.get("loader", "")).lower()
         return (profile.get("minecraft_version") in version.get("game_versions", [])
-                and str(profile.get("loader", "")).lower() in version.get("loaders", []))
+                and loader in version.get("loaders", [])
+                and version.get("_profile_compatible") is not False
+                and version_loader_compatible(version, loader, profile.get("loader_version", "")) is not False)
 
     def _render_header(self) -> None:
         item = self.item
@@ -497,10 +518,13 @@ class ModDetailsPage(ft.Container):
             if version:
                 self._install_version(version)
             return
-        compatible = [version for version in self.versions if self._compatible(version)]
-        if compatible:
-            version = next((v for v in compatible if v.get("version_type") == "release"), compatible[0])
-            self._install_version(version)
+        if (self._active and self._profile_id == (self._get_profile() or {}).get("id")
+                and self._can_change() and any(self._compatible(version) for version in self.versions)):
+            # Automatic installation uses the backend's Loader-aware selection.
+            project_id = self.project.get("id") or (self.item.project_id if isinstance(self.item, LocalMod)
+                                                     else (self.item or {}).get("project_id"))
+            self._on_install({"project_id": project_id,
+                              "title": self.title.value}, None)
 
     def _latest_update(self) -> dict | None:
         if not self.local or not self.local.version_id:
@@ -511,7 +535,11 @@ class ModDetailsPage(ft.Container):
         profile = self._get_profile() or {}
         try:
             return newer_compatible_version(current, self.versions, profile.get("minecraft_version", ""),
-                                             str(profile.get("loader", "")).lower(), release_type=self.release_filter.value)
+                                             str(profile.get("loader", "")).lower(), release_type=self.release_filter.value,
+                                             check_loader=lambda version: version.get("_profile_compatible") is not False and (
+                                                 not callable(getattr(self.client, "fabric_loader_metadata", None))
+                                                 or not profile.get("loader_version") or version_loader_compatible(
+                                                     version, str(profile.get("loader", "")).lower(), profile["loader_version"]) is True))
         except (ValueError, KeyError, TypeError):
             return None
 

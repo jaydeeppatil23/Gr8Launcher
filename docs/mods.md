@@ -113,6 +113,19 @@ and 24 px right padding and fills the remaining window at 1100 × 650 or larger.
 - Modrinth results match the profile's exact Minecraft version and Fabric,
   Forge, NeoForge, or Quilt loader. Server-only projects are excluded from search.
   Stable releases are preferred, with a compatible prerelease used if necessary.
+- Dependency providers include the selected installed version's runtime libraries,
+  inherited classpath, bundled JARs, and native provided aliases. Loader-supplied
+  libraries satisfy native requirements without adding duplicate files to `mods/`.
+  The confirmation identifies these dependencies as provided by the profile.
+  Fabric planning also checks native dependency ranges and conflicts before
+  confirmation. Automatic version selection considers enabled dependencies and
+  runtime libraries, so an older compatible release can be selected when needed.
+  Required native dependencies omitted from Modrinth's listing are resolved using
+  a bounded project lookup/search, with the actual JAR's mod ID and version checked
+  before inclusion. Ambiguous matches require an explicit dependency choice;
+  existing dependencies are never silently replaced or enabled.
+  Profile metadata and runtime provider checksums are captured during planning
+  and rechecked before installation. Runtime libraries stay read-only.
 - Clicking a mod opens Overview, Versions, and Gallery (when available). Overview
   includes full Markdown documentation, authors, license, categories, environment,
   downloads, local file details, and available source/wiki/issues/community links.
@@ -145,7 +158,14 @@ and 24 px right padding and fills the remaining window at 1100 × 650 or larger.
   flow. The managed-mod index changes only when an installation is confirmed;
   an optional checksum identity cache also supports external JAR recognition.
 - Check updates manually looks for newer Modrinth versions matching the profile's
-  Minecraft version and loader. The release dropdown in Versions also controls
+  Minecraft version, loader, and exact Fabric Loader build. Fabric candidates are
+  checked against the Loader requirements in their JAR metadata, including bundled
+  mods. If a newer release needs a newer Loader, selection falls back to the newest
+  matching release that the profile can run. If no compatible newer release exists,
+  the installed version stays in place and no update is offered. Automatic installs
+  and unpinned dependency downloads use the same Loader fallback; choosing a specific
+  version still installs that version only if it passes validation.
+  The release dropdown in Versions also controls
   update suggestions: Stable excludes prereleases; All releases includes them;
   Beta and Alpha offer only that release type. Change it and run Check updates
   again for the newest matching publication. Changing the selection clears
@@ -154,14 +174,18 @@ and 24 px right padding and fills the remaining window at 1100 × 650 or larger.
   prerelease. Each available update has an Update
   action that opens the existing version/dependency confirmation and backup flow.
   Disabled mods stay disabled after updating. Unknown JARs and failed online
-  checks are reported as incomplete. Checking updates downloads no JARs and never
-  changes an installed file. Mod details also expose an Update action when their
+  checks are reported as incomplete. Checking updates reads Fabric metadata using
+  cached CDN byte ranges without installing a mod. Servers that ignore ranges can
+  provide a small archive for metadata inspection; larger unsupported transfers
+  are reported as incomplete. Checking never changes an installed file.
+  Mod details also expose an Update action when their
   loaded version history contains a newer matching version.
 - Update checks are saved in the instance's `gr8launcher/mod-updates.json`, including
   checks that found no updates. Navigation and launcher restarts restore the
   matching result without another Modrinth check, and the last checked release
   filter is restored when reopening an instance. Saved results are scoped to
-  Minecraft version, loader/build, and release filter and are discarded when the
+  Minecraft version, loader/build, installed version ID, runtime providers, and
+  release filter and are discarded when the
   installed JAR names, enabled states, or checksums change. A `Saved check` note
   identifies restored results; Refresh clears the current saved check so Check
   updates can request fresh results. Failed online checks do not replace a saved

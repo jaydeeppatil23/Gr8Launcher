@@ -64,11 +64,13 @@ class ModsPage(ft.Container):
         profile_details: Callable[[dict], str] | None = None,
         progress: ProgressHost | None = None,
         entrance: StaggeredReveal | None = None,
+        runtime_directory: Path | None = None,
     ):
         self._page = page
         self._get_profiles = get_profiles
         self._selected_profile = selected_profile
         self._game_directory = game_directory
+        self._runtime_directory = runtime_directory
         self._is_running = is_running
         self._show_notification = notify
         self._dialogs = dialogs
@@ -359,7 +361,7 @@ class ModsPage(ft.Container):
         previous_profile = self.profile or {}
         previous_manager = self.manager
         changed = any(previous_profile.get(key) != (profile or {}).get(key)
-                      for key in ("id", "loader", "loader_version", "minecraft_version", "is_instance"))
+                      for key in ("id", "loader", "loader_version", "minecraft_version", "version_id", "is_instance"))
         self.profile = profile.copy() if profile else None
         self._render_profile_header()
         self.error = ""
@@ -371,7 +373,7 @@ class ModsPage(ft.Container):
                     raise ValueError("This instance folder is missing. Restore it or edit the profile's game folder.")
                 self.manager = self._managers.get(directory)
                 if self.manager is None:
-                    self.manager = self._managers[directory] = ModManager(directory)
+                    self.manager = self._managers[directory] = ModManager(directory, runtime_directory=self._runtime_directory)
             except (OSError, ValueError) as error:
                 self.error = str(error)
         if changed or previous_manager is not self.manager:
@@ -386,7 +388,7 @@ class ModsPage(ft.Container):
             self.total_hits = 0
         if self._compatible():
             context = (self.manager.game_directory, self.profile["minecraft_version"], self.profile["loader"].lower(),
-                       self.profile.get("loader_version", ""))
+                       self.profile.get("loader_version", ""), self.profile.get("version_id", ""))
             release_type = self._update_filters.get(context)
             if release_type is None:
                 release_type = self.manager.saved_update_release_type(*context[1:]) or self.details_page.release_filter.value
@@ -471,7 +473,7 @@ class ModsPage(ft.Container):
         self._update()
         if self._compatible():
             context = (self.manager.game_directory, self.profile["minecraft_version"], self.profile["loader"].lower(),
-                       self.profile.get("loader_version", ""))
+                       self.profile.get("loader_version", ""), self.profile.get("version_id", ""))
             self._update_filters[context] = self.details_page.release_filter.value
             self._page.run_task(self._restore_update_cache, self._generation, self.profile.copy(), self.manager,
                                 self.details_page.release_filter.value)
@@ -489,7 +491,8 @@ class ModsPage(ft.Container):
 
     async def _restore_update_cache(self, generation: int, profile: dict, manager: ModManager, release_type: str) -> None:
         result = await asyncio.to_thread(manager.cached_update_check, profile["minecraft_version"], profile["loader"].lower(),
-                                         loader_version=profile.get("loader_version", ""), release_type=release_type)
+                                         loader_version=profile.get("loader_version", ""), release_type=release_type,
+                                         version_id=profile.get("version_id", ""))
         if (generation == self._generation and manager is self.manager and self._active
                 and release_type == self.details_page.release_filter.value and not self.checking_updates):
             self._apply_update_check(result, saved=True)
@@ -517,7 +520,8 @@ class ModsPage(ft.Container):
         try:
             result = await asyncio.to_thread(manager.check_updates, self.client,
                                              profile["minecraft_version"], profile["loader"].lower(),
-                                             release_type=release_type, loader_version=profile.get("loader_version", ""))
+                                             release_type=release_type, loader_version=profile.get("loader_version", ""),
+                                             version_id=profile.get("version_id", ""))
             if (generation != self._generation or manager is not self.manager or not self._active
                     or self._update_activity is not activity
                     or release_type != self.details_page.release_filter.value):
@@ -585,7 +589,8 @@ class ModsPage(ft.Container):
                     return
                 local = await asyncio.to_thread(manager.list_mods)
                 saved_check = await asyncio.to_thread(manager.cached_update_check, profile["minecraft_version"], profile["loader"].lower(),
-                                                      loader_version=profile.get("loader_version", ""), release_type=release_type)
+                                                      loader_version=profile.get("loader_version", ""), release_type=release_type,
+                                                      version_id=profile.get("version_id", ""))
                 if generation != self._generation:
                     return
                 if view == "browse":
@@ -1088,13 +1093,13 @@ class ModsPage(ft.Container):
         self.status.value = "Checking version and required dependencies..."
         self._update()
         try:
-            kwargs = {"loader_version": profile.get("loader_version", "")}
+            kwargs = {"loader_version": profile.get("loader_version", ""), "version_id": profile.get("version_id", "")}
             if selected_version:
                 kwargs["selected_version"] = selected_version
             if updates or expected_update:
                 plan = await asyncio.to_thread(manager.plan_updates, self.client, updates or (expected_update,), profile["minecraft_version"],
                                                profile["loader"].lower(), loader_version=profile.get("loader_version", ""),
-                                               release_type=self.details_page.release_filter.value)
+                                               release_type=self.details_page.release_filter.value, version_id=profile.get("version_id", ""))
             else:
                 plan = await asyncio.to_thread(manager.plan_install, self.client, hit["project_id"], profile["minecraft_version"], profile["loader"].lower(), **kwargs)
             if generation != self._generation or not self._active:
@@ -1141,6 +1146,7 @@ class ModsPage(ft.Container):
                         manager.plan_install, self.client, hit["project_id"], profile["minecraft_version"], profile["loader"].lower(),
                         selected_version=plan.root_version or selected_version,
                         loader_version=profile.get("loader_version", ""), optional_projects=tuple(review.optional_projects),
+                        version_id=profile.get("version_id", ""),
                         **({"selected_versions": plan.root_versions} if updates else {}),
                     )
                     if closed:
@@ -1168,7 +1174,7 @@ class ModsPage(ft.Container):
                 await asyncio.sleep(0.2)
                 current_profile = self.profile or {}
                 if (manager is not self.manager or any(current_profile.get(key) != profile.get(key)
-                        for key in ("id", "loader", "loader_version", "minecraft_version"))):
+                        for key in ("id", "loader", "loader_version", "minecraft_version", "version_id"))):
                     self._show_notification("The profile changed. Review the mod installation again for its current version.", "warning", "Mods")
                     return
                 with track_progress(self._progress, f"Downloading {hit.get('title', 'mod')}...", priority=100) as download:

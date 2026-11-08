@@ -3779,6 +3779,7 @@ def main(page: ft.Page):
         get_profiles=lambda: get_launch_profiles(),
         selected_profile=lambda: get_selected_profile(),
         game_directory=lambda profile: get_profile_game_directory(profile),
+        runtime_directory=Path(minecraft_directory),
         is_running=lambda: bool(state.launcher_log_state.get("running")),
         notify=notify,
         dialogs=lambda: profile_dialogs,

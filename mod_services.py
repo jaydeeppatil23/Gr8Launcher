@@ -170,6 +170,9 @@ class InstallPlan:
     minecraft_version: str = ""
     root_version: dict | None = None
     root_versions: tuple[dict, ...] = ()
+    version_id: str = ""
+    runtime_mods: tuple[dict, ...] = ()
+    runtime_snapshot: tuple[tuple[str, str], ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -185,10 +188,13 @@ class UpdateCheck:
     updates: tuple[ModUpdate, ...]
     warnings: tuple[str, ...] = ()
     snapshot: tuple[tuple[str, str], ...] | None = None
+    version_id: str = ""
+    runtime_snapshot: tuple[tuple[str, str], ...] | None = None
 
 
 def newer_compatible_version(current: dict, versions: list[dict], minecraft_version: str, loader: str, *,
-                             release_only: bool = True, release_type: str | None = None) -> dict | None:
+                             release_only: bool = True, release_type: str | None = None,
+                             loader_version: str = "", check_loader: Callable[[dict], bool] | None = None) -> dict | None:
     """Find a newer matching publication, optionally excluding prereleases."""
     selected_type = release_type if release_type is not None else "release" if release_only else "all"
     if selected_type not in {"all", "release", "beta", "alpha"}:
@@ -207,6 +213,11 @@ def newer_compatible_version(current: dict, versions: list[dict], minecraft_vers
                         key=published, reverse=True)
     for version in compatible:
         if version.get("id") != current.get("id") and published(version) > published(current):
+            if check_loader is not None:
+                if not check_loader(version):
+                    continue
+            elif loader_version and version_loader_compatible(version, loader, loader_version) is not True:
+                continue
             return version
     return None
 
@@ -348,6 +359,16 @@ def _metadata(path: Path | io.BytesIO) -> dict:
     return result
 
 
+def _fabric_native_mods(data: dict) -> list[dict]:
+    rules = []
+    for key in ("depends", "breaks"):
+        for target, requirement in (data.get(key) or {}).items():
+            rules.append({"target": target, "requirement": requirement, "conflict": key == "breaks"})
+    mod = {"id": data.get("id"), "name": data.get("name") or data.get("id"),
+           "version": str(data.get("version", "")), "rules": rules}
+    return [mod] + [{**mod, "id": alias, "rules": []} for alias in data.get("provides", []) if isinstance(alias, str)]
+
+
 def _native_mods(path: Path | io.BytesIO) -> list[dict]:
     """Keep each mod's native version constraints, including multi-mod Forge JARs."""
     with zipfile.ZipFile(path) as archive:
@@ -360,14 +381,7 @@ def _native_mods(path: Path | io.BytesIO) -> list[dict]:
 
         raw = read("fabric.mod.json")
         if raw:
-            data = json.loads(raw)
-            rules = []
-            for key in ("depends", "breaks"):
-                for target, requirement in (data.get(key) or {}).items():
-                    rules.append({"target": target, "requirement": requirement, "conflict": key == "breaks"})
-            mod = {"id": data.get("id"), "name": data.get("name") or data.get("id"),
-                   "version": str(data.get("version", "")), "rules": rules}
-            return [mod] + [{**mod, "id": alias, "rules": []} for alias in data.get("provides", []) if isinstance(alias, str)]
+            return _fabric_native_mods(json.loads(raw))
         raw = read("quilt.mod.json")
         if raw:
             data = json.loads(raw).get("quilt_loader", {})
@@ -443,8 +457,12 @@ def _check_native_mod_set(files: list[tuple[Path, str]], installed: list[LocalMo
             path = directory / mod.filename
             changed.update(entry["id"] for entry in _native_mods(path) if entry.get("id"))
             changed.update(mod_id for child in _bundled_mod_files(path) for mod_id in child["mod_ids"])
+    _check_native_requirements(mods, changed, plan)
+
+
+def _native_providers(mods: list[dict], plan: InstallPlan) -> dict[str, list[dict]]:
     providers = {}
-    for mod in mods:
+    for mod in [*plan.runtime_mods, *mods]:
         providers.setdefault(mod["id"], []).append(mod)
     for target, candidates in providers.items():
         # A bundled copy must not mask an incompatible standalone mod version.
@@ -455,7 +473,12 @@ def _check_native_mod_set(files: list[tuple[Path, str]], installed: list[LocalMo
     for target, version in system.items():
         if target and version:
             providers[target] = [{"version": version, "name": target}]
-    for mod in mods:
+    return providers
+
+
+def _check_native_requirements(mods: list[dict], changed: set[str], plan: InstallPlan) -> None:
+    providers = _native_providers(mods, plan)
+    for mod in [*[{**mod, "new": False} for mod in plan.runtime_mods], *mods]:
         for rule in mod["rules"]:
             if rule.get("unsupported"):
                 if mod["new"]:
@@ -570,6 +593,211 @@ def _check_jar_loader(path: Path, loader: str, loader_version: str) -> None:
     _check_loader_metadata(metadata, loader, loader_version, metadata.get("name") or path.name)
     for bundled in _bundled_mod_files(path):
         _check_loader_metadata(bundled["metadata"], loader, loader_version, bundled["name"])
+
+
+class _RangeJar(io.RawIOBase):
+    """Seekable JAR metadata reads using bounded, cached CDN byte ranges."""
+
+    BLOCK_SIZE = 64 * 1024
+    MAX_TRANSFER = MAX_BUNDLED_TOTAL_BYTES + 4 * 1024 * 1024
+
+    def __init__(self, session: requests.Session, file: dict, headers: dict):
+        self.session, self.file, self.headers = session, file, headers
+        self.length = file.get("size")
+        self.position = 0
+        self.blocks: dict[int, bytes] = {}
+        self.full: bytes | None = None
+        self.transferred = 0
+        parsed = urlparse(str(file.get("url", "")))
+        if parsed.scheme != "https" or parsed.hostname != "cdn.modrinth.com":
+            raise ValueError("The mod download is not hosted on Modrinth.")
+        if not isinstance(self.length, int) or not 0 < self.length <= MAX_JAR_BYTES:
+            raise ValueError("Cannot verify this mod's metadata without a valid JAR size.")
+
+    def seekable(self) -> bool:
+        return True
+
+    def readable(self) -> bool:
+        return True
+
+    def tell(self) -> int:
+        return self.position
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        position = offset if whence == io.SEEK_SET else self.position + offset if whence == io.SEEK_CUR else self.length + offset
+        if whence not in (io.SEEK_SET, io.SEEK_CUR, io.SEEK_END) or position < 0:
+            raise ValueError("Invalid JAR metadata offset.")
+        self.position = position
+        return position
+
+    def _block(self, index: int) -> bytes:
+        start = index * self.BLOCK_SIZE
+        end = min(start + self.BLOCK_SIZE, self.length) - 1
+        if self.full is not None:
+            return self.full[start:end + 1]
+        if index in self.blocks:
+            return self.blocks[index]
+        headers = {**self.headers, "Range": f"bytes={start}-{end}", "Accept-Encoding": "identity"}
+        try:
+            with self.session.get(self.file["url"], headers=headers, timeout=(5, 25),
+                                  stream=True, allow_redirects=False) as response:
+                response.raise_for_status()
+                if response.status_code == 206:
+                    if response.headers.get("Content-Range") != f"bytes {start}-{end}/{self.length}":
+                        raise ValueError("Modrinth returned an invalid JAR metadata range.")
+                    expected = end - start + 1
+                elif response.status_code == 200 and self.length <= 2 * 1024 * 1024:
+                    # Small archives still work with mirrors that ignore Range.
+                    expected = self.length
+                else:
+                    raise ValueError("Cannot read this mod's metadata from the download server.")
+                data = bytearray()
+                for chunk in response.iter_content(self.BLOCK_SIZE):
+                    data.extend(chunk)
+                    self.transferred += len(chunk)
+                    if len(data) > expected or self.transferred > self.MAX_TRANSFER:
+                        raise ValueError("The mod exceeds the metadata size limit.")
+                if len(data) != expected:
+                    raise ValueError("The mod's metadata transfer was incomplete.")
+                payload = bytes(data)
+                if response.status_code == 200:
+                    hashes = self.file.get("hashes", {})
+                    algorithm = next((name for name in ("sha512", "sha1") if hashes.get(name)), None)
+                    if not algorithm or hashlib.new(algorithm, payload).hexdigest() != str(hashes[algorithm]).lower():
+                        raise ValueError("Mod verification failed. Retry the download.")
+                    self.full = payload
+                    return payload[start:end + 1]
+                self.blocks[index] = payload
+                return payload
+        except requests.RequestException as error:
+            raise ConnectionError("Could not verify the mod's Fabric Loader requirements. Retry when the connection is restored.") from error
+
+    def read(self, size: int = -1) -> bytes:
+        size = max(0, min(self.length - self.position, self.length if size < 0 else size))
+        if size > self.MAX_TRANSFER:
+            raise ValueError("The mod exceeds the metadata size limit.")
+        chunks = []
+        while size:
+            index, offset = divmod(self.position, self.BLOCK_SIZE)
+            block = self._block(index)
+            amount = min(size, len(block) - offset)
+            chunks.append(block[offset:offset + amount])
+            self.position += amount
+            size -= amount
+        return b"".join(chunks)
+
+
+def _fabric_loader_metadata(source: Path | io.BytesIO | _RangeJar) -> list[dict]:
+    """Read Loader predicates from Fabric metadata and declared bundled mods."""
+    result = []
+    remaining = MAX_BUNDLED_TOTAL_BYTES
+    count = 0
+
+    def scan(archive: zipfile.ZipFile, depth: int = 0) -> None:
+        nonlocal remaining, count
+        try:
+            info = archive.getinfo("fabric.mod.json")
+        except KeyError:
+            if depth == 0:
+                raise ValueError("This Fabric mod has no readable Fabric metadata.")
+            return
+        if info.file_size > 1024 * 1024:
+            raise ValueError("The mod exceeds the metadata size limit.")
+        data = json.loads(archive.read(info))
+        if not isinstance(data, dict) or not isinstance(data.get("depends", {}), dict):
+            raise ValueError("This mod has invalid Fabric metadata.")
+        metadata = {"name": data.get("name") or data.get("id") or "Bundled mod"}
+        metadata["native"] = _fabric_native_mods(data)
+        metadata["bundled"] = depth > 0
+        if "fabricloader" in data.get("depends", {}):
+            metadata["fabric_loader_requirement"] = data["depends"]["fabricloader"]
+        result.append(metadata)
+        entries = data.get("jars", [])
+        if not isinstance(entries, list):
+            raise ValueError("This mod has invalid bundled mod metadata.")
+        for entry in entries:
+            reference = entry.get("file") if isinstance(entry, dict) else None
+            if (not isinstance(reference, str) or reference.startswith(("/", "\\"))
+                    or ".." in reference.replace("\\", "/").split("/")):
+                raise ValueError("This mod has an invalid bundled JAR reference.")
+            count += 1
+            info = archive.getinfo(reference.removeprefix("./"))
+            if depth >= 4 or count > MAX_BUNDLED_FILES or info.file_size > min(remaining, MAX_BUNDLED_JAR_BYTES):
+                raise ValueError("The mod exceeds the bundled metadata size limit.")
+            remaining -= info.file_size
+            with zipfile.ZipFile(io.BytesIO(archive.read(info))) as child:
+                scan(child, depth + 1)
+
+    try:
+        with zipfile.ZipFile(source) as archive:
+            scan(archive)
+    except (zipfile.BadZipFile, KeyError, UnicodeError, RuntimeError) as error:
+        raise ValueError("Could not read the mod's Fabric Loader metadata.") from error
+    return result
+
+
+def version_loader_compatible(version: dict, loader: str, loader_version: str) -> bool | None:
+    """Check previously fetched predicates without network calls during rendering."""
+    if loader != "fabric":
+        return True
+    metadata = version.get("_fabric_loader_metadata")
+    if not isinstance(metadata, list) or not metadata:
+        return None
+    for item in metadata:
+        if not isinstance(item, dict):
+            return None
+        if "fabric_loader_requirement" in item:
+            compatible = fabric_loader_satisfies(loader_version, item["fabric_loader_requirement"])
+            if compatible is not True:
+                return compatible
+    return True
+
+
+def version_matches_loader(client: ModrinthClient, version: dict, loader: str, loader_version: str) -> bool:
+    probe = getattr(client, "fabric_loader_metadata", None)
+    if loader != "fabric" or not loader_version or not callable(probe):
+        return True
+    version["_fabric_loader_metadata"] = probe(version)
+    return version_loader_compatible(version, loader, loader_version) is True
+
+
+def version_matches_environment(client: ModrinthClient, version: dict, loader: str, loader_version: str,
+                                providers: dict[str, list[dict]]) -> bool:
+    if not version_matches_loader(client, version, loader, loader_version):
+        return False
+    for item in version.get("_fabric_loader_metadata", []):
+        for mod in item.get("native", []):
+            for rule in mod.get("rules", []):
+                target = rule.get("target")
+                if target not in providers:
+                    continue  # Missing mod dependencies are resolved by the plan.
+                results = [mod_version_satisfies(candidate["version"], rule["requirement"])
+                           for candidate in providers[target]]
+                if rule.get("conflict"):
+                    if True in results or None in results:
+                        return False
+                elif True not in results:
+                    return False
+    return True
+
+
+def _select_compatible_version(client: ModrinthClient, project: str, minecraft_version: str, loader: str, loader_version: str,
+                               providers: dict[str, list[dict]] | None = None) -> dict:
+    if loader != "fabric" or not loader_version or not callable(getattr(client, "fabric_loader_metadata", None)):
+        return client.compatible_version(project, minecraft_version, loader)
+    versions = sorted(client.project_versions(project, minecraft_version, loader),
+                      key=lambda version: version.get("date_published", ""), reverse=True)
+    versions.sort(key=lambda version: version.get("version_type") != "release")
+    last_incompatible = None
+    for version in versions:
+        if minecraft_version in version.get("game_versions", []) and loader in version.get("loaders", []):
+            if version_matches_environment(client, version, loader, loader_version, providers or {}):
+                return version
+            last_incompatible = version
+    if last_incompatible:
+        for metadata in last_incompatible.get("_fabric_loader_metadata", []):
+            _check_loader_metadata(metadata, loader, loader_version, metadata.get("name") or project)
+    raise ValueError(f"No mod version is compatible with Minecraft {minecraft_version} and Fabric Loader {loader_version}.")
 
 
 def primary_file(version: dict) -> dict:
@@ -779,6 +1007,54 @@ class ModrinthClient:
             raise ValueError("Modrinth returned an invalid mod version.")
         return data
 
+    def fabric_loader_metadata(self, version: dict) -> list[dict]:
+        file = primary_file(version)
+        key = ("fabric-loader-metadata", file.get("url"), file.get("size"), json.dumps(file.get("hashes", {}), sort_keys=True))
+        def fetch() -> list[dict]:
+            with _RangeJar(self._session(), file, self.HEADERS) as source:
+                return _fabric_loader_metadata(source)
+        return self._cached_request(key, fetch)
+
+    def native_dependency(self, target: str, requirement: object, minecraft_version: str, loader: str,
+                          loader_version: str, providers: dict[str, list[dict]]) -> dict | None:
+        """Resolve an omitted Fabric dependency only after verifying its native ID."""
+        def candidate(project: str) -> dict | None:
+            versions = self.project_versions(project, minecraft_version, loader)
+            versions = sorted(versions, key=lambda version: version.get("date_published", ""), reverse=True)
+            versions.sort(key=lambda version: version.get("version_type") != "release")
+            for version in versions[:32]:
+                if (version.get("project_id") != project or minecraft_version not in version.get("game_versions", [])
+                        or loader not in version.get("loaders", [])):
+                    continue
+                version["_fabric_loader_metadata"] = self.fabric_loader_metadata(version)
+                provided = [mod for metadata in version["_fabric_loader_metadata"] for mod in metadata.get("native", [])
+                            if mod.get("id") == target and mod_version_satisfies(mod["version"], requirement) is True]
+                if provided and version_matches_environment(self, version, loader, loader_version, providers):
+                    return version
+            return None
+
+        tried = set()
+        if re.fullmatch(r"[a-zA-Z0-9_-]+", target):
+            project = self._get(f"/project/{target}", missing_ok=True)
+            if isinstance(project, dict) and project.get("id"):
+                tried.add(project["id"])
+                found = candidate(project["id"])
+                if found:
+                    return found
+        matches = []
+        results = self.search(target, minecraft_version, loader, limit=5)
+        for hit in results.get("hits", [])[:5]:
+            project = hit.get("project_id")
+            if not project or project in tried:
+                continue
+            tried.add(project)
+            found = candidate(project)
+            if found:
+                matches.append(found)
+        if len(matches) > 1:
+            raise ValueError(f"Multiple projects provide {target}. Choose the dependency explicitly before installing this mod.")
+        return matches[0] if matches else None
+
     def download(self, file: dict, destination: Path, progress: Callable[[str], None]) -> None:
         url = str(file.get("url", ""))
         parsed = urlparse(url)
@@ -817,8 +1093,9 @@ class ModrinthClient:
 
 
 class ModManager:
-    def __init__(self, game_directory: Path):
+    def __init__(self, game_directory: Path, *, runtime_directory: Path | None = None):
         self.game_directory = Path(game_directory).resolve()
+        self.runtime_directory = Path(runtime_directory).resolve() if runtime_directory is not None else None
         self.mods_directory = self.game_directory / "mods"
         self.data_directory = self.game_directory / "gr8launcher"
         self.index_path = self.data_directory / "mods.json"
@@ -827,6 +1104,141 @@ class ModManager:
         self.updates_path = self.data_directory / "mod-updates.json"
         self._lock = _directory_lock(self.game_directory)
         self._metadata_cache: dict[tuple, dict] = {}
+
+    def runtime_mods(self, version_id: str) -> tuple[tuple[dict, ...], tuple[tuple[str, str], ...] | None]:
+        """Read mod providers from this version's actual inherited launch classpath."""
+        if self.runtime_directory is None or not version_id:
+            return (), None
+        from minecraft_launcher_lib._helper import get_library_path, parse_rule_list
+
+        root = self.runtime_directory
+        snapshot = {}
+        libraries = {}
+        visited = set()
+
+        def load(identifier: str) -> None:
+            if (not isinstance(identifier, str) or not identifier or re.search(r'[\\/:\x00]', identifier)
+                    or identifier in {".", ".."} or identifier in visited or len(visited) >= 16):
+                raise ValueError("The profile has invalid or cyclic version metadata. Repair the profile before installing mods.")
+            visited.add(identifier)
+            path = root / "versions" / identifier / (identifier + ".json")
+            try:
+                if path.stat().st_size > 2 * 1024 * 1024:
+                    raise ValueError("The profile's version metadata is too large.")
+                payload = path.read_bytes()
+                data = json.loads(payload)
+                if not isinstance(data, dict) or data.get("id") != identifier or not isinstance(data.get("libraries", []), list):
+                    raise ValueError("The profile's version metadata is invalid.")
+            except (OSError, ValueError) as error:
+                raise ValueError("The profile's installed version metadata is missing or unreadable. Repair the profile before installing mods.") from error
+            snapshot[str(path)] = hashlib.sha512(payload).hexdigest()
+            if data.get("inheritsFrom"):
+                load(data["inheritsFrom"])
+            for library in data.get("libraries", []):
+                name = library.get("name", "") if isinstance(library, dict) else ""
+                pieces = name.split(":")
+                if len(pieces) not in (3, 4) or any(not piece or re.search(r'[\\/\x00]', piece) or piece in {".", ".."} for piece in pieces):
+                    raise ValueError("The profile has invalid library coordinates.")
+                # A child version replaces the same Maven artifact from its parent.
+                libraries[tuple(pieces[:-1])] = library
+
+        load(version_id)
+        mods = []
+        library_root = (root / "libraries").resolve()
+        for library in libraries.values():
+            if library.get("rules") and not parse_rule_list(library["rules"], {}):
+                continue
+            path = Path(get_library_path(library["name"], str(root))).resolve()
+            if not path.is_relative_to(library_root):
+                raise ValueError("The profile's library path is outside its libraries folder.")
+            if not path.is_file():
+                # Missing files cannot supply a dependency. Normal launch repair
+                # owns library installation; mod management never creates them.
+                continue
+            before = path.stat()
+            try:
+                entries = [{**mod, "bundled": False} for mod in _native_mods(path)]
+                entries.extend({**mod, "bundled": True} for child in _bundled_mod_files(path) for mod in child.get("native", []))
+            except (OSError, ValueError, zipfile.BadZipFile, RuntimeError) as error:
+                raise ValueError(f"Could not read the installed library {library['name']}. Repair the profile before installing mods.") from error
+            if entries:
+                snapshot[str(path)] = _digest(path)
+                mods.extend({**mod, "runtime": True} for mod in entries if mod.get("id"))
+            after = path.stat()
+            if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                raise ValueError("The profile's runtime libraries changed while reading them. Review the installation again.")
+        return tuple(mods), tuple(sorted(snapshot.items()))
+
+    def _check_runtime_snapshot(self, plan: InstallPlan) -> None:
+        if plan.runtime_snapshot is not None:
+            _, snapshot = self.runtime_mods(plan.version_id)
+            if snapshot != plan.runtime_snapshot:
+                raise ValueError("The profile's Loader or runtime libraries changed. Review the installation again.")
+
+    def profile_providers(self, minecraft_version: str, loader: str, loader_version: str,
+                          version_id: str = "", *, runtime_only: bool = False) -> tuple[dict[str, list[dict]], tuple[tuple[str, str], ...] | None]:
+        runtime_mods, runtime_snapshot = self.runtime_mods(version_id)
+        mods = []
+        for local in self.list_mods():
+            if not local.enabled:
+                continue
+            path = self._path(local.filename)
+            mods.extend({**mod, "bundled": False} for mod in _native_mods(path) if mod.get("id"))
+            mods.extend({**mod, "bundled": True} for child in _bundled_mod_files(path)
+                        for mod in child.get("native", []) if mod.get("id"))
+        environment = InstallPlan((), (), loader=loader, loader_version=loader_version,
+                                  minecraft_version=minecraft_version, runtime_mods=runtime_mods)
+        providers = _native_providers(mods, environment)
+        if runtime_only:
+            # Installed mods can be upgraded together by Update all. Only fixed
+            # runtime providers constrain discovery of each individual update.
+            system = {"minecraft", "fabricloader", "quilt_loader", "forge", "neoforge"}
+            providers = {target: candidates for target, candidates in providers.items()
+                         if target in system or all(candidate.get("runtime") for candidate in candidates)}
+        return providers, runtime_snapshot
+
+    def _check_native_plan(self, client: ModrinthClient, plan: InstallPlan, installed: list[LocalMod]) -> tuple[InstallDependency, ...]:
+        probe = getattr(client, "fabric_loader_metadata", None)
+        if plan.loader != "fabric" or not callable(probe):
+            return ()
+        mods = []
+        changed = set()
+        for mod in installed:
+            if not mod.enabled:
+                continue
+            path = self._path(mod.filename)
+            entries = [{**entry, "bundled": False} for entry in _native_mods(path)]
+            entries.extend({**entry, "bundled": True} for child in _bundled_mod_files(path) for entry in child.get("native", []))
+            if mod.filename in plan.replacements:
+                changed.update(entry["id"] for entry in entries if entry.get("id"))
+            else:
+                mods.extend({**entry, "new": False} for entry in entries if entry.get("id"))
+        for version in plan.versions:
+            if version["project_id"] in plan.disabled_projects:
+                continue
+            metadata = probe(version)
+            for item in metadata:
+                _check_loader_metadata(item, plan.loader, plan.loader_version, item.get("name") or version.get("name", "Mod"))
+                for entry in item.get("native", []):
+                    if entry.get("id"):
+                        mods.append({**entry, "new": True, "bundled": item.get("bundled", False)})
+                        changed.add(entry["id"])
+        _check_native_requirements(mods, changed, plan)
+        providers = _native_providers(mods, plan)
+        reused = {}
+        for mod in mods:
+            if not mod["new"]:
+                continue
+            for rule in mod["rules"]:
+                target = rule.get("target")
+                if rule.get("optional") or rule.get("conflict") or target in {"fabricloader", "minecraft", "java"}:
+                    continue
+                for provider in providers.get(target, []):
+                    if provider.get("runtime") and mod_version_satisfies(provider["version"], rule["requirement"]) is True:
+                        reused[target] = InstallDependency("runtime:" + target, provider["name"],
+                            {"version_number": provider["version"], "runtime": True}, True, True, True)
+                        break
+        return tuple(reused.values())
 
     @staticmethod
     def _valid_identity(version: object, digest: str) -> bool:
@@ -934,7 +1346,7 @@ class ModManager:
         try:
             if self.updates_path.stat().st_size <= 8 * 1024 * 1024:
                 data = json.loads(self.updates_path.read_text(encoding="utf-8"))
-                if isinstance(data, dict) and data.get("format") == 1 and isinstance(data.get("checks"), dict):
+                if isinstance(data, dict) and data.get("format") == 3 and isinstance(data.get("checks"), dict):
                     return data["checks"]
         except (OSError, ValueError, TypeError):
             pass
@@ -948,18 +1360,20 @@ class ModManager:
                 return
             checks.pop(key)
             try:
-                _atomic_write(self.updates_path, _json_bytes({"format": 1, "checks": checks}))
+                _atomic_write(self.updates_path, _json_bytes({"format": 3, "checks": checks}))
             except OSError:
                 pass
 
-    def saved_update_release_type(self, minecraft_version: str, loader: str, loader_version: str) -> str | None:
+    def saved_update_release_type(self, minecraft_version: str, loader: str, loader_version: str, version_id: str = "") -> str | None:
         """Remember the last checked release filter when reopening an instance."""
         with self._lock:
-            for key in reversed(self._update_checks()):
+            checks = self._update_checks()
+            for key in reversed(checks):
                 try:
                     context = json.loads(key)
                     if (isinstance(context, list) and len(context) == 4 and context[:3] == [minecraft_version, loader, loader_version]
-                            and context[3] in {"release", "all", "beta", "alpha"}):
+                            and context[3] in {"release", "all", "beta", "alpha"}
+                            and checks[key].get("version_id", "") == version_id):
                         return context[3]
                 except (TypeError, ValueError):
                     continue
@@ -968,7 +1382,7 @@ class ModManager:
     def _save_update_check(self, result: UpdateCheck, minecraft_version: str, loader: str,
                            loader_version: str, release_type: str) -> None:
         fields = {"id", "project_id", "name", "version_number", "version_type", "date_published",
-                  "game_versions", "loaders", "dependencies", "files"}
+                  "game_versions", "loaders", "dependencies", "files", "_fabric_loader_metadata"}
         try:
             with self._lock:
                 self._check_snapshot(result.snapshot)
@@ -979,12 +1393,13 @@ class ModManager:
                 checks.pop(key, None)
                 checks[key] = {
                     "checked_at": time.time(), "snapshot": result.snapshot, "warnings": result.warnings,
+                    "version_id": result.version_id, "runtime_snapshot": result.runtime_snapshot,
                     "updates": [{"filename": update.mod.filename, "sha512": update.sha512,
                                  "project_id": update.mod.project_id, "version_id": update.mod.version_id,
                                  "version": {key: value for key, value in update.version.items() if key in fields}}
                                 for update in result.updates],
                 }
-                payload = _json_bytes({"format": 1, "checks": dict(list(checks.items())[-16:])})
+                payload = _json_bytes({"format": 3, "checks": dict(list(checks.items())[-16:])})
                 if len(payload) <= 8 * 1024 * 1024:
                     self.data_directory.mkdir(parents=True, exist_ok=True)
                     _atomic_write(self.updates_path, payload)
@@ -993,12 +1408,18 @@ class ModManager:
             pass
 
     def cached_update_check(self, minecraft_version: str, loader: str, *, loader_version: str = "",
-                            release_type: str = "release") -> UpdateCheck | None:
+                            release_type: str = "release", version_id: str = "") -> UpdateCheck | None:
         """Restore a saved result only for the same profile context and JAR bytes."""
         try:
             with self._lock:
                 data = self._update_checks().get(self._update_context(minecraft_version, loader, loader_version, release_type))
                 if not isinstance(data, dict) or not isinstance(data.get("snapshot"), list):
+                    return None
+                if data.get("version_id", "") != version_id:
+                    return None
+                runtime_snapshot = data.get("runtime_snapshot")
+                runtime_snapshot = tuple((path, digest) for path, digest in runtime_snapshot) if runtime_snapshot is not None else None
+                if self.runtime_mods(version_id)[1] != runtime_snapshot:
                     return None
                 snapshot = tuple((name, digest) for name, digest in data["snapshot"])
                 if any(not isinstance(name, str) or not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{128}", digest)
@@ -1022,6 +1443,7 @@ class ModManager:
                             or not isinstance(target, dict) or target.get("project_id") != record["project_id"]
                             or target.get("id") == record["version_id"] or not isinstance(target.get("id"), str)
                             or minecraft_version not in target.get("game_versions", []) or loader not in target.get("loaders", [])
+                            or loader == "fabric" and loader_version and version_loader_compatible(target, loader, loader_version) is not True
                             or release_type != "all" and target.get("version_type") != release_type
                             or mod.project_id and mod.project_id != record["project_id"]
                             or mod.version_id and mod.version_id != record["version_id"]):
@@ -1036,12 +1458,12 @@ class ModManager:
                     seen.add(mod.filename)
                     updates.append(ModUpdate(replace(mod, project_id=record["project_id"], version_id=record["version_id"]),
                                              target, record["sha512"]))
-                return UpdateCheck(tuple(mods), tuple(updates), tuple(warnings), snapshot)
+                return UpdateCheck(tuple(mods), tuple(updates), tuple(warnings), snapshot, version_id, runtime_snapshot)
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
             return None
 
     def check_updates(self, client: ModrinthClient, minecraft_version: str, loader: str, *,
-                      release_only: bool = True, release_type: str | None = None, loader_version: str = "") -> UpdateCheck:
+                      release_only: bool = True, release_type: str | None = None, loader_version: str = "", version_id: str = "") -> UpdateCheck:
         if loader not in SUPPORTED_LOADERS or not minecraft_version:
             raise ValueError("Choose a profile with a supported mod loader and Minecraft version.")
         refresh = getattr(client, "clear_cache", None)
@@ -1050,6 +1472,7 @@ class ModManager:
         with self._lock:
             snapshot = self._snapshot()
         mods, identification_warnings = self.identify_mods(client)
+        providers, runtime_snapshot = self.profile_providers(minecraft_version, loader, loader_version, version_id, runtime_only=True)
         with self._lock:
             self._check_snapshot(snapshot)
             identities = self._identities()
@@ -1069,7 +1492,8 @@ class ModManager:
                     raise ValueError("The installed mod's identity does not match.")
                 versions = client.project_versions(mod.project_id, minecraft_version, loader)
                 candidate = newer_compatible_version(current, versions, minecraft_version, loader,
-                                                     release_only=release_only, release_type=release_type)
+                                                     release_only=release_only, release_type=release_type,
+                                                     check_loader=lambda version: version_matches_environment(client, version, loader, loader_version, providers))
                 if candidate:
                     primary_file(candidate)
                     updates.append(ModUpdate(mod, candidate, hashes[mod.filename]))
@@ -1082,7 +1506,9 @@ class ModManager:
                 warnings.append(f"{mod.name}: update check could not finish ({error}).")
         with self._lock:
             self._check_snapshot(snapshot)
-        result = UpdateCheck(tuple(mods), tuple(updates), tuple(warnings), snapshot)
+        if self.runtime_mods(version_id)[1] != runtime_snapshot:
+            raise ValueError("The profile's runtime changed during the update check. Check updates again.")
+        result = UpdateCheck(tuple(mods), tuple(updates), tuple(warnings), snapshot, version_id, runtime_snapshot)
         if not failed:
             self._save_update_check(result, minecraft_version, loader, loader_version,
                                     release_type if release_type is not None else "release" if release_only else "all")
@@ -1405,7 +1831,7 @@ class ModManager:
             self._metadata_cache.clear()
 
     def plan_updates(self, client: ModrinthClient, updates: tuple[ModUpdate, ...], minecraft_version: str,
-                     loader: str, *, loader_version: str = "", release_type: str = "release") -> InstallPlan:
+                     loader: str, *, loader_version: str = "", release_type: str = "release", version_id: str = "") -> InstallPlan:
         """Revalidate checked versions and resolve all replacements as one graph."""
         if not updates:
             raise ValueError("There are no updates to install.")
@@ -1420,20 +1846,35 @@ class ModManager:
                 raise ValueError("An update's project or version identity changed. Check updates again.")
             current = identities.get(update.sha512) or client.version(update.mod.version_id)
             if (current.get("id") != update.mod.version_id or current.get("project_id") != update.mod.project_id
-                    or newer_compatible_version(current, [version], minecraft_version, loader, release_type=release_type) is None):
+                    or newer_compatible_version(current, [version], minecraft_version, loader, release_type=release_type,
+                                                check_loader=lambda candidate: version_matches_loader(client, candidate, loader, loader_version)) is None):
                 raise ValueError("A checked update is no longer newer or compatible. Check updates again.")
         plan = self.plan_install(client, versions[0]["project_id"], minecraft_version, loader,
-                                 selected_versions=versions, loader_version=loader_version)
+                                 selected_versions=versions, loader_version=loader_version, version_id=version_id)
         if dict(plan.snapshot or ()) != snapshot:
             raise ValueError("Installed mods changed while preparing updates. Check updates again.")
         return plan
 
-    def plan_install(self, client: ModrinthClient, project_id: str, minecraft_version: str, loader: str, *, selected_version: dict | None = None, loader_version: str = "", optional_projects: tuple[str, ...] = (), selected_versions: tuple[dict, ...] = ()) -> InstallPlan:
+    def plan_install(self, client: ModrinthClient, project_id: str, minecraft_version: str, loader: str, *, selected_version: dict | None = None, loader_version: str = "", optional_projects: tuple[str, ...] = (), selected_versions: tuple[dict, ...] = (), version_id: str = "") -> InstallPlan:
         if loader not in SUPPORTED_LOADERS or not minecraft_version:
             raise ValueError("Choose a profile with a supported mod loader and Minecraft version.")
         with self._lock:
             installed = self.list_mods()
             snapshot = self._snapshot(installed)
+        runtime_mods, runtime_snapshot = self.runtime_mods(version_id)
+        native_installed = []
+        for local in installed:
+            if local.enabled:
+                path = self._path(local.filename)
+                native_installed.extend({**mod, "bundled": False, "filename": local.filename} for mod in _native_mods(path) if mod.get("id"))
+                native_installed.extend({**mod, "bundled": True, "filename": local.filename} for child in _bundled_mod_files(path)
+                                        for mod in child.get("native", []) if mod.get("id"))
+        environment = InstallPlan((), (), loader=loader, loader_version=loader_version, minecraft_version=minecraft_version,
+                                  runtime_mods=runtime_mods)
+        providers = _native_providers(native_installed, environment)
+
+        def select_version(project: str) -> dict:
+            return _select_compatible_version(client, project, minecraft_version, loader, loader_version, providers)
         checksums = dict(snapshot)
         projects: dict[str, LocalMod] = {}
         version_cache: dict[str, dict] = {}
@@ -1453,6 +1894,7 @@ class ModManager:
         base_required: set[str] | None = None
         optional_candidates: dict[str, dict] = {}
         optional_errors: dict[tuple, Exception] = {}
+        native_planned: dict[str, list[dict]] = {}
         identities = self._identities()
         for version in identities.values():
             version_cache[version["id"]] = version
@@ -1472,7 +1914,7 @@ class ModManager:
             return version
 
         root_versions = tuple(remember(version) for version in selected_versions) if selected_versions else (
-            remember(selected_version or client.compatible_version(project_id, minecraft_version, loader)),)
+            remember(selected_version or select_version(project_id)),)
         root_version = root_versions[0]
         if root_version["project_id"] != project_id and (selected_version or selected_versions):
             raise ValueError("The selected version belongs to a different mod.")
@@ -1623,7 +2065,7 @@ class ModManager:
             elif dependency_project in projects:
                 child = installed_version(projects[dependency_project])
             else:
-                child = remember(optional_candidates.get(dependency_project) or client.compatible_version(dependency_project, minecraft_version, loader))
+                child = remember(optional_candidates.get(dependency_project) or select_version(dependency_project))
             if child["project_id"] != dependency_project:
                 raise ValueError("Modrinth returned a different dependency than requested.")
             return child, child_bundled
@@ -1695,6 +2137,31 @@ class ModManager:
                 record_dependency(child, required=True, bundled=child_bundled)
                 visit(child, bundled=child_bundled)
             if (existing is None and not bundled) or replacing:
+                probe = getattr(client, "fabric_loader_metadata", None)
+                resolver = getattr(client, "native_dependency", None)
+                if loader == "fabric" and callable(probe) and callable(resolver):
+                    metadata = probe(version)
+                    native_planned[project] = [{**mod, "bundled": item.get("bundled", False)}
+                        for item in metadata for mod in item.get("native", []) if mod.get("id")]
+                    for native in native_planned[project]:
+                        for rule in native["rules"]:
+                            target = rule.get("target")
+                            if (rule.get("optional") or rule.get("conflict")
+                                    or target in {"minecraft", "java", "fabricloader", "quilt_loader", "forge", "neoforge"}):
+                                continue
+                            available = _native_providers(
+                                [mod for mod in native_installed if mod["filename"] not in replacements]
+                                + [mod for entries in native_planned.values() for mod in entries], environment)
+                            if target in available:
+                                continue  # Final preflight checks the required range.
+                            disabled = next((local for local in installed if not local.enabled and any(
+                                mod.get("id") == target for mod in _native_mods(self._path(local.filename)))), None)
+                            if disabled:
+                                raise ValueError(f"Enable {disabled.name} in Installed before installing this mod.")
+                            child = resolver(target, rule["requirement"], minecraft_version, loader, loader_version, available)
+                            if child:
+                                record_dependency(child, required=True, bundled=False)
+                                visit(child)
                 planned[project] = version
 
         for version in root_versions:
@@ -1712,7 +2179,7 @@ class ModManager:
             if version_id and version_id not in version_cache:
                 candidate_requests[key] = (client.version, (version_id,))
             elif not version_id and project and project not in projects and project not in resolved and project not in provided_versions:
-                candidate_requests[key] = (client.compatible_version, (project, minecraft_version, loader))
+                candidate_requests[key] = (select_version, (project,))
         if candidate_requests:
             pending = {key: _MOD_METADATA_POOL.submit(fetch, *args) for key, (fetch, args) in candidate_requests.items()}
             for key, future in pending.items():
@@ -1811,15 +2278,21 @@ class ModManager:
             raise ValueError("Two required mods have the same filename.")
         with self._lock:
             self._check_snapshot(snapshot)
-        return InstallPlan(tuple(planned.values()), tuple(dict.fromkeys(already)), tuple(replacements),
+        plan = InstallPlan(tuple(planned.values()), tuple(dict.fromkeys(already)), tuple(replacements),
                            tuple(disabled_projects), snapshot, tuple(identifications.items()),
                            loader, loader_version, tuple(warnings),
                            tuple(item for project, item in dependency_records.items() if project not in {version["project_id"] for version in root_versions}),
-                           minecraft_version, root_version, root_versions)
+                           minecraft_version, root_version, root_versions, version_id, runtime_mods, runtime_snapshot)
+        runtime_dependencies = self._check_native_plan(client, plan, installed)
+        if runtime_dependencies:
+            plan = replace(plan, dependencies=plan.dependencies + runtime_dependencies)
+        self._check_runtime_snapshot(plan)
+        return plan
 
     def install(self, client: ModrinthClient, plan: InstallPlan, progress: Callable[[str], None] = lambda message: None, *, can_commit: Callable[[], bool] = lambda: True) -> int:
         if not plan.versions:
             return 0
+        self._check_runtime_snapshot(plan)
         with self._lock:
             self.recover_pending()
             snapshot = plan.snapshot
@@ -1870,6 +2343,7 @@ class ModManager:
                 self._check_snapshot(snapshot)
                 if not can_commit():
                     raise RuntimeError("Minecraft is starting or running. Close it before changing mods.")
+                self._check_runtime_snapshot(plan)
                 _check_native_mod_set(files, self.list_mods(), self.mods_directory, plan)
                 index = self._index()
                 replacements = {jar_base_name(name).casefold() for name in plan.replacements}

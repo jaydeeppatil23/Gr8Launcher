@@ -126,7 +126,8 @@ class ModInstallReview(ft.Column):
                     )
                     self.checkboxes[item.project_id] = leading
                 version = (item.version or {}).get("version_number", "")
-                detail = item.issue or (f"{version}  /  Bundled" if item.bundled else version if item.installed
+                detail = item.issue or (f"{version}  /  Provided by profile" if (item.version or {}).get("runtime")
+                                        else f"{version}  /  Bundled" if item.bundled else version if item.installed
                                         else f"{version}  /  {_size(primary_file(item.version).get('size', 0))}" if item.version else "Version unavailable")
                 rows.append(ft.Row([
                     leading,
