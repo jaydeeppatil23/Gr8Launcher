@@ -98,6 +98,7 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "enable_head_tracking": True,
     "enable_custom_skins": True,
     "discord_rpc": True,
+    "performance_mode": False,
 }
 
 
@@ -126,6 +127,7 @@ def load_settings() -> dict[str, object]:
         "enable_head_tracking",
         "enable_custom_skins",
         "discord_rpc",
+        "performance_mode",
     ):
         value = saved.get(key)
         if isinstance(value, bool):

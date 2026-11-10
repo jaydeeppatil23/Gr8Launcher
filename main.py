@@ -1270,6 +1270,28 @@ def main(page: ft.Page):
         visible=False,
     )
 
+    hero_perf_separator = ft.Text(
+        "•",
+        size=12,
+        color=ft.Colors.WHITE_70,
+        visible=False,
+    )
+
+    hero_perf_icon = ft.Icon(
+        ft.Icons.BOLT_ROUNDED,
+        size=13,
+        color=accent_color,
+        visible=False,
+    )
+
+    hero_perf_text = ft.Text(
+        "1K FPS",
+        size=12,
+        color=accent_color,
+        weight=ft.FontWeight.W_600,
+        visible=False,
+    )
+
     hero_status_row = ft.Row(
         controls=[
             hero_status_dot,
@@ -1277,6 +1299,9 @@ def main(page: ft.Page):
             hero_mods_separator,
             hero_mods_icon,
             hero_mods_text,
+            hero_perf_separator,
+            hero_perf_icon,
+            hero_perf_text,
         ],
         spacing=6,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -2898,6 +2923,8 @@ def main(page: ft.Page):
         if profile is None:
             profile = get_selected_profile()
 
+        performance_enabled = bool(storage.load_settings().get("performance_mode"))
+
         if not profile:
             hero_profile_name.value = "No Profile Selected"
             hero_instance_badge.visible = False
@@ -2914,6 +2941,9 @@ def main(page: ft.Page):
             hero_mods_separator.visible = False
             hero_mods_icon.visible = False
             hero_mods_text.visible = False
+            hero_perf_separator.visible = False
+            hero_perf_icon.visible = False
+            hero_perf_text.visible = False
         else:
             name = profile.get("name", "Unnamed Profile")
             is_inst = bool(profile.get("is_instance"))
@@ -2995,6 +3025,10 @@ def main(page: ft.Page):
                 hero_mods_separator.visible = False
                 hero_mods_icon.visible = False
                 hero_mods_text.visible = False
+
+            hero_perf_icon.visible = performance_enabled
+            hero_perf_text.visible = performance_enabled
+            hero_perf_separator.visible = performance_enabled and hero_mods_text.visible
 
         try:
             hero_info_card.update()
@@ -4633,6 +4667,7 @@ def main(page: ft.Page):
                 bg_gradient_layer.update()
             except RuntimeError:
                 pass
+            update_hero_banner_info()
             rebuild_settings_view()
 
         dlg = ft.AlertDialog(
@@ -4758,11 +4793,30 @@ def main(page: ft.Page):
             on_change=on_discord_rpc_change,
         )
 
+        def on_performance_mode_change(e):
+            s = storage.load_settings()
+            s["performance_mode"] = bool(e.control.value)
+            if not save_settings_with_notification(s):
+                return
+            update_hero_banner_info()
+
+        performance_switch = ft.Switch(
+            value=bool(settings.get("performance_mode", False)),
+            active_color=accent_color,
+            track_color="#2b3b55",
+            on_change=on_performance_mode_change,
+        )
+
         cards = [
 
             make_setting_card(
                 title="Launch Behavior",
                 control=launch_action_dd,
+            ),
+            make_setting_card(
+                title="1K FPS Mode",
+                description="Tuned video settings and JVM flags applied on launch.",
+                control=performance_switch,
             ),
             make_setting_card(
                 title="Discord Rich Presence",
