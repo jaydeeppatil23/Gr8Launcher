@@ -46,6 +46,9 @@ def serve_preview(directory: Path, port: int) -> None:
     source.mkdir()
     for module in PROJECT_ROOT.glob("*.py"):
         shutil.copy2(module, source / module.name)
+    version_file = PROJECT_ROOT / "VERSION"
+    if version_file.is_file():
+        shutil.copy2(version_file, source / version_file.name)
     shutil.copytree(PROJECT_ROOT / ".assets", source / ".assets",
                     ignore=shutil.ignore_patterns("cache", "__pycache__"))
     sys.path.insert(0, str(source))
@@ -143,7 +146,34 @@ def validate_screenshot(data: bytes) -> None:
                 raise RuntimeError("The screenshot contains an unrendered launcher panel.")
 
 
-def capture(output: Path, browser: Path) -> None:
+# Sidebar geometry at the preview window size: 190px sidebar, 40px title bar,
+# 16px vertical padding and 48px nav rows.
+SIDEBAR_X = 95
+SIDEBAR_ROWS = {
+    "home": 209, "library": 257, "mods": 305, "skins": 353,
+    "settings": 547, "accounts": 595,
+}
+
+
+def press_shortcut(devtools: "DevTools", label: str) -> None:
+    """Click the sidebar item for the given tab in the preview."""
+    y = SIDEBAR_ROWS.get(label.lower())
+    if y is None:
+        raise RuntimeError(f"Unknown sidebar item: {label}")
+    devtools.call("Input.dispatchMouseEvent", {
+        "type": "mouseMoved", "x": SIDEBAR_X, "y": y,
+        "buttons": 0, "pointerType": "mouse",
+    })
+    for event_type, buttons in (("mousePressed", 1), ("mouseReleased", 0)):
+        devtools.call("Input.dispatchMouseEvent", {
+            "type": event_type,
+            "x": SIDEBAR_X, "y": y,
+            "button": "left", "buttons": buttons, "clickCount": 1,
+            "pointerType": "mouse",
+        })
+
+
+def capture(output: Path, browser: Path, tab: str = "home") -> None:
     from websockets.sync.client import connect
     temporary_root = (PROJECT_ROOT / "temp").resolve()
     if not temporary_root.is_relative_to(PROJECT_ROOT):
@@ -213,6 +243,33 @@ def capture(output: Path, browser: Path) -> None:
                             raise RuntimeError(f"Launcher did not render: {labels[:500]} {devtools.errors}")
                         time.sleep(0.25)
                     time.sleep(0.5)
+                    if tab != "home":
+                        press_shortcut(devtools, tab.capitalize())
+                        marker = {
+                            "library": "New Profile",
+                            "mods": "Installed",
+                            "skins": "Skins",
+                            "settings": "Launch Behavior",
+                            "accounts": "Add Account",
+                        }[tab]
+                        marker_deadline = time.monotonic() + 30
+                        while True:
+                            text = devtools.evaluate(
+                                "document.body?.innerText || ''"
+                            ) or ""
+                            if marker in text:
+                                break
+                            if time.monotonic() > marker_deadline:
+                                raise RuntimeError(
+                                    f"The {tab} tab did not render: {text[:300]}"
+                                )
+                            time.sleep(0.25)
+                        time.sleep(0.8)
+                        devtools.call("Input.dispatchMouseEvent", {
+                            "type": "mouseMoved", "x": 1040, "y": 620,
+                            "buttons": 0, "pointerType": "mouse",
+                        })
+                        time.sleep(0.4)
                     screenshot = devtools.call("Page.captureScreenshot", {
                         "format": "png", "captureBeyondViewport": False,
                     })
@@ -245,6 +302,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=PROJECT_ROOT / "dist/gr8-launcher-home.png")
     parser.add_argument("--browser", help="Edge or Chrome executable (auto-detected by default)")
+    parser.add_argument("--tab", choices=["home", "library", "mods", "skins", "settings", "accounts"],
+                        default="home", help="Launcher tab to capture (default: home)")
     parser.add_argument("--checksum-file", type=Path, help="Add the PNG to an existing SHA256SUMS.txt")
     parser.add_argument("--serve", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--port", type=int, help=argparse.SUPPRESS)
@@ -252,7 +311,7 @@ def main() -> None:
     if args.serve:
         serve_preview(args.serve.resolve(), args.port)
         return
-    capture(args.output.resolve(), find_browser(args.browser))
+    capture(args.output.resolve(), find_browser(args.browser), args.tab)
     if args.checksum_file:
         lines = args.checksum_file.read_text(encoding="utf-8").splitlines()
         lines = [line for line in lines if line.split("  ", 1)[-1] != args.output.name]
