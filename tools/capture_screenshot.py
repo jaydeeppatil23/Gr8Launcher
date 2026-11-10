@@ -80,7 +80,8 @@ def serve_preview(directory: Path, port: int) -> None:
     if not storage.save_installations(profiles, latest_release_id="1.21.4"):
         raise RuntimeError("Could not create screenshot profiles.")
     if not storage.save_settings({**storage.DEFAULT_SETTINGS, "discord_rpc": False,
-                                  "enable_orbs": False, "enable_head_tracking": False}):
+                                  "enable_orbs": False, "enable_head_tracking": False,
+                                  "performance_mode": True}):
         raise RuntimeError("Could not create screenshot settings.")
 
     import main as launcher_ui
@@ -276,7 +277,23 @@ def capture(output: Path, browser: Path, tab: str = "home") -> None:
                     if devtools.errors:
                         raise RuntimeError(f"Browser rendering errors: {devtools.errors}")
                     data = base64.b64decode(screenshot["data"])
-                    validate_screenshot(data)
+                    # Flutter can report its semantics labels before the first
+                    # frame is painted, so keep retrying until pixels settle.
+                    paint_deadline = time.monotonic() + 60
+                    while True:
+                        try:
+                            validate_screenshot(data)
+                            break
+                        except RuntimeError:
+                            if time.monotonic() > paint_deadline:
+                                raise
+                            time.sleep(0.5)
+                            screenshot = devtools.call("Page.captureScreenshot", {
+                                "format": "png", "captureBeyondViewport": False,
+                            })
+                            if devtools.errors:
+                                raise RuntimeError(f"Browser rendering errors: {devtools.errors}")
+                            data = base64.b64decode(screenshot["data"])
                     output.parent.mkdir(parents=True, exist_ok=True)
                     output.write_bytes(data)
                     devtools.call("Browser.close")
