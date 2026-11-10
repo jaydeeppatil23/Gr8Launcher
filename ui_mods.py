@@ -802,16 +802,16 @@ class ModsPage(ft.Container):
             self._empty("Could not load mods", self.error, _button("Retry", self._refresh_requested))
             return
         if not self.profile:
-            self._empty("Choose your modded profile", "Create a Fabric, Forge, NeoForge, or Quilt profile to get started.", _button("Create profile", lambda e: self._create_profile(), primary=True))
+            self._empty("Choose a profile", "Pick a Fabric, Forge, NeoForge, or Quilt profile.", _button("Create profile", lambda e: self._create_profile(), primary=True))
             return
         if not self.profile.get("is_instance"):
             self.status_row.visible = self.status.visible = False
             self._empty("This profile is not an instance",
-                        "This profile uses the global Minecraft folder. Adding mods there can load them in other profiles, causing incompatible versions, conflicts, or crashes. Create a separate instance to keep its mods isolated.",
+                        "Create an instance to keep its mods isolated from other profiles.",
                         _button("Create instance", lambda e: self._create_profile(), primary=True))
             return
         if not self._compatible():
-            self._empty("This profile needs a mod loader", "Choose a Fabric, Forge, NeoForge, or Quilt profile with a Minecraft version.", _button("Create profile", lambda e: self._create_profile(), primary=True))
+            self._empty("This profile needs a mod loader", "Pick a modded profile with a Minecraft version.", _button("Create profile", lambda e: self._create_profile(), primary=True))
             return
         if self.loading and not (self.hits if browse else self.local_mods):
             self._empty("Finding mods" if browse else "Reading mods", "This will only take a moment.")

@@ -93,6 +93,25 @@ AVAILABLE_FACE_ICONS = [
 DEFAULT_PROFILE_ICON = "icon_blocks/grass_block.png"
 
 
+def read_app_version() -> str:
+    """Best-effort version label for the title bar and About surfaces."""
+    candidates = [Path(__file__).resolve().with_name("VERSION")]
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(sys.executable).resolve().with_name("VERSION"))
+    candidates.append(Path.cwd() / "VERSION")
+    for candidate in candidates:
+        try:
+            version = candidate.read_text(encoding="utf-8-sig").strip()
+        except OSError:
+            continue
+        if version:
+            return version
+    return "dev"
+
+
+APP_VERSION = read_app_version()
+
+
 def resolve_profile_icon_src(icon_val: str | None) -> str | None:
     target = icon_val or DEFAULT_PROFILE_ICON
     p = Path(target)
@@ -199,6 +218,20 @@ def main(page: ft.Page):
     page.on_disconnect = stop_discord_presence
     page.on_close = stop_discord_presence
 
+    def window_button_hover(e, *, danger: bool = False):
+        control = e.control
+        control.bgcolor = (
+            ft.Colors.with_opacity(0.82, "#d9534f")
+            if danger and e.data == "true"
+            else ft.Colors.with_opacity(0.14, "#ffffff")
+            if e.data == "true"
+            else ft.Colors.TRANSPARENT
+        )
+        try:
+            control.update()
+        except RuntimeError:
+            pass
+
     minimize_btn = ft.Container(
         content=ft.Text(
             "-",
@@ -207,9 +240,13 @@ def main(page: ft.Page):
             size=18,
             text_align=ft.TextAlign.CENTER,
         ),
-        width=32,
+        width=36,
+        height=32,
+        border_radius=4,
         alignment=ft.Alignment.CENTER,
         on_click=minimize_window,
+        on_hover=lambda e: window_button_hover(e),
+        tooltip="Minimize",
     )
 
     maximize_btn = ft.Container(
@@ -217,10 +254,15 @@ def main(page: ft.Page):
             width=10,
             height=10,
             border=ft.Border.all(1.5, color=accent_color),
+            border_radius=1,
         ),
-        width=32,
+        width=36,
+        height=32,
+        border_radius=4,
         alignment=ft.Alignment.CENTER,
         on_click=maximize_window,
+        on_hover=lambda e: window_button_hover(e),
+        tooltip="Maximize",
     )
 
     close_btn = ft.Container(
@@ -231,11 +273,32 @@ def main(page: ft.Page):
             size=14,
             text_align=ft.TextAlign.CENTER,
         ),
-        width=32,
+        width=36,
+        height=32,
+        border_radius=4,
         alignment=ft.Alignment.CENTER,
         on_click=close_window,
+        on_hover=lambda e: window_button_hover(e, danger=True),
+        tooltip="Close",
     )
 
+    title_net_dot = ft.Container(
+        width=7, height=7, border_radius=4, bgcolor="#747e95",
+        tooltip="Checking connection",
+    )
+    title_net_text = ft.Text(
+        "Checking", font_family="ps", size=11, color="#8b97ab",
+    )
+    title_net_chip = ft.Container(
+        content=ft.Row(
+            [title_net_dot, title_net_text],
+            spacing=6,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        bgcolor=ft.Colors.BLACK_26,
+        border_radius=4,
+        padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+    )
     custom_title_bar = ft.Container(
         height=40,
         padding=0,
@@ -272,7 +335,11 @@ def main(page: ft.Page):
                                                 color=accent_color,
                                                 weight=ft.FontWeight.BOLD,
                                             ),
-                                        ]
+                                            ft.Container(width=10),
+                                            title_net_chip,
+                                        ],
+                                        spacing=0,
+                                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                     ),
                                     padding=ft.Padding.only(left=14),
                                 ),
@@ -295,6 +362,34 @@ def main(page: ft.Page):
             ],
         ),
     )
+
+    def update_connection_chip(*, online: bool | None = None, checking: bool = False):
+        """Reflect internet connectivity in the custom title bar.
+
+        This describes network access, not the signed-in player: a local
+        (offline-mode) account can still be connected to the internet.
+        """
+        if checking:
+            dot_color, label = "#8b97ab", "Checking"
+            hint = "Checking internet connection"
+        elif online is True:
+            dot_color, label = "#81c784", "Connected"
+            hint = "Internet available — updates and mod downloads work"
+        elif online is False:
+            dot_color, label = "#ffb74d", "No Internet"
+            hint = "No internet — installed versions still launch"
+        else:
+            dot_color, label = "#8b97ab", "Unknown"
+            hint = "Internet connection status unknown"
+        title_net_dot.bgcolor = dot_color
+        title_net_dot.tooltip = hint
+        title_net_chip.tooltip = hint
+        title_net_text.value = label
+        title_net_text.color = dot_color if online is not None or checking else "#8b97ab"
+        try:
+            title_net_chip.update()
+        except RuntimeError:
+            pass
 
     def has_saved_account() -> bool:
         if not storage.ACCOUNTS_FILE.exists():
@@ -670,6 +765,7 @@ def main(page: ft.Page):
     icon_controls = {}
     text_controls = {}
     sidebar_btn_controls = {}
+    nav_indicator_controls = {}
 
     tabs = [
         ("home", "Home", "home"),
@@ -690,7 +786,7 @@ def main(page: ft.Page):
 
     def tab_reveal_controls(key: str):
         if key == "home":
-            return [hero_section, profiles_panel_container, flying_model_card, community_section]
+            return [hero_section, profiles_panel_container, flying_model_card]
         if key == "library":
             return [
                 control for control in (
@@ -761,6 +857,14 @@ def main(page: ft.Page):
             sidebar_btn_controls[k].bgcolor = (
                 ft.Colors.BLACK_26 if is_active else ft.Colors.TRANSPARENT
             )
+            if k in nav_indicator_controls:
+                nav_indicator_controls[k].bgcolor = (
+                    accent_color if is_active else ft.Colors.TRANSPARENT
+                )
+                try:
+                    nav_indicator_controls[k].update()
+                except RuntimeError:
+                    pass
             try:
                 sidebar_btn_controls[k].update()
             except RuntimeError:
@@ -826,18 +930,47 @@ def main(page: ft.Page):
         )
         icon_controls[key] = img
         text_controls[key] = txt
+        indicator = ft.Container(
+            width=3,
+            height=18,
+            border_radius=2,
+            bgcolor=accent_color if is_active else ft.Colors.TRANSPARENT,
+            animate=ft.Animation(180, ft.AnimationCurve.EASE_OUT_CUBIC),
+        )
+        nav_indicator_controls[key] = indicator
 
+        def nav_hover(e):
+            if key == active_tab:
+                return
+            hovered = e.data is True or str(e.data).lower() in ("true", "1")
+            btn.bgcolor = (
+                ft.Colors.with_opacity(0.10, "#ffffff")
+                if hovered
+                else ft.Colors.TRANSPARENT
+            )
+            txt.color = accent_color if hovered else "#747e95"
+            try:
+                btn.update()
+            except RuntimeError:
+                pass
+
+        shortcut = next(
+            (f"Ctrl+{index}" for index, (tab_key, _, _) in enumerate(tabs, start=1)
+             if tab_key == key),
+            "",
+        )
         btn = ft.Container(
             content=ft.Row(
-                spacing=12,
+                spacing=11,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                controls=[img, txt],
+                controls=[indicator, img, txt],
             ),
-            padding=ft.Padding.symmetric(horizontal=14, vertical=10),
+            padding=ft.Padding.symmetric(horizontal=12, vertical=10),
             border_radius=5,
             bgcolor=ft.Colors.BLACK_26 if is_active else ft.Colors.TRANSPARENT,
             on_click=lambda e, k=key: set_active_tab(k),
-            # on_hover=on_hover,
+            on_hover=nav_hover,
+            tooltip=f"{label}  ·  {shortcut}" if shortcut else label,
             opacity=0.0,
             scale=0.86,
             offset=ft.Offset(-0.06, 0.02),
@@ -908,12 +1041,26 @@ def main(page: ft.Page):
             [
                 play_button_icon,
                 play_button_text,
+                ft.Container(
+                    content=ft.Text(
+                        "ENTER",
+                        font_family="ps",
+                        color=bg_color_main,
+                        size=8,
+                        weight=ft.FontWeight.BOLD,
+                    ),
+                    bgcolor=ft.Colors.with_opacity(0.14, bg_color_main),
+                    border_radius=3,
+                    padding=ft.Padding.symmetric(horizontal=6, vertical=3),
+                    tooltip="Ctrl+Enter",
+                ),
             ],
             alignment=ft.MainAxisAlignment.CENTER,
-            spacing=6,
+            spacing=8,
         ),
-        width=210,
+        width=236,
         height=PLAY_BTN_HEIGHT,
+        tooltip="Launch the selected profile (Ctrl+Enter)",
         style=ft.ButtonStyle(
             bgcolor=accent_color,
             overlay_color=ft.Colors.TRANSPARENT,
@@ -1135,6 +1282,12 @@ def main(page: ft.Page):
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
 
+    def refresh_connection_status():
+        update_connection_chip(
+            online=latest_release_state.get("online"),
+            checking=bool(latest_release_state.get("loading")),
+        )
+
     hero_info_column = ft.Column(
         spacing=4,
         tight=True,
@@ -1147,11 +1300,17 @@ def main(page: ft.Page):
     )
 
     hero_info_card = ft.Container(
-        bgcolor=ft.Colors.BLACK_26,
-        blur=ft.Blur(10, 10),
-        border_radius=8,
+        bgcolor=ft.Colors.with_opacity(0.58, "#0d1728"),
+        blur=ft.Blur(12, 12),
+        border=ft.Border(left=ft.BorderSide(3, accent_color)),
+        border_radius=5,
         clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
         padding=ft.Padding.symmetric(horizontal=16, vertical=12),
+        shadow=ft.BoxShadow(
+            blur_radius=16, spread_radius=0,
+            color=ft.Colors.with_opacity(0.24, "#000000"),
+            offset=ft.Offset(0, 4),
+        ),
         content=ft.Row(
             tight=True,
             spacing=16,
@@ -1171,6 +1330,19 @@ def main(page: ft.Page):
             src="banners/hero_bg.png",
             fit=ft.BoxFit.COVER,
             filter_quality=ft.FilterQuality.NONE,
+        ),
+        content=ft.Container(
+            expand=True,
+            gradient=ft.LinearGradient(
+                begin=ft.Alignment.BOTTOM_LEFT,
+                end=ft.Alignment.TOP_RIGHT,
+                colors=[
+                    ft.Colors.with_opacity(0.90, "#182842"),
+                    ft.Colors.with_opacity(0.20, "#182842"),
+                    ft.Colors.with_opacity(0.0, "#182842"),
+                ],
+                stops=[0.0, 0.52, 1.0],
+            ),
         ),
     )
 
@@ -1413,6 +1585,39 @@ def main(page: ft.Page):
         on_click=lambda e: set_active_tab("library"),
     )
 
+    profiles_count_text = ft.Text(
+        "0", font_family="ps", size=11, color="#747e95",
+        weight=ft.FontWeight.BOLD,
+    )
+    profiles_count_chip = ft.Container(
+        content=profiles_count_text,
+        bgcolor=ft.Colors.BLACK_26,
+        border_radius=4,
+        padding=ft.Padding.symmetric(horizontal=7, vertical=2),
+    )
+    profiles_new_btn = SimpleButton(
+        ft.Row(
+            [
+                ft.Icon(ft.Icons.ADD_SHARP, color=accent_color, size=16),
+                ft.Text("New", font_family="ps", color=accent_color, size=13),
+            ],
+            spacing=4,
+            tight=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        height=30,
+        tooltip="Create a new profile (Ctrl+N)",
+        style=ft.ButtonStyle(
+            bgcolor=ft.Colors.BLACK_26,
+            overlay_color=ft.Colors.TRANSPARENT,
+            shadow_color=ft.Colors.TRANSPARENT,
+            shape=ft.RoundedRectangleBorder(radius=4),
+            padding=ft.Padding.symmetric(horizontal=10, vertical=0),
+            side=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+        ),
+        on_click=lambda e: open_new_profile_page(),
+    )
+
     profiles_panel_container = ft.Container(
         expand=True,
         opacity=0.0,
@@ -1429,14 +1634,25 @@ def main(page: ft.Page):
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     controls=[
-                        ft.Text(
-                            "Profiles",
-                            font_family="ps",
-                            color=accent_color,
-                            size=16,
-                            weight=ft.FontWeight.BOLD,
+                        ft.Row(
+                            [
+                                ft.Text(
+                                    "Profiles",
+                                    font_family="ps",
+                                    color=accent_color,
+                                    size=16,
+                                    weight=ft.FontWeight.BOLD,
+                                ),
+                                profiles_count_chip,
+                            ],
+                            spacing=8,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
-                        profiles_manage_btn,
+                        ft.Row(
+                            [profiles_new_btn, profiles_manage_btn],
+                            spacing=6,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
                     ],
                 ),
                 profile_list_surface(profiles_list_view),
@@ -2106,12 +2322,6 @@ def main(page: ft.Page):
                     horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                     spacing=12,
                     controls=[
-                        ft.Text(
-                            "Your Character",
-                            font_family="ps",
-                            size=13,
-                            color="#747e95",
-                        ),
                         skin_stage,
                         angle_btns,
                         ft.Text(
@@ -2150,12 +2360,6 @@ def main(page: ft.Page):
                                         expand=True,
                                         spacing=5,
                                         controls=[
-                                            ft.Text(
-                                                "ACTIVE ELY.BY ACCOUNT",
-                                                size=11,
-                                                color="#747e95",
-                                                weight=ft.FontWeight.BOLD,
-                                            ),
                                             skin_player_name_text,
                                             skin_status_text,
                                         ],
@@ -2178,11 +2382,6 @@ def main(page: ft.Page):
                                     tight=True,
                                     spacing=6,
                                 ),
-                            ),
-                            ft.Text(
-                                "Make it yours on Ely.by, then refresh your preview here.",
-                                size=12,
-                                color="#8b97ab",
                             ),
                             ft.Column(
                                 spacing=8,
@@ -2281,13 +2480,30 @@ def main(page: ft.Page):
         size=13,
         weight=ft.FontWeight.W_500,
     )
+    home_account_badge_text = ft.Text(
+        "LOCAL", font_family="ps", size=8, color=accent_color,
+        weight=ft.FontWeight.BOLD,
+    )
+    home_account_badge = ft.Container(
+        content=home_account_badge_text,
+        bgcolor=ft.Colors.with_opacity(0.30, accent_color),
+        border_radius=3,
+        padding=ft.Padding.symmetric(horizontal=5, vertical=1),
+    )
 
     home_gamertag_container = ft.Container(
-        content=home_gamertag_text,
+        content=ft.Row(
+            [home_gamertag_text, home_account_badge],
+            spacing=6,
+            tight=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
         bgcolor=ft.Colors.BLACK_54,
         padding=ft.Padding.symmetric(horizontal=8, vertical=2),
         border_radius=3,
         on_size_change=on_gamertag_resize,
+        tooltip="Click to manage accounts",
+        on_click=lambda e: set_active_tab("accounts"),
     )
 
     edit_icon_overlay = ft.Container(
@@ -2400,12 +2616,26 @@ def main(page: ft.Page):
         refresh_discord_player(active_acc)
         uname = active_acc.get("username", "Player")
         home_gamertag_text.value = uname
+        is_ely = active_acc.get("type") == "ely"
+        home_account_badge_text.value = "ELY.BY" if is_ely else "LOCAL"
+        home_account_badge_text.color = "#9ecbff" if is_ely else accent_color
+        home_account_badge.tooltip = (
+            "Signed in with Ely.by"
+            if is_ely
+            else "Local account — plays offline, no Ely.by sign-in"
+        )
+        home_account_badge.bgcolor = (
+            ft.Colors.with_opacity(0.24, "#82b1ff")
+            if is_ely
+            else ft.Colors.with_opacity(0.24, accent_color)
+        )
         home_skin_viewer.set_renderer(load_home_skin_renderer())
         if render_immediately:
             flying_skin_img.src = home_skin_viewer.render_still()
         edit_icon_overlay.opacity = 0.0
         try:
             home_gamertag_text.update()
+            home_account_badge.update()
             flying_skin_img.update()
             edit_icon_overlay.update()
         except RuntimeError:
@@ -3625,6 +3855,12 @@ def main(page: ft.Page):
                 rows.append(card)
 
         profiles_list_view.set_cards(rows, footer=empty_state)
+        profiles_count_text.value = str(len(installations))
+        try:
+            profiles_count_text.update()
+        except RuntimeError:
+            pass
+        refresh_connection_status()
         update_hero_banner_info()
 
     # Initialize profile selection
@@ -3650,93 +3886,14 @@ def main(page: ft.Page):
         ],
     )
 
-    def open_social_url(url: str):
-        try:
-            webbrowser.open(url)
-        except Exception:
-            pass
-
-    discord_btn = ft.Container(
-        content=ft.Row(
-            [
-                ft.Image(
-                    src="icons/discord.svg",
-                    width=16,
-                    height=16,
-                    fit=ft.BoxFit.CONTAIN,
-                ),
-                ft.Text("Discord", font_family="ps", color=accent_color, size=13),
-            ],
-            spacing=6,
-            alignment=ft.MainAxisAlignment.CENTER,
-        ),
-        bgcolor=ft.Colors.BLACK_26,
-        border_radius=5,
-        padding=ft.Padding.symmetric(horizontal=10, vertical=8),
-        expand=True,
-        on_click=lambda e: open_social_url("https://dsc.gg/_gr8"),
-    )
-
-    github_btn = ft.Container(
-        content=ft.Row(
-            [
-                ft.Image(
-                    src="icons/github.svg",
-                    width=16,
-                    height=16,
-                    fit=ft.BoxFit.CONTAIN,
-                ),
-                ft.Text("GitHub", font_family="ps", color=accent_color, size=13),
-            ],
-            spacing=6,
-            alignment=ft.MainAxisAlignment.CENTER,
-        ),
-        bgcolor=ft.Colors.BLACK_26,
-        border_radius=5,
-        padding=ft.Padding.symmetric(horizontal=10, vertical=8),
-        expand=True,
-        on_click=lambda e: open_social_url(
-            "https://github.com/jaydeeppatil23/Gr8Launcher"
-        ),
-    )
-
-    community_section = ft.Container(
-        opacity=0.0,
-        scale=0.90,
-        offset=ft.Offset(0.02, 0.04),
-        animate_opacity=ft.Animation(380, ft.AnimationCurve.EASE_OUT_CUBIC),
-        animate_scale=ft.Animation(460, ft.AnimationCurve.EASE_OUT_BACK),
-        animate_offset=ft.Animation(400, ft.AnimationCurve.EASE_OUT_CUBIC),
-        content=ft.Column(
-            spacing=8,
-            controls=[
-                ft.Container(
-                    ft.Text(
-                        "Community",
-                        font_family="ps",
-                        color=accent_color,
-                        size=14,
-                        weight=ft.FontWeight.BOLD,
-                    ),
-                    alignment=ft.Alignment.CENTER,
-                ),
-                discord_btn,
-                github_btn,
-            ],
-        ),
-    )
-
     home_sidebar = ft.Container(
         width=210,
         # padding=ft.Padding.only(top=6, bottom=6),
         content=ft.Column(
             expand=True,
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            alignment=ft.MainAxisAlignment.START,
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-            controls=[
-                flying_model_card,
-                community_section,
-            ],
+            controls=[flying_model_card],
         ),
     )
 
@@ -3757,6 +3914,64 @@ def main(page: ft.Page):
     # ---------------------------
     # LIBRARY & MODS TAB VIEWS
     # ---------------------------
+    library_filter = {"query": "", "loader": "all"}
+
+    def refresh_library_filter():
+        rebuild_library_view()
+
+    library_search_field = SimpleInput(
+        hint_text="Search profiles...",
+        width=250,
+        height=48,
+        text_size=13,
+        prefix_icon=ft.Icons.SEARCH_ROUNDED,
+        prefix_style=ft.TextStyle(color="#747e95", size=18),
+        content_padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+        on_change=lambda e: (
+            library_filter.__setitem__("query", e.control.value or ""),
+            refresh_library_filter(),
+        ),
+        tooltip="Search by name, version, or loader (Ctrl+F)",
+    )
+    library_loader_filter = AcrylicSelector(
+        [
+            ("all", "All loaders"),
+            ("vanilla", "Vanilla"),
+            ("modded", "Modded"),
+            ("instances", "Instances"),
+        ],
+        "all",
+        lambda e: (
+            library_filter.__setitem__("loader", library_loader_filter.value),
+            refresh_library_filter(),
+        ),
+        width=164,
+        hint="All loaders",
+        tooltip="Filter the library",
+    )
+    library_new_btn = SimpleButton(
+        ft.Row(
+            [
+                ft.Icon(ft.Icons.ADD_SHARP, color=bg_color_main, size=17),
+                ft.Text("New Profile", font_family="ps", color=bg_color_main, size=13),
+            ],
+            spacing=5,
+            tight=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        height=48,
+        tooltip="Create a new profile (Ctrl+N)",
+        style=ft.ButtonStyle(
+            bgcolor=accent_color,
+            overlay_color=ft.Colors.TRANSPARENT,
+            shadow_color=ft.Colors.TRANSPARENT,
+            shape=ft.RoundedRectangleBorder(radius=5),
+            padding=ft.Padding.symmetric(horizontal=14, vertical=0),
+            side=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+        ),
+        on_click=lambda e: open_new_profile_page(),
+    )
+
     library_list_view = ProfileList(
         on_order_changed=lambda profile_ids: save_profile_order(profile_ids),
     )
@@ -3766,9 +3981,33 @@ def main(page: ft.Page):
         padding=ft.Padding.only(left=20, right=24, top=10, bottom=4),
         content=ft.Column(
             expand=True,
-            spacing=16,
+            spacing=14,
             controls=[
-                ft.Text("Library", font_family="ps", color=accent_color, size=32),
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[
+                        ft.Row(
+                            [
+                                ft.Text(
+                                    "Library", font_family="ps",
+                                    color=accent_color, size=32,
+                                ),
+                            ],
+                            spacing=10,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        ft.Row(
+                            [
+                                library_search_field,
+                                library_loader_filter,
+                                library_new_btn,
+                            ],
+                            spacing=8,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                    ],
+                ),
                 profile_list_surface(library_list_view),
             ],
         ),
@@ -4099,84 +4338,100 @@ def main(page: ft.Page):
     def rebuild_library_view():
         installations = storage.load_installations()
         is_game_running = state.launcher_log_state.get("running", False)
+        query = library_filter["query"].strip().lower()
+        loader_filter = library_filter["loader"]
 
-        def on_new_profile_hover(e):
-            new_profile_slot.border = ft.Border.all(
-                1, accent_color if e.data == "true" else ft.Colors.TRANSPARENT
-            )
-            new_profile_slot.bgcolor = (
-                ft.Colors.with_opacity(0.35, ft.Colors.BLACK)
-                if e.data == "true"
-                else ft.Colors.BLACK_26
-            )
-            try:
-                new_profile_slot.update()
-            except RuntimeError:
-                pass
-
-        new_profile_icon_box = ft.Container(
-            width=36,
-            height=36,
-            border_radius=0,
-            bgcolor=ft.Colors.BLACK_38,
-            alignment=ft.Alignment.CENTER,
-            content=ft.Icon(ft.Icons.ADD_SHARP, color=accent_color, size=22),
-        )
-
-        new_profile_slot = ft.Container(
-            bgcolor=ft.Colors.BLACK_26,
-            border=ft.Border.all(1, ft.Colors.TRANSPARENT),
-            border_radius=5,
-            padding=ft.Padding.symmetric(horizontal=16, vertical=12),
-            content=ft.Row(
-                [
-                    new_profile_icon_box,
-                    ft.Column(
-                        [
-                            ft.Text(
-                                "New Profile",
-                                font_family="ps",
-                                color=accent_color,
-                                size=16,
-                                weight=ft.FontWeight.W_500,
-                            ),
-                            ft.Text(
-                                "Create a new custom profile or instance",
-                                size=12,
-                                color="#747e95",
-                            ),
-                        ],
-                        spacing=2,
-                        expand=True,
-                    ),
-                    ft.Icon(
-                        ft.Icons.ADD_SHARP,
-                        color=accent_color,
-                        size=20,
-                    ),
-                ],
-                spacing=12,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            on_hover=on_new_profile_hover,
-            on_click=lambda e: open_new_profile_page(),
-        )
+        filtered = []
+        for profile in installations:
+            loader_val = (profile.get("loader") or "Vanilla").strip().lower()
+            if loader_filter == "vanilla" and loader_val not in ("vanilla", ""):
+                continue
+            if loader_filter == "modded" and loader_val not in {
+                "fabric", "forge", "neoforge", "quilt",
+            }:
+                continue
+            if loader_filter == "instances" and not profile.get("is_instance"):
+                continue
+            if query:
+                haystack = " ".join((
+                    str(profile.get("name") or ""),
+                    str(profile.get("minecraft_version") or profile.get("version_id") or ""),
+                    loader_val,
+                    str(profile.get("loader_version") or ""),
+                )).lower()
+                if query not in haystack:
+                    continue
+            filtered.append(profile)
 
         rows = []
         empty_state = None
         if not installations:
             empty_state = ft.Container(
-                padding=ft.Padding.symmetric(vertical=20),
+                padding=ft.Padding.symmetric(vertical=28),
                 alignment=ft.Alignment.CENTER,
-                content=ft.Text(
-                    "No installations found in Library.",
-                    font_family="ps",
-                    color="#747e95",
-                    size=14,
+                content=ft.Column(
+                    [
+                        ft.Icon(ft.Icons.INVENTORY_2_OUTLINED, color="#747e95", size=34),
+                        ft.Text(
+                            "Your library is empty.",
+                            font_family="ps",
+                            color="#c8d2e0",
+                            size=15,
+                        ),
+                        ft.Text(
+                            "Create a profile to install a Minecraft version.",
+                            size=12,
+                            color="#747e95",
+                        ),
+                        library_new_btn,
+                    ],
+                    spacing=8,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+            )
+        elif not filtered:
+            def clear_library_filters(e=None):
+                library_filter["query"] = ""
+                library_filter["loader"] = "all"
+                library_search_field.value = ""
+                library_loader_filter.refresh_options(library_loader_filter.options, "all")
+                try:
+                    library_search_field.update()
+                    library_loader_filter.update()
+                except RuntimeError:
+                    pass
+                rebuild_library_view()
+
+            empty_state = ft.Container(
+                padding=ft.Padding.symmetric(vertical=28),
+                alignment=ft.Alignment.CENTER,
+                content=ft.Column(
+                    [
+                        ft.Icon(ft.Icons.SEARCH_OFF_ROUNDED, color="#747e95", size=34),
+                        ft.Text(
+                            "No profiles match your filters.",
+                            font_family="ps",
+                            color="#c8d2e0",
+                            size=15,
+                        ),
+                        SimpleButton(
+                            ft.Text("Clear filters", font_family="ps", color=accent_color, size=13),
+                            on_click=clear_library_filters,
+                            height=32,
+                            style=ft.ButtonStyle(
+                                bgcolor=ft.Colors.BLACK_26,
+                                overlay_color=ft.Colors.TRANSPARENT,
+                                shape=ft.RoundedRectangleBorder(radius=4),
+                                padding=ft.Padding.symmetric(horizontal=12, vertical=0),
+                            ),
+                        ),
+                    ],
+                    spacing=8,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
             )
         else:
-            for profile in installations:
+            for profile in filtered:
                 pid = profile.get("id")
                 is_inst = bool(profile.get("is_instance"))
                 loader_val = (profile.get("loader") or "Vanilla").strip().lower()
@@ -4278,10 +4533,7 @@ def main(page: ft.Page):
 
         library_list_view.set_cards(
             rows,
-            header=ft.Container(
-                content=new_profile_slot,
-                margin=ft.Padding.only(bottom=8),
-            ),
+            header=None,
             footer=empty_state,
         )
 
@@ -4323,23 +4575,27 @@ def main(page: ft.Page):
 
     def make_setting_card(
         title: str,
-        description: str,
+        description: str = "",
         control: ft.Control | None = None,
         bottom_control: ft.Control | None = None,
     ) -> ft.Container:
+        header_controls: list[ft.Control] = [
+            ft.Text(
+                title,
+                font_family="ps",
+                color=accent_color,
+                size=15,
+                weight=ft.FontWeight.BOLD,
+            ),
+        ]
+        if description:
+            header_controls.append(
+                ft.Text(description, font_family="ps", color="#747e95", size=12)
+            )
         header_col = ft.Column(
             spacing=3,
             expand=True if control else False,
-            controls=[
-                ft.Text(
-                    title,
-                    font_family="ps",
-                    color=accent_color,
-                    size=15,
-                    weight=ft.FontWeight.BOLD,
-                ),
-                ft.Text(description, font_family="ps", color="#747e95", size=12),
-            ],
+            controls=header_controls,
         )
         if control:
             top_content = ft.Row(
@@ -4506,27 +4762,22 @@ def main(page: ft.Page):
 
             make_setting_card(
                 title="Launch Behavior",
-                description="Action to take with the launcher window when Minecraft launches.",
                 control=launch_action_dd,
             ),
             make_setting_card(
                 title="Discord Rich Presence",
-                description="Share your skin face, launcher activity, Minecraft version, and mod loader on Discord.",
                 control=discord_rpc_switch,
             ),
             make_setting_card(
-                title="Roaming Background Glow",
-                description="Smooth ambient gradient drifting gently across the launcher background.",
+                title="Background Glow",
                 control=orbs_switch,
             ),
             make_setting_card(
-                title="Player Head Follows Cursor",
-                description="The player statue on Home turns its head toward your mouse pointer.",
+                title="Head Follows Cursor",
                 control=head_tracking_switch,
             ),
             make_setting_card(
                 title="Capture Game Logs",
-                description="Stream process output and crash logs to gr8-launcher.log in real-time.",
                 control=logs_switch,
             ),
         ]
@@ -4742,13 +4993,12 @@ def main(page: ft.Page):
 
         cards = [
             make_setting_card(
-                title="Memory Allocation (RAM)",
-                description=f"System Total: {round(sys_ram_mb / 1024, 1)} GB. Set memory heap allocated to Minecraft.",
+                title="Memory Allocation",
+                description=f"{round(sys_ram_mb / 1024, 1)} GB system memory available.",
                 bottom_control=ram_bottom,
             ),
             make_setting_card(
                 title="Java Executable",
-                description="Custom Java runtime path. Leave default for automatic detection.",
                 bottom_control=java_bottom,
             ),
         ]
@@ -4878,17 +5128,14 @@ def main(page: ft.Page):
         cards = [
             make_setting_card(
                 title="Default Window Resolution",
-                description="Dimensions for the initial game window when launching Minecraft.",
                 bottom_control=res_bottom,
             ),
             make_setting_card(
                 title="Launch in Fullscreen",
-                description="Automatically start Minecraft in fullscreen mode.",
                 control=fullscreen_switch,
             ),
             make_setting_card(
                 title="Ely.by Custom Skin Bridge",
-                description="Injects authlib runtime bridge to render custom player skins and capes.",
                 control=skins_switch,
             ),
         ]
@@ -4948,61 +5195,7 @@ def main(page: ft.Page):
             threading.Thread(target=revert_pill, args=(btn, orig_content), daemon=True).start()
 
         # ==========================================
-        # 1. HERO MAIN ATTRACTION (Gr8 + Launcher)
-        # ==========================================
-        hero_card = ft.Container(
-            # bgcolor=ft.Colors.BLACK_26,
-            border_radius=5,
-            padding=ft.Padding.symmetric(horizontal=24, vertical=22),
-            alignment=ft.Alignment.CENTER,
-            content=ft.Column(
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=4,
-                controls=[
-                    ft.Image(
-                        src="titles/Gr8_title.png",
-                        width=270,
-                        fit=ft.BoxFit.CONTAIN,
-                    ),
-                    ft.Text(
-                        "Launcher",
-                        font_family="ps",
-                        color=accent_color,
-                        size=55,
-                        # weight=ft.FontWeight.BOLD,
-                    ),
-                    ft.Container(height=4),
-                    ft.Row(
-                        [
-                            # ft.Container(
-                            #     bgcolor=ft.Colors.BLACK_26,
-                            #     border_radius=5,
-                            #     padding=ft.Padding.symmetric(horizontal=10, vertical=4),
-                            #     content=ft.Text(
-                            #         "v2.0.0",
-                            #         font_family="ps",
-                            #         color=accent_color,
-                            #         size=13,
-                            #         weight=ft.FontWeight.BOLD,
-                            #     ),
-                            # ),
-                            ft.Text(
-                                "A lightweight, minimal Minecraft launcher",
-                                color="#9ba3b4",
-                                size=13,
-                            ),
-                        ],
-                        spacing=10,
-                        tight=True,
-                        alignment=ft.MainAxisAlignment.CENTER,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                ],
-            ),
-        )
-
-        # ==========================================
-        # 2. COMMUNITY & CREATOR CARD
+        # 1. COMMUNITY & CREATOR CARD
         # ==========================================
         discord_tag_pill = ft.Container(
             bgcolor=ft.Colors.BLACK_26,
@@ -5215,11 +5408,6 @@ def main(page: ft.Page):
                                 size=15,
                                 weight=ft.FontWeight.BOLD,
                             ),
-                            ft.Text(
-                                "Direct shortcuts to installation folders, instances, and configurations.",
-                                color="#747e95",
-                                size=12,
-                            ),
                         ],
                     ),
                     make_dir_entry("Minecraft Game Root", mc_root, ft.Icons.FOLDER_ROUNDED),
@@ -5272,11 +5460,6 @@ def main(page: ft.Page):
                                 size=15,
                                 weight=ft.FontWeight.BOLD,
                             ),
-                            ft.Text(
-                                "Revert RAM allocation, window dimensions, and flags to defaults. Accounts and instances remain untouched.",
-                                color="#747e95",
-                                size=12,
-                            ),
                         ],
                     ),
                     reset_btn,
@@ -5291,7 +5474,7 @@ def main(page: ft.Page):
             alignment=ft.Alignment.CENTER,
             padding=ft.Padding.only(top=6, bottom=14),
             content=ft.Text(
-                "Gr8 Launcher v2.0.0 • Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.",
+                "Gr8 Launcher • Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.",
                 color="#50617a",
                 size=11,
                 text_align=ft.TextAlign.CENTER,
@@ -5299,7 +5482,6 @@ def main(page: ft.Page):
         )
 
         cards = [
-            hero_card,
             creator_card,
             storage_card,
             reset_card,
@@ -5312,7 +5494,7 @@ def main(page: ft.Page):
     sub_nav_items = [
         ("general", "General", ft.Icons.TUNE_SHARP),
         ("java", "Java & Memory", ft.Icons.MEMORY_SHARP),
-        ("display", "Display / Game", ft.Icons.DESKTOP_WINDOWS_SHARP),
+        ("display", "Display", ft.Icons.DESKTOP_WINDOWS_SHARP),
         ("about", "About", ft.Icons.INFO_SHARP),
     ]
 
@@ -6863,8 +7045,8 @@ def main(page: ft.Page):
             [sidebar_btn_controls.get("mods"), profiles_panel_container],
             # Wave 4: Fourth sidebar button (Skins) + Right column top (3D skin model)
             [sidebar_btn_controls.get("skins"), flying_model_card],
-            # Wave 5: Fifth sidebar button (Settings) + Right column bottom (Community section)
-            [sidebar_btn_controls.get("settings"), community_section],
+            # Wave 5: Fifth sidebar button (Settings)
+            [sidebar_btn_controls.get("settings")],
             # Wave 6: Sixth sidebar button (Accounts)
             [sidebar_btn_controls.get("accounts")],
         ]
@@ -6967,7 +7149,39 @@ def main(page: ft.Page):
     profile_dialogs = ProfileDialogHost(
         content_area, title_bar_height=custom_title_bar.height,
     )
-    page.on_keyboard_event = profile_dialogs.handle_keyboard_event
+
+    async def focus_library_search():
+        await asyncio.sleep(0.08)
+        library_search_field.focus()
+        try:
+            page.update()
+        except RuntimeError:
+            pass
+
+    def handle_keyboard_event(e: ft.KeyboardEvent):
+        profile_dialogs.handle_keyboard_event(e)
+        if profile_dialogs.visible or e.alt or e.meta:
+            return
+        key = (e.key or "").lower()
+        if e.ctrl:
+            if key in {"1", "2", "3", "4", "5", "6"}:
+                if content_area.content is home_view:
+                    set_active_tab(tabs[int(key) - 1][0])
+            elif key == "f":
+                if content_area.content is home_view:
+                    set_active_tab("library")
+                    page.run_task(focus_library_search)
+            elif key == "n":
+                if content_area.content is home_view:
+                    open_new_profile_page()
+            elif key == "enter":
+                if content_area.content is home_view and not state.launcher_log_state.get("running"):
+                    start_launch(get_selected_profile())
+            return
+        if key in {"f5"} and content_area.content is home_view:
+            refresh_launch_button()
+
+    page.on_keyboard_event = handle_keyboard_event
 
     # Dedicated background layer for the roaming gradient (isolated to prevent UI redraw flickers)
     initial_settings = storage.load_settings()
