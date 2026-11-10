@@ -65,6 +65,7 @@ SHA256SUMS.txt
 # Generated Java archives; the bundled skin bridge is a required release input
 *.jar
 !tools/gr8-skin-bridge/gr8-skin-bridge.jar
+!.assets/mods/gr8-performance.jar
 
 # Keep build scripts, requirements-build.txt, packaging/, and .github/ versioned.
 

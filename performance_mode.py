@@ -7,7 +7,13 @@ when the game starts. Worlds, accounts, and installed mods are left alone.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
+
+BUNDLED_MOD_FILENAME = "gr8-performance.jar"
+BUNDLED_MOD_PATH = (
+    Path(__file__).resolve().parent / ".assets" / "mods" / BUNDLED_MOD_FILENAME
+)
 
 # Video options that remove the common frame-time bottlenecks. Unknown keys in
 # options.txt are preserved, and values are only replaced (never reordered).
@@ -15,6 +21,7 @@ PERFORMANCE_OPTIONS: dict[str, str] = {
     "maxFps": "1000",
     "enableVsync": "false",
     "graphicsMode": "0",  # Fast: disables fancy leaves, clouds, and fog.
+    "fancyGraphics": "false",  # Legacy equivalent of graphicsMode.
     "renderDistance": "10",
     "simulationDistance": "8",
     "entityShadows": "false",
@@ -22,6 +29,8 @@ PERFORMANCE_OPTIONS: dict[str, str] = {
     "particles": "1",  # Decreased rather than minimal, so effects stay readable.
     "biomeBlendRadius": "2",
     "entityDistanceScaling": "0.75",
+    "renderClouds": "false",
+    "mipmapLevels": "0",
 }
 
 
@@ -93,3 +102,47 @@ def apply_performance_options(game_directory: Path | str) -> bool:
             pass
         return False
     return True
+
+
+def install_performance_mod(game_directory: Path | str) -> bool:
+    """Copy the bundled mod JAR into a Fabric/Quilt instance's mods folder."""
+    try:
+        if not BUNDLED_MOD_PATH.is_file():
+            return False
+        mods_directory = Path(game_directory) / "mods"
+        mods_directory.mkdir(parents=True, exist_ok=True)
+        target = mods_directory / BUNDLED_MOD_FILENAME
+        if target.is_file():
+            source_stat = BUNDLED_MOD_PATH.stat()
+            target_stat = target.stat()
+            if (
+                source_stat.st_size == target_stat.st_size
+                and source_stat.st_mtime <= target_stat.st_mtime
+            ):
+                return True
+        shutil.copy2(BUNDLED_MOD_PATH, target)
+        return True
+    except OSError:
+        return False
+
+
+def remove_performance_mod(game_directory: Path | str) -> bool:
+    """Remove the bundled mod JAR when 1K FPS Mode is switched off."""
+    try:
+        (Path(game_directory) / "mods" / BUNDLED_MOD_FILENAME).unlink()
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return False
+
+
+def performance_agent_argument(game_directory: Path | str) -> str | None:
+    """Return the -javaagent argument for loaders that cannot run Fabric mods.
+
+    The same JAR contains a Java agent entrypoint, so Vanilla, Forge, NeoForge,
+    and OptiFine profiles get the preset without installing a mod loader.
+    """
+    if not BUNDLED_MOD_PATH.is_file():
+        return None
+    return f"-javaagent:{BUNDLED_MOD_PATH}={Path(game_directory).resolve()}"

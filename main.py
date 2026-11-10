@@ -4815,7 +4815,7 @@ def main(page: ft.Page):
             ),
             make_setting_card(
                 title="1K FPS Mode",
-                description="Tuned video settings and JVM flags applied on launch.",
+                description="Built-in mod, tuned video settings, and JVM flags on launch.",
                 control=performance_switch,
             ),
             make_setting_card(

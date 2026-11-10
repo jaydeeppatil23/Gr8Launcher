@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "gr8-performance",
+  "version": "1.0.0",
+  "name": "Gr8 1K FPS",
+  "description": "Applies the Gr8 1K FPS preset before Minecraft reads options.txt.",
+  "authors": ["Gr8 Projects"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "preLaunch": ["com.gr8.performance.Gr8PerformanceMod"]
+  },
+  "depends": {
+    "fabricloader": ">=0.14.0",
+    "minecraft": "*"
+  }
+}
