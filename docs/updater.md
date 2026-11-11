@@ -253,10 +253,13 @@ close path. Failure releases the gate and leaves the launcher open. A successful
 spawned helper process alone is not readiness.
 
 Identify the Python launcher and Flet desktop processes by PID, creation time,
-and executable path. Wait for those exact processes to exit and check managed
-files are unlocked. A timeout aborts application and produces a recoverable
-result. Do not kill processes by name, terminate Java, or continue after a failed
-`Wait-Process`. `sys.exit()` inside a worker is not a shutdown protocol.
+and executable path. Exclude the updater helper and its descendants from the
+launcher's process tree: the launcher starts the helper as a child, and the
+helper must remain running during the update. Wait for the remaining exact
+launcher processes to exit and check managed files are unlocked. A timeout
+aborts application and produces a recoverable result. Do not kill processes by
+name, terminate Java, or continue after a failed `Wait-Process`. `sys.exit()`
+inside a worker is not a shutdown protocol.
 
 Every launcher startup must check for an active transaction before normal
 operations. Only the helper's designated relaunch, carrying the matching

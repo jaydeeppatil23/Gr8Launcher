@@ -8,6 +8,7 @@
 ### Fixed
 
 - Read formatted release notes with headings, lists, and links inside the launcher.
+- Prevent updates from timing out after the launcher closes because the updater was waiting for itself to exit.
 
 ### Security
 

@@ -204,7 +204,7 @@ namespace Gr8Updater
             catch (InvalidOperationException) { }
             return null;
         }
-        public static List<Identity> Tree(Process parent)
+        public static List<Identity> Tree(Process parent, int excludedRoot = 0)
         {
             Dictionary<int, int> parents = new Dictionary<int, int>();
             IntPtr snapshot = CreateToolhelp32Snapshot(2, 0);
@@ -220,7 +220,8 @@ namespace Gr8Updater
             do
             {
                 added = false;
-                foreach (KeyValuePair<int, int> item in parents) if (ids.Contains(item.Value)) added |= ids.Add(item.Key);
+                foreach (KeyValuePair<int, int> item in parents)
+                    if (item.Key != excludedRoot && ids.Contains(item.Value)) added |= ids.Add(item.Key);
             } while (added);
             List<Identity> result = new List<Identity>();
             foreach (int id in ids)
@@ -337,7 +338,9 @@ namespace Gr8Updater
                     if (original == null || !Data.Same(original.MainModule.FileName, Path.Combine(h.app_dir, "Gr8Launcher.exe")))
                         throw new IOException("The original launcher process is invalid.");
                     List<Identity> originals;
-                    using (original) originals = Processes.Tree(original);
+                    // The launcher spawns this helper; exclude its entire subtree from shutdown waits.
+                    using (original) using (Process helper = Process.GetCurrentProcess())
+                        originals = Processes.Tree(original, helper.Id);
                     Processes.OtherCopies(h.app_dir, new HashSet<int>(originals.Select(p => p.pid)));
                     report("Preparing update", "Checking the downloaded package...", 0.08);
                     using (FileStream packageLock = new FileStream(h.package, FileMode.Open, FileAccess.Read, FileShare.Read))
