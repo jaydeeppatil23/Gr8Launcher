@@ -1,21 +1,26 @@
-"""Profile-scoped installed mods and Modrinth browsing."""
+"""Profile-scoped mods with Modrinth and CurseForge browsing."""
 
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import logging
 from pathlib import Path
 from typing import Callable
 
 import flet as ft
 
-from mod_services import LocalMod, ModManager, ModrinthClient, ModUpdate, UpdateCheck, SUPPORTED_LOADERS
+from mod_services import LocalMod, ModManager, ModrinthClient, ModUpdate, UpdateCheck, SUPPORTED_LOADERS, primary_file
+from mod_platform import ModPlatformClient
 from ui_profiles import ProfileList, profile_card_surface, profile_list_surface, profile_row
-from ui_controls import SimpleInput, AcrylicSelector, launcher_button, launcher_back_button, launcher_icon_button, rounded_artwork
+from ui_controls import (SimpleInput, AcrylicSelector, launcher_button, launcher_back_button,
+                          launcher_icon_button, rounded_artwork, format_size as _size,
+                          format_downloads as _downloads, search_input, card_surface)
 from ui_motion import StaggeredReveal
 from ui_mod_list import ModList
 from ui_mod_details import ModDetailsPage
 from ui_mod_install import ModInstallReview
+from ui_modpacks import CONTENT_OPTIONS, ModpacksPage
 from ui_progress import ProgressHost, ProgressTask, track_progress
 
 
@@ -32,21 +37,9 @@ def _button(label: str, on_click: Callable, *, primary: bool = False, **kwargs) 
     return launcher_button(label, on_click, primary=primary, **kwargs)
 
 
-def _dropdown(options: list[tuple[str, str]], value: str | None, on_select: Callable, *, width: int = 160) -> AcrylicSelector:
-    return AcrylicSelector(options, value, on_select, width=width)
-
-
-def _size(size: int) -> str:
-    if size < 1024:
-        return f"{size} B"
-    return f"{size / 1024 / 1024:.1f} MB" if size >= 1024 * 1024 else f"{size / 1024:.0f} KB"
-
-
-def _downloads(count: int) -> str:
-    for threshold, suffix in ((1_000_000_000, "B"), (1_000_000, "M"), (1_000, "K")):
-        if count >= threshold:
-            return f"{count / threshold:.1f}".removesuffix(".0") + suffix
-    return str(count)
+def _dropdown(options: list[tuple[str, str]], value: str | None, on_select: Callable, *, width: int = 160,
+              prefix: str | None = None) -> AcrylicSelector:
+    return AcrylicSelector(options, value, on_select, width=width, prefix=prefix)
 
 
 class ModsPage(ft.Container):
@@ -65,6 +58,7 @@ class ModsPage(ft.Container):
         progress: ProgressHost | None = None,
         entrance: StaggeredReveal | None = None,
         runtime_directory: Path | None = None,
+        on_play: Callable[[dict], None] | None = None,
     ):
         self._page = page
         self._get_profiles = get_profiles
@@ -86,11 +80,14 @@ class ModsPage(ft.Container):
         self._pending_load: tuple | None = None
         self._load_activity: ProgressTask | None = None
         self._artwork_activities: set[ProgressTask] = set()
-        self.client = client or ModrinthClient()
+        self.client = client or ModPlatformClient()
+        self.provider = "modrinth"
+        self._provider_states: dict[str, tuple] = {}
         self.profile: dict | None = None
         self.manager: ModManager | None = None
         self._managers: dict[Path, ModManager] = {}
         self.view = "installed"
+        self.content_type = "mods"
         self.queries = {"installed": "", "browse": ""}
         self.local_mods: list[LocalMod] = []
         self.hits: list[dict] = []
@@ -115,6 +112,8 @@ class ModsPage(ft.Container):
         self._update_activity: ProgressTask | None = None
 
         self.heading = _text("Mods", 32, color=ACCENT, pixel=True)
+        self.content_selector = AcrylicSelector(CONTENT_OPTIONS, "mods", self._content_changed,
+                                                width=160, tooltip="Content type")
         self.select_profile_button = _button(
             "Select Profile", lambda e: self.open_profile_selection(),
             tooltip="Select Profile", height=54, width=320,
@@ -122,7 +121,7 @@ class ModsPage(ft.Container):
         self.context = ft.Container(content=self.select_profile_button, width=320)
         self._render_profile_header()
         self.header = ft.Row([
-            self.heading, ft.Container(expand=True), self.context,
+            self.heading, self.content_selector, ft.Container(expand=True), self.context,
         ], spacing=16, vertical_alignment=ft.CrossAxisAlignment.CENTER)
         self.installed_tab = _button("Installed", lambda e: self.set_view("installed"))
         self.browse_tab = _button("Discover", lambda e: self.set_view("browse"))
@@ -131,32 +130,30 @@ class ModsPage(ft.Container):
         self.tabs = ft.Row([
             self.browse_tab, self.installed_tab, ft.Container(expand=True), self.update_button, self.attribution,
         ], spacing=8)
-        self.search = SimpleInput(
-            hint_text="Search mods", expand=True,
-            hint_style=ft.TextStyle(color=MUTED),
-            border={
-                state: ft.OutlineInputBorder(border_radius=5, side=ft.BorderSide(0, ft.Colors.TRANSPARENT))
-                for state in (ft.ControlState.DEFAULT, ft.ControlState.FOCUSED, ft.ControlState.DISABLED)
-            },
-            prefix_icon=ft.Icons.SEARCH_SHARP,
-            on_change=self._search_changed, on_submit=self._search_submitted,
-        )
+        self.search = search_input("Search mods", on_change=self._search_changed, on_submit=self._search_submitted)
         self.filter = _dropdown([("all", "All mods"), ("enabled", "Enabled"), ("disabled", "Disabled")], "all", self._filter_changed, width=150)
-        self.sort = _dropdown([("downloads", "Popular"), ("relevance", "Relevance"), ("updated", "Recently updated"), ("newest", "Newest")], "downloads", self._sort_changed, width=212)
-        self.sort.content.content.controls.insert(0, _text("Sort:", 13))
+        self.sort = _dropdown([("downloads", "Popular"), ("relevance", "Relevance"), ("updated", "Recently updated"), ("newest", "Newest")],
+                              "downloads", self._sort_changed, width=212, prefix="Sort:")
         self.sort.tooltip = "Sort mods"
+        self.provider_selector = _dropdown([("modrinth", "Modrinth"), ("curseforge", "CurseForge")],
+                                           "modrinth", self._provider_changed, width=160)
+        self.provider_selector.tooltip = "Mod provider"
+        self.curseforge_setup_button = launcher_icon_button(
+            icon=ft.Icons.KEY_SHARP, icon_color=ACCENT, icon_size=20,
+            tooltip="Set up CurseForge API key", on_click=self._configure_curseforge,
+        )
         self.add_button = _button("Add JARs", self._import_files, primary=True)
         self.refresh_button = launcher_icon_button(
             icon=ft.Icons.REFRESH_SHARP, icon_color=ACCENT, icon_size=20,
             tooltip="Refresh mods", on_click=self._refresh_requested,
         )
-        self.toolbar = ft.Row([self.search, self.filter, self.sort, self.add_button, self.refresh_button], spacing=12)
+        self.toolbar = ft.Row([self.search, self.filter, self.provider_selector, self.sort,
+                               self.curseforge_setup_button, self.add_button, self.refresh_button], spacing=12)
         self.status = _text("", 12, expand=True)
         self.list_view = ModList(self._cache_live_rows)
-        self.list_host = profile_list_surface(self.list_view)
         # Animate a stable body; row reconciliation resets drag animations.
         self.list_body = ft.Container(expand=True, content=self.list_view)
-        self.list_host.content = self.list_body
+        self.list_host = profile_list_surface(self.list_body)
         self.previous = launcher_icon_button(icon=ft.Icons.CHEVRON_LEFT_SHARP, tooltip="Previous page", on_click=lambda e: self._paginate(-1))
         self.next = launcher_icon_button(icon=ft.Icons.CHEVRON_RIGHT_SHARP, tooltip="Next page", on_click=lambda e: self._paginate(1))
         self.page_label = _text("")
@@ -194,11 +191,55 @@ class ModsPage(ft.Container):
         self.selection_host = ft.Container(expand=True, visible=False, content=ft.Column([
             self.selection_heading, self.selection_note, self.selection_surface,
         ], expand=True, spacing=12, horizontal_alignment=ft.CrossAxisAlignment.STRETCH))
+        self.mods_host = ft.Stack([self.listing, self.details_host, self.selection_host], expand=True)
+        self.modpacks_page = ModpacksPage(
+            page, get_profiles=get_profiles, is_running=is_running, notify=notify, dialogs=dialogs,
+            open_folder=open_folder, on_changed=on_changed, on_play=on_play,
+            on_manage_mods=lambda profile: self.enter(profile["id"]),
+            on_content_change=self._content_changed, configure_curseforge=self._configure_curseforge,
+            client=self.client, runtime_directory=runtime_directory,
+            other_busy=lambda: self._mods_busy or self.checking_updates, progress=progress, entrance=entrance,
+        )
         super().__init__(expand=True, padding=ft.Padding.only(left=20, right=24, top=10, bottom=8),
-                         content=ft.Stack([self.listing, self.details_host, self.selection_host], expand=True))
+                         content=ft.Stack([self.mods_host, self.modpacks_page], expand=True))
         self.list_reveal = StaggeredReveal(page, self.list_host)
         self.selection_reveal = StaggeredReveal(page, self.selection_host)
         self._render()
+
+    @property
+    def busy(self) -> bool:
+        packs = getattr(self, "modpacks_page", None)
+        return self._mods_busy or bool(packs and packs.busy)
+
+    @busy.setter
+    def busy(self, value: bool) -> None:
+        self._mods_busy = value
+
+    def _content_changed(self, e) -> None:
+        selector = self.modpacks_page.content_selector if self.content_type == "modpacks" else self.content_selector
+        self.set_content_type(selector.value)
+
+    def set_content_type(self, kind: str) -> None:
+        if kind not in {"mods", "modpacks"} or kind == self.content_type:
+            return
+        if self._operation_in_progress:
+            self.content_selector.refresh_options(CONTENT_OPTIONS, self.content_type)
+            self.modpacks_page.content_selector.refresh_options(CONTENT_OPTIONS, self.content_type)
+            self._update()
+            return
+        active = self._active
+        self.leave()
+        self.content_type = kind
+        self.mods_host.visible = kind == "mods"
+        self.modpacks_page.visible = kind == "modpacks"
+        self.heading.value = "Modpacks" if kind == "modpacks" else "Mods"
+        self.modpacks_page.heading.value = "Modpacks"
+        self.content_selector.refresh_options(CONTENT_OPTIONS, kind)
+        self.modpacks_page.content_selector.refresh_options(CONTENT_OPTIONS, kind)
+        if active:
+            self.enter()
+        self._render()
+        self._update()
 
     @property
     def _operation_in_progress(self) -> bool:
@@ -206,6 +247,8 @@ class ModsPage(ft.Container):
 
     @property
     def reveal_controls(self) -> list[ft.Control]:
+        if self.content_type == "modpacks":
+            return self.modpacks_page.reveal_controls
         if self._selection_open:
             return [self.selection_heading, self.selection_note, self.selection_surface]
         if self._details_open:
@@ -215,6 +258,8 @@ class ModsPage(ft.Container):
     def did_mount(self) -> None:
         # The surrounding Home view can still be removed by a full-page route.
         # Restore a deep scroll after the client has actually mounted the list.
+        if self.content_type == "modpacks":
+            return
         if self._active and self._saved_scroll and not self._details_open and not self._selection_open:
             self._page.run_task(self._restore_scroll, self._generation, self._saved_scroll)
 
@@ -230,6 +275,20 @@ class ModsPage(ft.Container):
                 pass
 
     def enter(self, profile_id: str | None = None, *, defer_load: bool = False) -> None:
+        if profile_id and self.content_type == "modpacks":
+            if self._operation_in_progress:
+                return
+            self.modpacks_page.leave()
+            self.content_type = "mods"
+            self.mods_host.visible = True
+            self.modpacks_page.visible = False
+            self.content_selector.refresh_options(CONTENT_OPTIONS, "mods")
+            self.modpacks_page.content_selector.refresh_options(CONTENT_OPTIONS, "mods")
+            self._active = False
+        if self.content_type == "modpacks":
+            self._active = True
+            self.modpacks_page.enter(defer_load=defer_load)
+            return
         if not self._active:
             # A cached native scroll viewport can retain an empty painted
             # window after its parent fades back in. Recreate the viewport
@@ -253,6 +312,10 @@ class ModsPage(ft.Container):
             self._page.run_task(self._restore_scroll, self._generation, self._saved_scroll)
 
     def leave(self) -> None:
+        if self.content_type == "modpacks":
+            self.modpacks_page.leave()
+            self._active = False
+            return
         self._finish_update_activity()
         self._active = False
         self._generation += 1
@@ -414,6 +477,9 @@ class ModsPage(ft.Container):
         self._page.run_task(self._restore_scroll, self._generation, 0)
 
     def refresh(self, *, defer_load: bool = False, animate_list: bool = False) -> None:
+        if self.content_type == "modpacks":
+            self.modpacks_page.refresh(defer_load=defer_load)
+            return
         self._finish_update_activity()
         self._generation += 1
         self._pending_load = None
@@ -446,6 +512,9 @@ class ModsPage(ft.Container):
 
     def start_loading(self) -> None:
         """Start a prepared scan after the sidebar entrance has been mounted."""
+        if self.content_type == "modpacks":
+            self.modpacks_page.start_loading()
+            return
         request, self._pending_load = self._pending_load, None
         if request is None:
             return
@@ -581,6 +650,7 @@ class ModsPage(ft.Container):
     async def _load(self, generation: int, profile: dict, manager: ModManager,
                     view: str, query: str, sort: str, offset: int, activity: ProgressTask) -> None:
         local, data, error = [], None, ""
+        provider = self.provider
         saved_check = None
         release_type = self.details_page.release_filter.value
         try:
@@ -594,9 +664,10 @@ class ModsPage(ft.Container):
                 if generation != self._generation:
                     return
                 if view == "browse":
+                    provider_args = {"provider": provider} if provider == "curseforge" else {}
                     data = await asyncio.to_thread(
                         self.client.search, query, profile["minecraft_version"], profile["loader"].lower(),
-                        index=sort, offset=offset, limit=self.PAGE_SIZE,
+                        index=sort, offset=offset, limit=self.PAGE_SIZE, **provider_args,
                     )
             except Exception as exc:
                 error = str(exc)
@@ -730,12 +801,79 @@ class ModsPage(ft.Container):
         self.search_offset = 0
         self.refresh()
 
+    def _provider_changed(self, e) -> None:
+        provider = self.provider_selector.value
+        if provider not in {"modrinth", "curseforge"} or provider == self.provider or self._operation_in_progress:
+            return
+        self._provider_states[self.provider] = (self.search.value or "", self.sort.value, self.search_offset)
+        self.provider = provider
+        query, sort, offset = self._provider_states.get(provider, ("", "downloads", 0))
+        self.search.value = self.queries["browse"] = query
+        self.sort.value = sort
+        self.search_offset = offset
+        self.hits = []
+        self.total_hits = 0
+        self._saved_scroll = 0
+        self.list_view._scroll_pixels = 0
+        self.refresh(animate_list=True)
+
+    def _configure_curseforge(self, e) -> None:
+        curseforge = getattr(self.client, "curseforge", None)
+        if curseforge is None or self._operation_in_progress:
+            return
+        field = SimpleInput(hint_text="CurseForge API key", password=True,
+                            can_reveal_password=True, tooltip="Paste your launcher API key")
+
+        def close(e) -> None:
+            field.value = ""
+            self._dialogs().close()
+
+        async def save(e) -> None:
+            value = field.value or ""
+            try:
+                saved = await asyncio.to_thread(curseforge.set_api_key, value)
+                close(e)
+                self._show_notification("CurseForge key saved securely." if saved else
+                                        "CurseForge key set for this session.", "success", "CurseForge")
+                self._project_cache.clear()
+                self.refresh()
+            except ValueError as error:
+                self._show_notification(str(error), "error", "CurseForge")
+
+        async def remove(e) -> None:
+            await asyncio.to_thread(curseforge.clear_api_key)
+            close(e)
+            self.refresh()
+
+        from ui_mod_details import open_link
+        key_link = ft.TextButton(
+            content=ft.Text("Get an API key", font_family="ps", size=13),
+            style=ft.ButtonStyle(
+                color={ft.ControlState.HOVERED: ACCENT, ft.ControlState.DEFAULT: "#747e95"},
+                bgcolor=ft.Colors.TRANSPARENT, overlay_color=ft.Colors.TRANSPARENT,
+                padding=ft.Padding.symmetric(horizontal=8, vertical=0),
+            ),
+            on_click=lambda e: open_link("https://console.curseforge.com/"),
+        )
+        self._dialogs().show(
+            ft.Column([_text("CurseForge requires an API key registered for your launcher. The key is stored in your system credential vault when available.", 13),
+                       field, ft.Row([key_link], tight=True)], spacing=16,
+                      horizontal_alignment=ft.CrossAxisAlignment.STRETCH),
+            title=_text("CurseForge setup", 22, color=ACCENT, pixel=True),
+            actions=[_button("Clear key", remove), _button("Cancel", close), _button("Save key", save, primary=True)],
+            on_cancel=close, width=540, height=380,
+        )
+
     def _paginate(self, direction: int) -> None:
         if not self.loading and not self._operation_in_progress:
             self.search_offset = max(0, self.search_offset + direction * self.PAGE_SIZE)
             self.refresh()
 
     def _render(self) -> None:
+        if self.content_type == "modpacks":
+            self.modpacks_page._render()
+            return
+        self.content_selector.disabled = self._operation_in_progress
         browse = self.view == "browse"
         controls_busy = self._operation_in_progress
         locked = controls_busy or self._is_running()
@@ -747,6 +885,7 @@ class ModsPage(ft.Container):
             tab.content.color = ACCENT if selected and self._compatible() else MUTED
         self.installed_tab.content.value = f"Installed · {len(self.local_mods)}" if self._compatible() else "Installed"
         self.attribution.visible = browse and self._compatible()
+        self.attribution.value = "Powered by CurseForge" if self.provider == "curseforge" else "Powered by Modrinth"
         self.update_button.visible = not browse and self._compatible()
         self.update_button.disabled = self.busy or self.loading or self.checking_updates or not self.local_mods or bool(self._updates and self._is_running())
         self.update_button.content.value = "Checking..." if self.checking_updates else "Update all" if self._updates else "Check updates"
@@ -756,12 +895,16 @@ class ModsPage(ft.Container):
         self.search.hint_text = "Search compatible mods" if browse else "Search installed mods"
         self.filter.visible = not browse
         self.sort.visible = browse
+        self.provider_selector.visible = browse
+        self.provider_selector.disabled = controls_busy
+        self.curseforge_setup_button.visible = browse and self.provider == "curseforge"
+        self.curseforge_setup_button.disabled = controls_busy
         self.add_button.visible = not browse
         self.add_button.disabled = locked or not self._compatible()
         self.search.disabled = controls_busy or not self._compatible()
         self.sort.disabled = controls_busy
         self.filter.disabled = controls_busy
-        self.refresh_button.visible = not browse
+        self.refresh_button.visible = self._compatible()
         self.refresh_button.disabled = controls_busy or self.loading
         self.toolbar.visible = self._compatible()
         self._render_list()
@@ -876,9 +1019,7 @@ class ModsPage(ft.Container):
         return card
 
     def _surface(self, content: ft.Control) -> ft.Container:
-        surface = profile_card_surface(content, glow_color="#454641", horizontal_padding=16)
-        surface.bgcolor = ft.Colors.with_opacity(0.18, "#000000")
-        return surface
+        return card_surface(content, glow_color="#454641", horizontal_padding=16)
 
     def _mod_icon(self) -> ft.Control:
         return rounded_artwork(
@@ -911,7 +1052,7 @@ class ModsPage(ft.Container):
                     _text(mod.name, 18, color=ACCENT if mod.enabled else MUTED, pixel=True,
                           max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
                     mod.description or project.get("description", ""),
-                    _text(" · ".join(value for value in (mod.version, _size(mod.size)) if value),
+                    _text(" · ".join(value for value in (mod.version, _size(mod.size), "Pack managed" if mod.pack_owned else "") if value),
                           12, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)),
             ], spacing=16), expand=True, on_tap=lambda e, item=mod: self.open_details(item, profile_id),
                 mouse_cursor=ft.MouseCursor.CLICK, tooltip=f"View {mod.name}"),
@@ -957,7 +1098,7 @@ class ModsPage(ft.Container):
             ], spacing=16), expand=True, on_tap=lambda e, item=hit: self.open_details(item, profile_id),
                 mouse_cursor=ft.MouseCursor.CLICK, tooltip=f"View {hit.get('title', 'mod')}"),
             install_button,
-        ], spacing=20, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+        ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER))
 
     def _open_mods_folder(self, e) -> None:
         if self.manager:
@@ -1111,13 +1252,70 @@ class ModsPage(ft.Container):
                 return
             closed = False
             reviewed_plans = {frozenset(): plan}
+            manual_preflight_failed = False
 
             def close(e) -> None:
                 nonlocal closed
                 closed = True
                 self._dialogs().close()
 
+            def manual_ready() -> bool:
+                if manual_preflight_failed:
+                    return False
+                if not any(primary_file(version).get("manual_required") for version in review.plan.versions):
+                    return True
+                ready = getattr(self.client, "manual_files_ready", None)
+                return ready(review.plan) if callable(ready) else True
+
+            async def select_manual_files(e) -> None:
+                nonlocal manual_preflight_failed
+                if closed or review.checking:
+                    return
+                review.checking = True
+                install_button.disabled = True
+                review.render()
+                review.update()
+                install_button.update()
+                try:
+                    files = await self.file_picker.pick_files(dialog_title="Select required CurseForge mod downloads",
+                        file_type=ft.FilePickerFileType.CUSTOM, allowed_extensions=["jar"], allow_multiple=True)
+                    if files and not closed:
+                        paths = [Path(item.path) for item in files if item.path]
+                        if len(paths) != len(files):
+                            raise ValueError("Selecting manual downloads requires the desktop launcher.")
+                        await asyncio.to_thread(self.client.register_manual_files, review.plan, paths)
+                        # Selected files reveal native requirements that were
+                        # unavailable online. Older plans must not bypass them.
+                        manual_preflight_failed = True
+                        reviewed_plans.clear()
+                        roots = tuple(deepcopy(version) for version in review.plan.root_versions)
+                        for version in roots:
+                            version.pop("_metadata_warning", None)
+                            version.pop("_fabric_loader_metadata", None)
+                        updated = await asyncio.to_thread(
+                            manager.plan_install, self.client, hit["project_id"], profile["minecraft_version"], profile["loader"].lower(),
+                            selected_version=roots[0], selected_versions=roots if updates else (),
+                            loader_version=profile.get("loader_version", ""), version_id=profile.get("version_id", ""),
+                            optional_projects=tuple(review.optional_projects),
+                        )
+                        if updated.snapshot != review.plan.snapshot or updated.runtime_snapshot != review.plan.runtime_snapshot:
+                            raise ValueError("The instance changed. Cancel and review this installation again.")
+                        review.plan = updated
+                        reviewed_plans[frozenset(review.optional_projects)] = updated
+                        manual_preflight_failed = False
+                        review.error = ""
+                except Exception as error:
+                    review.error = str(error)
+                finally:
+                    review.checking = False
+                    if not closed:
+                        install_button.disabled = not manual_ready()
+                        review.render()
+                        review.update()
+                        install_button.update()
+
             async def optional_change(e, project: str) -> None:
+                nonlocal manual_preflight_failed
                 if closed or review.checking:
                     return
                 previous = review.optional_projects.copy()
@@ -1133,6 +1331,8 @@ class ModsPage(ft.Container):
                     review.error = ""
                     review.render()
                     review.update()
+                    install_button.disabled = not manual_ready()
+                    install_button.update()
                     return
                 review.checking = True
                 review.error = ""
@@ -1142,19 +1342,26 @@ class ModsPage(ft.Container):
                 install_button.update()
                 check = track_progress(self._progress, "Checking optional dependencies...", priority=80)
                 try:
+                    roots = tuple(deepcopy(version) for version in review.plan.root_versions)
+                    for version in roots:
+                        version.pop("_metadata_warning", None)
+                        version.pop("_fabric_loader_metadata", None)
                     updated = await asyncio.to_thread(
                         manager.plan_install, self.client, hit["project_id"], profile["minecraft_version"], profile["loader"].lower(),
-                        selected_version=plan.root_version or selected_version,
+                        selected_version=roots[0],
                         loader_version=profile.get("loader_version", ""), optional_projects=tuple(review.optional_projects),
                         version_id=profile.get("version_id", ""),
-                        **({"selected_versions": plan.root_versions} if updates else {}),
+                        **({"selected_versions": roots} if updates else {}),
                     )
                     if closed:
                         return
                     if updated.snapshot != plan.snapshot:
                         raise ValueError("Installed mods changed. Cancel and review this installation again.")
+                    if updated.runtime_snapshot != plan.runtime_snapshot:
+                        raise ValueError("The profile's Loader or runtime libraries changed. Cancel and review this installation again.")
                     review.plan = updated
                     reviewed_plans[selection] = updated
+                    manual_preflight_failed = False
                 except Exception as error:
                     review.optional_projects = previous
                     review.error = str(error)
@@ -1162,13 +1369,16 @@ class ModsPage(ft.Container):
                     check.finish()
                     review.checking = False
                     if not closed:
-                        install_button.disabled = False
+                        install_button.disabled = not manual_ready()
                         review.render()
                         review.update()
                         install_button.update()
 
             async def install(e) -> None:
                 if closed or review.checking:
+                    return
+                if not manual_ready():
+                    self._show_notification("Select all required CurseForge downloads before installing.", "warning", "Mods")
                     return
                 close(e)
                 await asyncio.sleep(0.2)
@@ -1184,8 +1394,11 @@ class ModsPage(ft.Container):
                     )
 
             review = ModInstallReview(hit, profile, plan, profile_icon=self._profile_icon(profile),
-                                      on_optional_change=optional_change, updates=updates)
+                                      on_optional_change=optional_change, updates=updates,
+                                      on_manual_files=select_manual_files,
+                                      manual_file_ready=getattr(self.client, "is_manual_file_ready", None))
             install_button = _button("Update all" if updates else "Install", install, primary=True)
+            install_button.disabled = not manual_ready()
             self.busy = False
             self._render()
             self._update()

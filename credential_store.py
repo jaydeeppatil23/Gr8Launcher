@@ -21,7 +21,7 @@ _NATIVE_BACKENDS = {
 }
 
 _SECRET_FIELD = re.compile(
-    r'''(?i)((?:--)?(?:access[_-]?token|client[_-]?token|refresh[_-]?token|password|totp_code)\b["']?[ \t]*(?:[=:][ \t]*|[ \t]+))(\[REDACTED\]|["'][^"'\r\n]*["']|[^\s,;\]}]+)'''
+    r'''(?i)((?:--)?(?:access[_-]?token|client[_-]?token|refresh[_-]?token|api[_-]?key|x-api-key|password|totp_code)\b["']?[ \t]*(?:[=:][ \t]*|[ \t]+))(\[REDACTED\]|["'][^"'\r\n]*["']|[^\s,;\]}]+)'''
 )
 
 
@@ -64,9 +64,9 @@ def _tokens(value) -> dict[str, str]:
 
 
 class CredentialStore:
-    def __init__(self, namespace: str):
+    def __init__(self, namespace: str, *, service_prefix: str = "Gr8Launcher.Ely.by"):
         scope = hashlib.sha256(namespace.encode("utf-8")).hexdigest()[:24]
-        self.service = f"Gr8Launcher.Ely.by.{scope}"
+        self.service = f"{service_prefix}.{scope}"
         self._backend = None
         self._backend_checked = False
         self._sessions: dict[str, dict[str, str]] = {}

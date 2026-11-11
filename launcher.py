@@ -635,6 +635,8 @@ def discover_local_instances(
 	for folder in sorted(instances_root.iterdir()):
 		if not folder.is_dir():
 			continue
+		if (folder / ".gr8launcher-pack-installing").exists():
+			continue
 		try:
 			folder_resolved = str(folder.resolve())
 		except Exception:

@@ -13,7 +13,9 @@ import flet as ft
 from mod_services import (LocalMod, ModManager, ModrinthClient, jar_base_name, newer_compatible_version,
                           version_loader_compatible, version_matches_environment)
 from mod_markdown import normalize_mod_markdown
-from ui_controls import SimpleInput, AcrylicSelector, launcher_button, launcher_back_button, launcher_icon_button, rounded_artwork, ACCENT, MUTED
+from mod_compatibility import version_supports_profile
+from ui_controls import (SimpleInput, AcrylicSelector, launcher_button, launcher_back_button,
+                          launcher_icon_button, rounded_artwork, ACCENT, MUTED, search_input, card_surface)
 from ui_motion import StaggeredReveal
 from ui_profiles import ProfileList, profile_card_surface, profile_list_surface
 from ui_progress import ProgressHost, ProgressTask, track_progress
@@ -115,9 +117,9 @@ class ModDetailsPage(ft.Container):
                                 for key, label in (("overview", "Overview"), ("versions", "Versions"), ("gallery", "Gallery"))}
         self.tabs = ft.Row(list(self.section_buttons.values()), spacing=8)
         self.feedback = ft.Row([text("", 12, color=MUTED, expand=True), launcher_button("Retry", self._retry)], visible=False)
-        self.body = ft.Container(expand=True)
-        self.version_search = SimpleInput(hint_text="Search versions", expand=True, on_change=self._filter_versions)
-        self.release_filter = AcrylicSelector([("all", "All releases"), ("release", "Stable"), ("beta", "Beta"), ("alpha", "Alpha")], "release", self._release_filter_changed, width=155)
+        self.body = profile_list_surface(ft.Container(expand=True))
+        self.version_search = search_input("Search versions", on_change=self._filter_versions)
+        self.release_filter = AcrylicSelector([("all", "All releases"), ("release", "Stable"), ("beta", "Beta"), ("alpha", "Alpha")], "release", self._release_filter_changed, width=160)
         self.compatible_only = ft.Switch(value=True, active_color=ACCENT, track_color="#2b3b55", on_change=self._filter_versions)
         self.version_list = ProfileList(on_order_changed=lambda ids: False)
         self.version_hint = text("", 12, color=MUTED)
@@ -282,8 +284,7 @@ class ModDetailsPage(ft.Container):
     def _compatible(self, version: dict) -> bool:
         profile = self._get_profile() or {}
         loader = str(profile.get("loader", "")).lower()
-        return (profile.get("minecraft_version") in version.get("game_versions", [])
-                and loader in version.get("loaders", [])
+        return (version_supports_profile(version, profile.get("minecraft_version", ""), loader)
                 and version.get("_profile_compatible") is not False
                 and version_loader_compatible(version, loader, profile.get("loader_version", "")) is not False)
 
@@ -303,6 +304,8 @@ class ModDetailsPage(ft.Container):
         self.summary.visible = bool(self.summary.value)
         if self.local:
             self.subtitle.value += f" · {self.local.version or 'Unknown version'} · {'Enabled' if self.local.enabled else 'Disabled'}"
+            if self.local.pack_owned:
+                self.subtitle.value += " · Pack managed"
         self.subtitle.value = " · ".join(value for value in (self.subtitle.value, compatibility) if value)
         self.subtitle.tooltip = f"Installation target: {profile.get('name', 'Instance')}"
         icon_url = ((self.local.icon if self.local else None) or self.local_info.get("icon")
@@ -323,7 +326,7 @@ class ModDetailsPage(ft.Container):
         self.toggle_button.disabled = self.remove_button.disabled = not can_change
         for button, version in self._version_actions:
             button.disabled = (not can_change or not self._compatible(version)
-                               or bool(self.local and self.local.version_id == version.get("id")))
+                               or bool(self.local and (self.local.pack_owned or self.local.version_id == version.get("id"))))
 
     def _render(self, *, animate=False) -> None:
         self._render_header()
@@ -359,7 +362,8 @@ class ModDetailsPage(ft.Container):
         description = self.project.get("body") or self.project.get("description") or self.local_info.get("description") or (self.local.description if self.local else "")
         if not description:
             description = "Loading mod details..." if self.loading else "This JAR does not include a description."
-        base_url = "https://modrinth.com/mod/" + self.project["id"] if self.project.get("id") else "https://modrinth.com/"
+        project_url = self.project.get("project_url") or ("https://modrinth.com/mod/" + self.project["id"] if self.project.get("id") else "")
+        base_url = project_url or "https://modrinth.com/"
         main = ft.Column([markdown(description, base_url=base_url)],
                          expand=True, scroll=ft.ScrollMode.AUTO, spacing=16,
                          horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
@@ -372,8 +376,9 @@ class ModDetailsPage(ft.Container):
                 self._fact("Categories", ", ".join(self.project.get("categories", []))),
                 self._fact("Environment", f"Client: {self.project.get('client_side', 'unknown').capitalize()}\nServer: {self.project.get('server_side', 'unknown').capitalize()}"),
             ])
-            for label, key in (("Project on Modrinth", "project"), ("Source code", "source_url"), ("Report an issue", "issues_url"), ("Wiki", "wiki_url"), ("Discord", "discord_url")):
-                url = "https://modrinth.com/mod/" + self.project["id"] if key == "project" else self.project.get(key)
+            provider = "CurseForge" if self.project.get("provider") == "curseforge" else "Modrinth"
+            for label, key in ((f"Project on {provider}", "project"), ("Source code", "source_url"), ("Report an issue", "issues_url"), ("Wiki", "wiki_url"), ("Discord", "discord_url")):
+                url = project_url if key == "project" else self.project.get(key)
                 if url:
                     links.append(self._link(label, url))
         if self.local:
@@ -432,9 +437,10 @@ class ModDetailsPage(ft.Container):
         for version in matching[self.version_offset:self.version_offset + 20]:
             compatible = self._compatible(version)
             installed = bool(self.local and self.local.version_id == version.get("id"))
-            label = "Installed" if installed else "Install" if compatible else "Incompatible"
+            pinned = bool(self.local and self.local.pack_owned)
+            label = "Installed" if installed else "Pack managed" if pinned else "Install" if compatible else "Incompatible"
             install = launcher_button(label, lambda e, v=version: self._install_version(v), primary=compatible and not installed,
-                                      disabled=installed or not compatible or not self._can_change())
+                                      disabled=pinned or installed or not compatible or not self._can_change())
             self._version_actions.append((install, version))
             card = profile_card_surface(ft.Row([
                 ft.Container(content=ft.Column([
@@ -473,8 +479,31 @@ class ModDetailsPage(ft.Container):
 
     def open_version(self, version: dict) -> None:
         self.selected_version = version
+        load_changelog = version.get("provider") == "curseforge" and not version.get("_changelog_loaded")
+        if load_changelog:
+            version["_changelog_loading"] = True
         self.reveal.show(self._version_details(version), animate=False)
         self._update()
+        if load_changelog:
+            self._page.run_task(self._load_changelog, self._generation, version)
+
+    async def _load_changelog(self, generation: int, version: dict) -> None:
+        with track_progress(self._progress, "Loading CurseForge changelog...", priority=45):
+            try:
+                result = await asyncio.to_thread(self.client.version, version["id"])
+                if result.get("id") != version["id"] or result.get("project_id") != version["project_id"]:
+                    raise ValueError("CurseForge returned a different version's changelog.")
+                if result.get("_changelog_unavailable"):
+                    raise ConnectionError("CurseForge changelog is unavailable.")
+                version["changelog"] = result.get("changelog", "")
+                version["_changelog_loaded"] = True
+            except Exception:
+                version["changelog"] = "The changelog is unavailable. Reopen this version to retry."
+            finally:
+                version["_changelog_loading"] = False
+        if generation == self._generation and self._active and self.selected_version is version:
+            self.reveal.show(self._version_details(version), animate=False)
+            self._update()
 
     def _version_details(self, version: dict) -> ft.Column:
         def back(e):
@@ -489,7 +518,9 @@ class ModDetailsPage(ft.Container):
         controls = [ft.Row([launcher_back_button(back, tooltip="Back to versions"), ft.Container(expand=True), install]),
                     text(version.get("name") or version.get("version_number", "Version"), 23, pixel=True, color=ACCENT),
                     text(requirements, 13), text("Changelog", 19, pixel=True, color=ACCENT),
-                    markdown(version.get("changelog") or "No changelog was provided for this release.")]
+                    markdown("Loading changelog..." if version.get("_changelog_loading") else
+                             version.get("changelog") or "No changelog was provided for this release.",
+                             base_url=self.project.get("project_url") or "https://modrinth.com/")]
         if not compatible:
             controls.insert(3, text("This version is incompatible with the selected instance. You can read its details, but it cannot be installed here.", 13, color=ACCENT))
         for file in version.get("files", []):
@@ -527,7 +558,7 @@ class ModDetailsPage(ft.Container):
                               "title": self.title.value}, None)
 
     def _latest_update(self) -> dict | None:
-        if not self.local or not self.local.version_id:
+        if not self.local or not self.local.version_id or self.local.pack_owned:
             return None
         current = next((version for version in self.versions if version.get("id") == self.local.version_id), None)
         if not current:
@@ -539,11 +570,13 @@ class ModDetailsPage(ft.Container):
                                              check_loader=lambda version: version.get("_profile_compatible") is not False and (
                                                  not callable(getattr(self.client, "fabric_loader_metadata", None))
                                                  or not profile.get("loader_version") or version_loader_compatible(
-                                                     version, str(profile.get("loader", "")).lower(), profile["loader_version"]) is True))
+                                                     version, str(profile.get("loader", "")).lower(), profile["loader_version"]) is not False))
         except (ValueError, KeyError, TypeError):
             return None
 
     def _install_version(self, version: dict) -> None:
+        if self.local and self.local.pack_owned:
+            return
         if (self._active and self._profile_id == (self._get_profile() or {}).get("id")
                 and self._can_change() and self._compatible(version)):
             self._on_install({"project_id": self.project.get("id") or version["project_id"],

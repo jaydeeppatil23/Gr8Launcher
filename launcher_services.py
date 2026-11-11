@@ -98,6 +98,9 @@ def sync_local_installations():
         import_external_installations,
         minecraft_directory,
     )
+    from profile_creation import recover_prepared_profiles
+
+    recover_prepared_profiles(minecraft_directory, storage)
 
     installations = storage.load_installations()
     external = get_external_installations()

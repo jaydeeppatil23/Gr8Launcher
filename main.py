@@ -49,6 +49,7 @@ from launcher_services import (
     installation_sources_stamp,
 )
 from ui_motion import StaggeredReveal
+from ui_scroll import SmoothWheel
 from ui_dialogs import ProfileDialogHost
 from ui_toasts import ToastHost
 from ui_progress import ProgressHost, track_progress
@@ -160,6 +161,9 @@ def main(page: ft.Page):
         portrait_cache=SkinPortraitCache(storage.DATA_DIR / "discord_portraits.json"),
     )
     page.title = "Gr8 Launcher"
+    smooth_wheel = SmoothWheel(page.title)
+    if not page.web:
+        smooth_wheel.start()
     page.window.icon = str(ASSETS_DIR / "icons" / "gr8_icon.ico")
     page.fonts = {
         "ps": str(ASSETS_DIR / "fonts" / "PixelifySans.ttf"),
@@ -179,7 +183,7 @@ def main(page: ft.Page):
     page.horizontal_alignment = ft.CrossAxisAlignment.START
 
     toasts = ToastHost(page)
-    progress_host = ProgressHost(page, show_text=False)
+    progress_host = ProgressHost(page, show_text=True)
     state.progress_state["host"] = progress_host
 
     def notify(message, kind="info", title=None, **kwargs):
@@ -205,12 +209,14 @@ def main(page: ft.Page):
         page.update()
 
     async def close_window(e):
+        smooth_wheel.close()
         toasts.close()
         progress_host.close()
         await asyncio.to_thread(discord_presence.stop)
         await page.window.close()
 
     async def stop_discord_presence(e):
+        smooth_wheel.close()
         toasts.close()
         progress_host.close()
         await asyncio.to_thread(discord_presence.stop)
@@ -779,7 +785,6 @@ def main(page: ft.Page):
     main_content_area = ft.Container(
         content=ft.Container(expand=True),
         expand=True,
-        padding=ft.Padding.only(bottom=ProgressHost.STATUS_AREA_HEIGHT),
     )
 
     tab_reveal = StaggeredReveal(page, main_content_area)
@@ -841,10 +846,7 @@ def main(page: ft.Page):
             control.offset = ft.Offset(0, 0)
 
         active_tab = key
-        main_content_area.padding = ft.Padding.only(
-            bottom=ProgressHost.STATUS_AREA_HEIGHT if key == "home" else 0,
-        )
-        progress_host.set_show_text(key == "home" and content_area.content is home_view)
+        progress_host.set_show_text(True)
         discord_presence.set_page(key)
         for k, _, icon_name in tabs:
             is_active = k == active_tab
@@ -984,34 +986,37 @@ def main(page: ft.Page):
     for key, label, icon_name in tabs:
         make_nav_btn(key, label, icon_name)
 
-    sidebar = ft.Container(
-        width=190,
-        # bgcolor=ft.Colors.BLACK_26,
-        # border=ft.Border(right=ft.BorderSide(1, ft.Colors.WHITE_10)),
-        padding=ft.Padding.symmetric(vertical=16, horizontal=8),
-        content=ft.Column(
-            expand=True,
-            # alignment=ft.MainAxisAlignment.CENTER,
-            controls=[
-                ft.Column(
-                    alignment=ft.CrossAxisAlignment.CENTER,
-                    expand=True,
-                    spacing=0,
-                    controls=[
-                        sidebar_btn_controls["home"],
-                        sidebar_btn_controls["library"],
-                        sidebar_btn_controls["mods"],
-                        sidebar_btn_controls["skins"],
-                    ],
-                ),
-                ft.Column(
-                    spacing=0,
-                    controls=[
-                        sidebar_btn_controls["settings"],
-                        sidebar_btn_controls["accounts"],
-                    ],
-                ),
-            ],
+    sidebar = ft.WindowDragArea(
+        content=ft.Container(
+            width=190,
+            # bgcolor=ft.Colors.BLACK_26,
+            # border=ft.Border(right=ft.BorderSide(1, ft.Colors.WHITE_10)),
+            padding=ft.Padding.only(top=16, bottom=16, left=8, right=8),
+            content=ft.Column(
+                expand=True,
+                # alignment=ft.MainAxisAlignment.CENTER,
+                controls=[
+                    ft.Column(
+                        alignment=ft.CrossAxisAlignment.CENTER,
+                        expand=True,
+                        spacing=0,
+                        controls=[
+                            sidebar_btn_controls["home"],
+                            sidebar_btn_controls["library"],
+                            sidebar_btn_controls["mods"],
+                            sidebar_btn_controls["skins"],
+                        ],
+                    ),
+                    ft.Column(
+                        spacing=0,
+                        controls=[
+                            sidebar_btn_controls["settings"],
+                            sidebar_btn_controls["accounts"],
+                            ft.Container(height=16),
+                        ],
+                    ),
+                ],
+            ),
         ),
     )
 
@@ -4064,6 +4069,7 @@ def main(page: ft.Page):
         progress=progress_host,
         entrance=tab_reveal,
         on_changed=lambda: (rebuild_profiles_view(), rebuild_library_view()),
+        on_play=lambda profile: on_quick_play_click(profile),
     )
     mods_tab_slot = ft.Container(expand=True, content=mods_content, opacity=0, ignore_interactions=True, disabled=True)
     ordinary_tab_host = ft.Container(expand=True)
@@ -5648,6 +5654,8 @@ def main(page: ft.Page):
     ordinary_tab_host.content = home_content
     main_content_area.content = main_tab_stack
 
+    main_content_area.padding = ft.Padding.only(bottom=ProgressHost.BAR_AREA_HEIGHT)
+
     main_layout = ft.Column(
         expand=True,
         spacing=0,
@@ -5659,6 +5667,7 @@ def main(page: ft.Page):
     home_view = ft.Row(
         expand=True,
         spacing=0,
+        vertical_alignment=ft.CrossAxisAlignment.STRETCH,
         controls=[
             sidebar,
             main_layout,
@@ -7140,6 +7149,14 @@ def main(page: ft.Page):
                         pass
             await asyncio.sleep(0.08)
 
+    is_initial_logged_in = has_saved_account()
+    progress_bar_container = ft.Container(
+        left=190 if is_initial_logged_in else 0,
+        right=0,
+        bottom=0,
+        content=progress_host,
+    )
+
     def navigate(route_name: str):
         if active_tab == "mods":
             if route_name == "home":
@@ -7157,8 +7174,13 @@ def main(page: ft.Page):
         else:
             return
 
-        progress_host.padding = ft.Padding.only(left=210 if route_name == "home" else 20, right=24, top=4, bottom=8)
-        progress_host.set_show_text(route_name == "home" and active_tab == "home")
+        progress_bar_container.left = 190 if route_name == "home" else 0
+        try:
+            progress_bar_container.update()
+        except RuntimeError:
+            pass
+        progress_host.padding = ft.Padding.only(left=20, right=24, top=4, bottom=8)
+        progress_host.set_show_text(route_name == "home")
         try:
             progress_host.update()
         except RuntimeError:
@@ -7193,7 +7215,6 @@ def main(page: ft.Page):
         if content_area.content is login_view:
             content_area.update()
 
-    is_initial_logged_in = has_saved_account()
     content_area = ft.Container(
         content=home_view if is_initial_logged_in else login_view,
         expand=True,
@@ -7262,15 +7283,12 @@ def main(page: ft.Page):
             ft.Stack(
                 expand=True,
                 controls=[
-                    # The sidebar reserves only the bar, matching the Library layout.
+                    # The sidebar extends to the bottom; the main content reserves bar space.
                     ft.Container(
-                        left=0, top=0, right=0, bottom=ProgressHost.BAR_AREA_HEIGHT,
+                        left=0, top=0, right=0, bottom=0,
                         content=content_area,
                     ),
-                    ft.Container(
-                        left=0, right=0, bottom=0,
-                        content=progress_host,
-                    ),
+                    progress_bar_container,
                 ],
             ),
         ],
@@ -7297,8 +7315,8 @@ def main(page: ft.Page):
     )
     page.add(root_layout)
     toasts.start()
-    progress_host.padding = ft.Padding.only(left=210 if is_initial_logged_in else 20, right=24, top=4, bottom=8)
-    progress_host.set_show_text(is_initial_logged_in and active_tab == "home")
+    progress_host.padding = ft.Padding.only(left=20, right=24, top=4, bottom=8)
+    progress_host.set_show_text(is_initial_logged_in)
     progress_host.start()
     refresh_discord_player()
     discord_presence.set_page(active_tab if is_initial_logged_in else "login")

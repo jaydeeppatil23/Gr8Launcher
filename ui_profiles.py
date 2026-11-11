@@ -547,9 +547,19 @@ def profile_card_surface(content, *, glow_color, selected=False, horizontal_padd
     )
 
 
-def profile_list_surface(view: ProfileList):
-    """Let the profile viewport fill the remaining panel height."""
-    return ft.Container(expand=True, content=view)
+def profile_list_surface(view: ft.Control):
+    """Let the profile viewport fill the remaining panel height with a smooth bottom fade."""
+    return ft.ShaderMask(
+        content=view,
+        expand=True,
+        blend_mode=ft.BlendMode.DST_IN,
+        shader=ft.LinearGradient(
+            begin=ft.Alignment.TOP_CENTER,
+            end=ft.Alignment.BOTTOM_CENTER,
+            colors=["#ffffffff", "#00ffffff"],
+            stops=[0.85, 1.0],
+        ),
+    )
 
 
 def profile_row(profile: dict, *, icon: ft.Control, badges: list[ft.Control],

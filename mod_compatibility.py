@@ -5,6 +5,23 @@ from __future__ import annotations
 import re
 
 
+def supported_mod_loaders(minecraft_version: str, loader: str) -> tuple[str, ...]:
+    """Provider loader tags supported by this instance, in preference order."""
+    loader = loader.lower()
+    if loader == "quilt":
+        return ("quilt", "fabric")
+    if loader == "neoforge" and minecraft_version == "1.20.1":
+        return ("neoforge", "forge")
+    return (loader,) if loader else ()
+
+
+def version_supports_profile(version: dict, minecraft_version: str, loader: str) -> bool:
+    """Use the same Minecraft/loader policy for browsing, planning, and updates."""
+    return (not version.get("_server_only") and minecraft_version in version.get("game_versions", [])
+            and bool(set(supported_mod_loaders(minecraft_version, loader))
+                     .intersection(version.get("loaders", []))))
+
+
 def _version(value: str) -> tuple[tuple[int, ...], str | None]:
     match = re.fullmatch(r"(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.-]*))?(?:\+[0-9A-Za-z.-]+)?", value)
     if not match:
@@ -128,3 +145,46 @@ def mod_version_satisfies(version: str, requirement: object, *, maven: bool = Fa
         return False
     except ValueError:
         return None
+
+
+def quilt_dependency_matches(dependency: object, providers: dict[str, list[dict]], *,
+                             conflict: bool = False, depth: int = 0) -> bool | None:
+    """Quilt arrays mean OR in depends/unless, AND in breaks; support conditions."""
+    if depth >= 20:
+        return None
+    if isinstance(dependency, list):
+        values = [quilt_dependency_matches(item, providers, conflict=conflict, depth=depth + 1)
+                  for item in dependency]
+        if conflict:
+            return False if False in values else None if None in values else True
+        return True if True in values else None if None in values else False
+    if isinstance(dependency, str):
+        dependency = {"id": dependency}
+    if not isinstance(dependency, dict) or not isinstance(dependency.get("id"), str):
+        return None
+    unless = dependency.get("unless")
+    if unless is not None:
+        ignored = quilt_dependency_matches(unless, providers, depth=depth + 1)
+        if ignored is True:
+            return not conflict
+        if ignored is None:
+            return None
+    candidates = providers.get(dependency["id"], [])
+    if not candidates and dependency.get("optional"):
+        return not conflict
+    values = [mod_version_satisfies(item["version"], dependency.get("versions", "*")) for item in candidates]
+    return True if True in values else None if None in values else False
+
+
+def quilt_dependency_targets(dependency: object, *, depth: int = 0) -> set[str]:
+    """IDs whose changes can affect a Quilt dependency or its unless condition."""
+    if depth >= 20:
+        return set()
+    if isinstance(dependency, str):
+        return {dependency}
+    if isinstance(dependency, list):
+        return {target for item in dependency for target in quilt_dependency_targets(item, depth=depth + 1)}
+    if isinstance(dependency, dict):
+        targets = {dependency["id"]} if isinstance(dependency.get("id"), str) else set()
+        return targets | quilt_dependency_targets(dependency.get("unless"), depth=depth + 1)
+    return set()

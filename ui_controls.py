@@ -7,7 +7,25 @@ import flet as ft
 
 
 ACCENT = "#f5de9a"
-MUTED = "#747e95"
+MUTED = "#929db1"
+NAVY = "#182842"
+
+
+def format_size(size: int) -> str:
+    if size < 1024:
+        return f"{size} B"
+    return f"{size / 1024 / 1024:.1f} MB" if size >= 1024 * 1024 else f"{size / 1024:.0f} KB"
+
+
+def format_downloads(count: int) -> str:
+    for threshold, suffix in ((1_000_000_000, "B"), (1_000_000, "M"), (1_000, "K")):
+        if count >= threshold:
+            return f"{count / threshold:.1f}".removesuffix(".0") + suffix
+    return str(count)
+
+
+_size = format_size
+_downloads = format_downloads
 
 
 class SimpleInput(ft.TextField):
@@ -18,6 +36,9 @@ class SimpleInput(ft.TextField):
             "color": "#ffffff", "hint_style": ft.TextStyle(color=ft.Colors.WHITE_24),
             "cursor_color": ACCENT,
         }
+        if kwargs.get("password") and kwargs.get("can_reveal_password"):
+            # Balance the caret beside the native reveal icon without resizing.
+            defaults["text_vertical_align"] = -0.5
         defaults.update(kwargs)
         super().__init__(**defaults)
 
@@ -97,23 +118,63 @@ def launcher_icon_button(*, icon, on_click: Callable, tooltip: str, primary: boo
     return ft.IconButton(**defaults)
 
 
+def search_input(hint_text: str = "Search", *, on_change: Callable | None = None,
+                 on_submit: Callable | None = None, **kwargs) -> SimpleInput:
+    """Standard launcher search bar with uniform 5px corners and muted hint."""
+    defaults = {
+        "hint_text": hint_text,
+        "expand": True,
+        "hint_style": ft.TextStyle(color=MUTED),
+        "border": {
+            state: ft.OutlineInputBorder(border_radius=5, side=ft.BorderSide(0, ft.Colors.TRANSPARENT))
+            for state in (ft.ControlState.DEFAULT, ft.ControlState.FOCUSED, ft.ControlState.DISABLED)
+        },
+        "prefix_icon": ft.Icons.SEARCH_SHARP,
+        "on_change": on_change,
+        "on_submit": on_submit,
+    }
+    defaults.update(kwargs)
+    return SimpleInput(**defaults)
+
+
+def card_surface(content: ft.Control, *, glow_color: str = "#454641", horizontal_padding: int = 16,
+                 margin_bottom: int = 8, key: ft.ValueKey | None = None, data=None) -> ft.Container:
+    """Standardized acrylic card surface matching profile cards and mod rows."""
+    from ui_profiles import profile_card_surface
+    surface = profile_card_surface(content, glow_color=glow_color, horizontal_padding=horizontal_padding)
+    surface.bgcolor = ft.Colors.with_opacity(0.18, "#000000")
+    if margin_bottom:
+        surface.margin = ft.Margin.only(bottom=margin_bottom)
+    if key is not None:
+        surface.key = key
+    if data is not None:
+        surface.data = data
+    return surface
+
+
 class AcrylicSelector(ft.PopupMenuButton):
     """Dark launcher field with an anchored, keyboard-accessible acrylic menu."""
 
-    def __init__(self, options: list[tuple[str, str]], value: str | None, on_select: Callable, *, width=160, pixel=False, hint="Choose", tooltip=None):
+    def __init__(self, options: list[tuple[str, str]], value: str | None, on_select: Callable, *,
+                 width=160, pixel=False, hint="Choose", tooltip=None, prefix: str | None = None):
         self.value = value
         self.options = options
         self._choose = on_select
         self._hint = hint
         self._pixel = pixel
+        self._prefix = prefix
         self._label = ft.Text(hint, size=16 if pixel else 13, font_family="ps" if pixel else None,
                               color=ACCENT, expand=True, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+        row_controls: list[ft.Control] = []
+        if prefix:
+            row_controls.append(ft.Text(prefix, size=16 if pixel else 13, font_family="ps" if pixel else None, color=MUTED))
+        row_controls.extend([self._label, ft.Icon(ft.Icons.EXPAND_MORE_SHARP, color=ACCENT, size=18)])
         super().__init__(
             content=ft.Container(
                 height=48, bgcolor=ft.Colors.BLACK_26, border_radius=5,
                 clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
                 padding=ft.Padding.symmetric(horizontal=12, vertical=10),
-                content=ft.Row([self._label, ft.Icon(ft.Icons.EXPAND_MORE_SHARP, color=ACCENT, size=18)], spacing=8),
+                content=ft.Row(row_controls, spacing=8),
             ), width=width, height=48, padding=0, menu_padding=0,
             bgcolor=ft.Colors.TRANSPARENT, shadow_color=ft.Colors.BLACK_26, elevation=0,
             menu_position=ft.PopupMenuPosition.UNDER,
