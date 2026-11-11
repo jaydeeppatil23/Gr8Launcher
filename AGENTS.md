@@ -48,6 +48,15 @@ python -B -m unittest temp.test_release_plan temp.test_release_tag temp.test_pub
 
 Use focused, descriptive subjects like `Add remote tag validation`. PRs should explain changes, link issues, report validation, and include UI screenshots. New `VERSION` values pushed to `main` trigger publication.
 
+## Release Notes for AI Agents
+
+- For every completed task that adds, changes, fixes, removes, or secures user-facing behavior, create or update one descriptive Markdown fragment in `docs/changes/unreleased/` alongside the code. Follow [docs/changes/README.md](docs/changes/README.md).
+- Use `### Added`, `### Changed`, `### Fixed`, `### Removed`, or `### Security` headings and concise bullets explaining the effect for users. Record completed functionality, not plans or implementation logs.
+- Use a separate file for each independent task; preserve other agents' fragments. Update the same task's fragment when refining it, and avoid duplicate entries.
+- Documentation-only edits, validation-only changes, and internal refactors without visible behavior do not need fragments.
+- Before finishing, check that the fragment accurately describes the final change. Do not clear fragments or archive notes when changing `VERSION`; the release workflow archives and clears only successfully published, unchanged fragments.
+- Do not bump `VERSION`, stage/commit/push changes, or publish a release merely to maintain notes unless the user requested those actions.
+
 ## Security & Configuration Tips
 
 Runtime data lives in Minecraft's `gr8launcher/`. Preserve native credential storage/redaction. Exclude tokens, personal game data, and generated `build/`/`dist/` artifacts.

@@ -61,3 +61,36 @@ Name: "{autodesktop}\Gr8 Launcher"; Filename: "{app}\Gr8Launcher.exe"; WorkingDi
 
 [Run]
 Filename: "{app}\Gr8Launcher.exe"; Description: "Launch Gr8 Launcher"; Flags: nowait postinstall skipifsilent
+
+[Code]
+var
+  OldBundleInventory: String;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ExistingInventory: String;
+begin
+  Result := '';
+  ExistingInventory := ExpandConstant('{app}\bundle-manifest.json');
+  if FileExists(ExistingInventory) then
+  begin
+    OldBundleInventory := ExpandConstant('{tmp}\old-bundle-manifest.json');
+    if not CopyFile(ExistingInventory, OldBundleInventory, False) then
+      Result := 'Could not preserve the launcher bundle inventory. Close other launcher copies and try again.';
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  CleanupExitCode: Integer;
+begin
+  if (CurStep = ssPostInstall) and (OldBundleInventory <> '') then
+  begin
+    if not Exec(ExpandConstant('{app}\updater.exe'),
+      '--cleanup-installed "' + OldBundleInventory + '" "' + ExpandConstant('{app}') + '"',
+      ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, CleanupExitCode) then
+      RaiseException('Could not finish cleaning up the previous launcher bundle. Run setup again to repair it.');
+    if CleanupExitCode <> 0 then
+      RaiseException('The launcher bundle needs repair. Run setup again before launching.');
+  end;
+end;

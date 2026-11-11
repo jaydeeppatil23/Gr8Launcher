@@ -46,6 +46,9 @@ def serve_preview(directory: Path, port: int) -> None:
     source.mkdir()
     for module in PROJECT_ROOT.glob("*.py"):
         shutil.copy2(module, source / module.name)
+    # The About view resolves the version beside the copied application source.
+    if (PROJECT_ROOT / "VERSION").is_file():
+        shutil.copy2(PROJECT_ROOT / "VERSION", source / "VERSION")
     shutil.copytree(PROJECT_ROOT / ".assets", source / ".assets",
                     ignore=shutil.ignore_patterns("cache", "__pycache__"))
     sys.path.insert(0, str(source))

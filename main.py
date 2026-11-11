@@ -15,6 +15,11 @@ import uuid
 import webbrowser
 from pathlib import Path
 
+import launcher_updates
+
+if __name__ == "__main__":
+    launcher_updates.startup_guard()
+
 import minecraft_launcher_lib
 from PIL import Image
 import flet as ft
@@ -53,6 +58,7 @@ from ui_scroll import SmoothWheel
 from ui_dialogs import ProfileDialogHost
 from ui_toasts import ToastHost
 from ui_progress import ProgressHost, track_progress
+from ui_updates import UpdateController
 from ui_profiles import ProfileList, profile_card_surface, profile_drag_region, profile_list_surface, profile_row
 from ui_mods import ModsPage
 from ui_controls import SimpleInput, SimpleButton, AcrylicSelector, launcher_back_button
@@ -165,6 +171,7 @@ def main(page: ft.Page):
 
     toasts = ToastHost(page)
     progress_host = ProgressHost(page, show_text=True)
+    updater_ui = None
     state.progress_state["host"] = progress_host
 
     def notify(message, kind="info", title=None, **kwargs):
@@ -190,6 +197,8 @@ def main(page: ft.Page):
         page.update()
 
     async def close_window(e):
+        if updater_ui and not updater_ui.applying:
+            updater_ui.stop()
         smooth_wheel.close()
         toasts.close()
         progress_host.close()
@@ -197,6 +206,8 @@ def main(page: ft.Page):
         await page.window.close()
 
     async def stop_discord_presence(e):
+        if updater_ui:
+            updater_ui.stop()
         smooth_wheel.close()
         toasts.close()
         progress_host.close()
@@ -2838,6 +2849,9 @@ def main(page: ft.Page):
         update_hero_banner_info()
 
     async def launch_profile(target: dict):
+        if updater_ui and updater_ui.applying:
+            notify("Wait for the launcher update to finish before launching Minecraft.", "warning", "Updates")
+            return
         if state.launcher_log_state.get("running"):
             return
         if mods_content.busy:
@@ -3785,7 +3799,7 @@ def main(page: ft.Page):
         selected_profile=lambda: get_selected_profile(),
         game_directory=lambda profile: get_profile_game_directory(profile),
         runtime_directory=Path(minecraft_directory),
-        is_running=lambda: bool(state.launcher_log_state.get("running")),
+        is_running=lambda: bool(state.launcher_log_state.get("running") or (updater_ui and updater_ui.applying)),
         notify=notify,
         dialogs=lambda: profile_dialogs,
         open_folder=lambda folder: open_dir_safely(folder),
@@ -3958,6 +3972,9 @@ def main(page: ft.Page):
         )
 
     async def repair_profile(target: dict):
+        if updater_ui and updater_ui.applying:
+            notify("Wait for the launcher update to finish before repairing Minecraft.", "warning", "Updates")
+            return
         if state.launcher_log_state.get("running"):
             return
         if mods_content.busy:
@@ -5297,7 +5314,7 @@ def main(page: ft.Page):
             alignment=ft.Alignment.CENTER,
             padding=ft.Padding.only(top=6, bottom=14),
             content=ft.Text(
-                "Gr8 Launcher v2.0.0 • Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.",
+                f"Gr8 Launcher {launcher_updates.version_label()} • Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.",
                 color="#50617a",
                 size=11,
                 text_align=ft.TextAlign.CENTER,
@@ -5311,6 +5328,8 @@ def main(page: ft.Page):
             reset_card,
             footer,
         ]
+        if updater_ui:
+            cards.insert(1, updater_ui.card)
         return ft.Column(
             spacing=14, scroll=ft.ScrollMode.ADAPTIVE, expand=True, controls=cards
         )
@@ -6988,6 +7007,11 @@ def main(page: ft.Page):
     profile_dialogs = ProfileDialogHost(
         content_area, title_bar_height=custom_title_bar.height,
     )
+    updater_ui = UpdateController(
+        page, notify=notify, progress=progress_host, dialogs=lambda: profile_dialogs,
+        busy=lambda: bool(state.launcher_log_state.get("running") or mods_content.busy),
+        close=close_window,
+    )
     page.on_keyboard_event = profile_dialogs.handle_keyboard_event
 
     # Dedicated background layer for the roaming gradient (isolated to prevent UI redraw flickers)
@@ -7175,6 +7199,7 @@ def main(page: ft.Page):
     page.run_task(refresh_latest_release)
     page.run_task(monitor_connectivity)
     page.run_task(asyncio.to_thread, skins.prune_skin_cache)
+    page.run_task(updater_ui.startup)
 
 
 if __name__ == "__main__":

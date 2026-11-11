@@ -51,6 +51,15 @@ jobs:
           PREVIEW_VERSION: ${{ inputs.version || '0.0.0-dev' }}
         run: python tools/release_plan.py
 
+      - name: Prepare agent-authored release notes
+        if: steps.version.outputs.publish == 'true'
+        env:
+          NOTES_SOURCE_COMMIT: ${{ steps.version.outputs.commit }}
+        run: >-
+          python tools/release_notes.py prepare --version "$env:BUILD_VERSION"
+          --commit "$env:NOTES_SOURCE_COMMIT" --output dist/release-notes.md
+          --snapshot dist/release-notes.json
+
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
@@ -96,6 +105,8 @@ jobs:
             dist/*-setup.exe
             dist/SHA256SUMS.txt
             dist/gr8-launcher-home.png
+            dist/release-notes.md
+            dist/release-notes.json
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
@@ -198,9 +209,26 @@ jobs:
             gh release create "$RELEASE_TAG" "${assets[@]}" "${options[@]}"
           fi
 
+      - name: Publish agent-authored release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+        run: python tools/release_notes.py publish --snapshot dist/release-notes.json --tag "$RELEASE_TAG"
+
       - name: Display screenshot in release notes
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.build.outputs.tag }}
         run: python tools/publish_screenshot.py release --tag "$RELEASE_TAG"
+
+      - name: Archive published notes and reset consumed fragments
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          SOURCE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: >-
+          python tools/release_notes.py archive --snapshot dist/release-notes.json
+          --tag "$RELEASE_TAG" --branch "$SOURCE_BRANCH"

@@ -72,6 +72,11 @@ def build(version: str, compiler: Path | None) -> list[Path]:
     if os.name != "nt" or struct.calcsize("P") != 8 or platform.machine() != "AMD64":
         raise RuntimeError("Build Windows x64 packages with a Windows x64 Python installation.")
 
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    from tools.build_updater import build_updater
+    updater = build_updater()
+
     assets = PROJECT_ROOT / ".assets"
     bridge = PROJECT_ROOT / "tools" / "gr8-skin-bridge" / "gr8-skin-bridge.jar"
     for required in (assets / "icons" / "gr8_icon.ico", bridge):
@@ -112,6 +117,12 @@ def build(version: str, compiler: Path | None) -> list[Path]:
     for filename in ("LICENSE", "README.md"):
         shutil.copy2(PROJECT_ROOT / filename, app_dir / filename)
     (app_dir / "VERSION").write_text(f"{version}\n", encoding="utf-8", newline="\n")
+    shutil.copy2(updater, app_dir / "updater.exe")
+    # Import the UI-independent inventory writer from the project source.
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    from launcher_updates import generate_manifest
+    generate_manifest(app_dir, version)
 
     archive_name = f"{APP_NAME}-{version}-windows-x64"
     # zipfile (used by make_archive) also includes dot directories and files.

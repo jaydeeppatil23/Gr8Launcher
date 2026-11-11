@@ -75,6 +75,37 @@ packages → Run workflow**. Select a branch and enter a version such as
 and try the installer and extracted portable app. Manual branch builds upload
 downloads to Actions without creating a release.
 
+## Agent-authored release notes
+
+Coding agents record completed user-facing changes in small Markdown fragments
+under `docs/changes/unreleased/`, following
+[the notes guide](changes/README.md) and the repository's `AGENTS.md` rules.
+No OpenAI or other model API key is required in CI: the agents write notes while
+working, and the workflow combines their text when building a release.
+
+For a publishing build, [release_notes.py](../tools/release_notes.py) snapshots the
+fragments at the exact source commit. After packages are published, the workflow
+adds a managed **What's new** section to the GitHub release description. Existing
+GitHub-generated notes, handwritten text, and the separate screenshot section are
+preserved. The launcher reads this description through the Releases API.
+
+After notes and screenshot publication succeed, the workflow creates an archive
+at `docs/changes/releases/<version>.md` on the default branch and removes only
+the consumed fragments whose contents still match the build snapshot. New or
+edited notes stay pending. The archive uses a normal fast-forward commit and
+never overwrites newer branch changes. Its built-in workflow token and
+`[skip ci]` commit message prevent an extra release/build loop.
+
+Preview builds, failed builds/publication, and merely editing `VERSION` do not
+clear notes. Reruns reuse the same snapshot and archive without duplication.
+If there are no fragments, the release keeps GitHub's generated notes. Stable
+releases and prereleases both consume their own notes after successful publication.
+
+Branch protection must permit the workflow's archive commit; if it rejects the
+write, pending fragments remain and the archive step fails rather than losing
+notes. Resolve that failure before the next release or archive through the
+repository's normal review process.
+
 ## Automatic screenshots
 
 Every build runs [capture_screenshot.py](../tools/capture_screenshot.py) after
@@ -142,6 +173,13 @@ The package includes `.assets`, the tracked `tools/gr8-skin-bridge/gr8-skin-brid
 the Flet desktop client, the Windows credential backend, and the launcher license.
 An isolated build environment keeps unrelated packages out of the downloads.
 
+The builder also compiles the standalone C# `updater.exe` with the system Windows
+.NET Framework compiler, copies it beside `Gr8Launcher.exe`, and generates
+`bundle-manifest.json` with the managed payload's file sizes and SHA-256 hashes.
+No additional Python runtime or .NET SDK download is needed for the helper.
+See [updater.md](updater.md) for the update flow and recovery behavior. The first
+updater-capable release must be installed manually by users of older launchers.
+
 ## Installer behavior and maintenance
 
 New installations default to `%ProgramFiles%\Gr8Launcher`, usually
@@ -159,6 +197,10 @@ Keep the fixed `AppId` in [windows.iss](../packaging/windows.iss) unchanged acro
 versions: Inno Setup uses it to locate the registered installation. This detection
 applies to versions installed through the installer; portable ZIP copies have no
 installer registration.
+
+On upgrades with a previous bundle inventory, setup preserves that inventory
+before copying files. The installed helper removes obsolete managed files whose
+hashes still match the old inventory. User-added and modified files are preserved.
 
 The installer creates a Start menu shortcut in the **Gr8 Projects** group,
 offers a desktop shortcut, and registers an uninstaller. Launcher settings and
