@@ -1,6 +1,7 @@
 # Mods page
 
-The Mods sidebar entry opens a manager for one Minecraft profile. The Library's
+The Mods sidebar entry has a content selector for **Mods** and
+[**Modpacks**](modpacks.md). Mods opens a manager for one Minecraft profile. The Library's
 Manage Mods button opens the profile from that row. The Mods profile selection is
 independent of the profile selected for Play.
 
@@ -29,12 +30,16 @@ and 24 px right padding and fills the remaining window at 1100 × 650 or larger.
    mark the current one.
    The compact chevron/Back control matches Add Account and keeps the current
    profile, query, filters, and scroll position.
-3. **Tabs:** Discover and Installed with its mod count. A quiet “Powered by
-   Modrinth” label appears beside the tabs in Discover.
+3. **Content:** the header's acrylic selector switches between Mods and Modpacks.
+   Pack browsing works without choosing a profile; installing a pack creates its
+   own instance with pinned Minecraft and loader versions.
+   **Tabs:** Discover and Installed with its mod count. Discover shows a quiet
+   attribution label for the selected provider, Modrinth or CurseForge.
 4. **Toolbar:** the shared `SimpleInput` at its normal intrinsic height, with no
    Mods-specific height or padding overrides, 5 px corners, and a mode-specific
    search hint; All/Enabled/Disabled, Add JARs, and Refresh for
-   Installed, or a labeled sort selector for Discover, initially Popular.
+   Installed, or source and sort selectors for Discover, initially Modrinth and
+   Popular. CurseForge also shows a key button for provider setup.
    Closed selectors match the search field's 48 px height, dark background,
    and 5 px corners. The sort label sits inside its field alongside the value
    and chevron.
@@ -56,13 +61,40 @@ and 24 px right padding and fills the remaining window at 1100 × 650 or larger.
    Discover rows show title, a single description line, author, and abbreviated
    downloads. A 44 px accent-filled download icon installs the mod; installed
    projects show a disabled check icon. Tooltips identify both actions. Categories, supported
-   loaders, and the Modrinth link remain on the details page. Action buttons and
+   loaders, and the provider's project link remain on the details page. Action buttons and
    the artwork/title area use the click cursor.
 7. **Footer:** Discover pagination (20 results per page), hidden when unavailable.
    Successful removal shows an Undo action in the shared notification host.
 
 ## Working behavior
 
+- Mods supplied by an installed modpack show **Pack managed**. Individual update
+  checks skip those files, and version replacement reviews cannot change their
+  pins. Install another pack version from Modpacks to get its corresponding mod
+  versions. Enable, disable, removal, and adding custom JARs remain available;
+  separately added mods can use ordinary update checks.
+
+- Discover supports Modrinth and CurseForge. Each source retains its query,
+  sorting, and page when switching; stale responses cannot replace the other
+  source's results. Installed combines both providers and local JARs.
+  Modrinth project/version IDs retain their existing format. CurseForge IDs are
+  namespaced as `cf:project` and `cf:project:file`, preventing collisions in
+  installed identities, dependency planning, and update caches.
+- CurseForge requires a launcher API key. Open **Mods → Discover → CurseForge →
+  key button**, then follow the official CurseForge console link and save the
+  key. The native credential vault stores it separately from account sessions;
+  if that vault is unavailable, the key lasts only for this launcher session.
+  It is never written to profile/settings files. Deployments can supply
+  `GR8_CURSEFORGE_API_KEY` instead. API keys are sent only to the CurseForge API,
+  with API redirects disabled. The launcher does not use Prism's bundled key.
+- CurseForge files without an API download URL require a manual download, as
+  in Prism. The review links to each exact official file and asks for the
+  downloaded JARs. Selection verifies the full checksum, size, and archive,
+  then repeats native dependency planning before enabling Install. Files are
+  copied into the shared staging transaction; the user's downloads stay in
+  place. Wrong or changed files fail verification. Additional required files
+  discovered during planning must also be selected. Restricted CDN URLs are
+  never synthesized or bypassed.
 - `SimpleInput` and `SimpleButton` live in `ui_controls.py` and are imported by
   the launcher and Mods. Selectors and buttons, profile surfaces, list controls,
   brief `StaggeredReveal` transitions, dialog host, and toast host are reused.
@@ -81,7 +113,7 @@ and 24 px right padding and fills the remaining window at 1100 × 650 or larger.
   Manage Mods shortcut prepares only the requested profile.
 - Fabric, Quilt, Forge, NeoForge, and legacy mod artwork is read from the JAR's
   metadata without extracting files. Bundled icons work offline and are also
-  used on the details page. Recognized Modrinth projects can fill missing
+  used on the details page. Recognized provider projects can fill missing
   artwork/descriptions in the background; failures keep local actions available.
   Mods with no usable artwork retain the generic icon.
   Large embedded logos are resized to at most 128 px during the background scan,
@@ -99,7 +131,7 @@ and 24 px right padding and fills the remaining window at 1100 × 650 or larger.
 - Installed search is immediate. Discover search waits 350 ms after typing and
   can also be submitted with Enter. Sort and paging preserve the query.
   Stale network results cannot overwrite another profile or tab.
-- Modrinth responses are cached in a bounded, thread-safe in-memory cache for
+- Provider responses are cached in bounded, thread-safe in-memory caches for
   five minutes (30 seconds for searches), including unrecognized checksum results.
   Concurrent requests for the same data share one transfer, and worker threads
   reuse HTTP connections. Details fetch project/history/members concurrently;
@@ -110,8 +142,11 @@ and 24 px right padding and fills the remaining window at 1100 × 650 or larger.
   its original snapshot; installation still hashes files and enforces native
   requirements before committing. Refresh, Retry, and manual Check updates clear
   cached responses so they obtain fresh data. Request failures are not cached.
-- Modrinth results match the profile's exact Minecraft version and Fabric,
-  Forge, NeoForge, or Quilt loader. Server-only projects are excluded from search.
+- Both providers' files match the profile's exact Minecraft version and its supported
+  loader tags. Quilt includes Fabric mods; NeoForge includes Forge mods only for
+  Minecraft 1.20.1. Discover, version history, installation, and updates share
+  this policy. Modrinth excludes server-only projects from search; CurseForge
+  version selection excludes files explicitly tagged only for servers.
   Stable releases are preferred, with a compatible prerelease used if necessary.
 - Dependency providers include the selected installed version's runtime libraries,
   inherited classpath, bundled JARs, and native provided aliases. Loader-supplied
@@ -120,16 +155,22 @@ and 24 px right padding and fills the remaining window at 1100 × 650 or larger.
   Fabric planning also checks native dependency ranges and conflicts before
   confirmation. Automatic version selection considers enabled dependencies and
   runtime libraries, so an older compatible release can be selected when needed.
-  Required native dependencies omitted from Modrinth's listing are resolved using
+  Required native dependencies omitted from a provider's listing are resolved using
   a bounded project lookup/search, with the actual JAR's mod ID and version checked
   before inclusion. Ambiguous matches require an explicit dependency choice;
   existing dependencies are never silently replaced or enabled.
   Profile metadata and runtime provider checksums are captured during planning
   and rechecked before installation. Runtime libraries stay read-only.
+  JSON metadata in mod JARs accepts literal line breaks and tabs inside strings,
+  matching Fabric's reader. Online checks, local scans, bundled libraries, and
+  staged validation share this parser and retain dependency and structure checks.
 - Clicking a mod opens Overview, Versions, and Gallery (when available). Overview
   includes full Markdown documentation, authors, license, categories, environment,
   downloads, local file details, and available source/wiki/issues/community links.
-  Local JARs are identified on Modrinth by checksum when possible; unmatched JARs
+  Local JARs are identified on Modrinth by checksum, then on CurseForge when
+  configured. CurseForge uses Prism's whitespace-filtered Murmur2 fingerprint
+  algorithm to find candidates, followed by a full cryptographic checksum and
+  size check. Fingerprints alone never establish identity. Unmatched JARs
   retain their local metadata and explicitly report unavailable online history.
 - The details header groups 64 px artwork, title, author, target loader/version,
   a short summary, and a 44 px Install action. Descriptions and changelogs use
@@ -150,14 +191,21 @@ and 24 px right padding and fills the remaining window at 1100 × 650 or larger.
   Beta, or Alpha. Changing it resets version pagination and keeps the selected
   option across navigation. Shared selectors have a dark background and 5 px
   corners by default, including the Versions filter and Settings selectors.
-- Selecting another installed Modrinth version shows the exact replacement and
+- Selecting another installed provider version shows the exact replacement and
   required dependencies before confirmation. A successful replacement retains the
   previous JAR in launcher trash and preserves the mod's enabled state. A failed
   commit restores the previous JAR and mod index.
   Imported or renamed JARs identified by checksum can also use this replacement
   flow. The managed-mod index changes only when an installation is confirmed;
   an optional checksum identity cache also supports external JAR recognition.
-- Check updates manually looks for newer Modrinth versions matching the profile's
+- Check updates uses Modrinth's bulk checksum update endpoint for known files,
+  with Minecraft version, supported loaders, and release filters. CurseForge
+  mods use their own project file histories; their hashes are excluded from the
+  Modrinth bulk request. A provider outage still allows checks and unrelated
+  installs from the other source. Project history
+  is fetched when the bulk lookup is unavailable, a file has no bulk result, or
+  the latest candidate cannot run with the profile's Loader/runtime. It looks
+  for newer provider versions matching the profile's
   Minecraft version, loader, and exact Fabric Loader build. Fabric candidates are
   checked against the Loader requirements in their JAR metadata, including bundled
   mods. If a newer release needs a newer Loader, selection falls back to the newest
@@ -174,15 +222,20 @@ and 24 px right padding and fills the remaining window at 1100 × 650 or larger.
   prerelease. Each available update has an Update
   action that opens the existing version/dependency confirmation and backup flow.
   Disabled mods stay disabled after updating. Unknown JARs and failed online
-  checks are reported as incomplete. Checking updates reads Fabric metadata using
+  checks are reported as incomplete. Checking updates previews Fabric metadata using
   cached CDN byte ranges without installing a mod. Servers that ignore ranges can
-  provide a small archive for metadata inspection; larger unsupported transfers
-  are reported as incomplete. Checking never changes an installed file.
+  provide a small archive for metadata inspection. A preview transport failure,
+  including a server ignoring ranges for a larger JAR, produces a warning and
+  keeps provider-matched candidates available. Such checks do not replace a saved
+  successful check. The installation review displays the warning; downloaded
+  JARs still pass native validation before any installed files change. Invalid
+  ranges, checksums, and malformed new metadata remain errors. Checking never
+  changes an installed file.
   Mod details also expose an Update action when their
   loaded version history contains a newer matching version.
 - Update checks are saved in the instance's `gr8launcher/mod-updates.json`, including
   checks that found no updates. Navigation and launcher restarts restore the
-  matching result without another Modrinth check, and the last checked release
+  matching result without another online check, and the last checked release
   filter is restored when reopening an instance. Saved results are scoped to
   Minecraft version, loader/build, installed version ID, runtime providers, and
   release filter and are discarded when the
@@ -202,13 +255,16 @@ and 24 px right padding and fills the remaining window at 1100 × 650 or larger.
   The compact confirmation shows the target instance, selected version, download
   count/size, and dependency rows. Required dependencies use a lock icon. Optional
   dependencies start unchecked; selecting one also resolves its required libraries
-  and rechecks Modrinth conflicts before enabling Install. Installed and bundled
+  and rechecks provider conflicts before enabling Install. Installed and bundled
   dependencies use a lock icon and an Installed label, show their existing
   versions, and are kept without another download. Compatibility checks run
   during planning and installation; the confirmation omits their details.
   Canceling downloads nothing. Existing compatible dependencies are reused; disabled or
   conflicting dependencies need attention in Installed.
-  Reused dependencies still have their own requirements checked. Modrinth's
+  Reused dependencies still have their own requirements checked. An exact file
+  already installed from the other provider is reused by checksum while keeping
+  its original managed identity and update source. Different files with the same
+  native mod ID cannot be installed as duplicates. Provider
   declared conflicts and existing enabled mods' requirements are checked against
   the resulting set, including requirements pinned to a particular version.
   Enabled libraries bundled inside declared Fabric, Quilt, or Jar-in-Jar
@@ -219,7 +275,7 @@ and 24 px right padding and fills the remaining window at 1100 × 650 or larger.
   other installs; requirements affected by the proposed batch remain enforced.
   Dependency errors use mod/project names when available.
 - Dependency versions are never upgraded or downgraded automatically. An exact
-  Modrinth version requirement that disagrees with an installed dependency blocks
+  provider version requirement that disagrees with an installed dependency blocks
   the proposal and asks the user to choose another mod version or review it in
   Installed. Before committing downloaded files, native Fabric/Quilt predicates,
   Forge/NeoForge numeric Maven ranges, and native conflicts are checked against
@@ -234,6 +290,13 @@ and 24 px right padding and fills the remaining window at 1100 × 650 or larger.
   cannot guarantee compatibility when metadata is missing or incorrect.
   Native Forge/NeoForge TOML inspection uses `tomllib`, with the conditional
   `tomli` runtime dependency on Python 3.10.
+  Archives with multiple loader manifests use the target loader's native
+  metadata, including bundled JARs. Quilt checks support dependency alternatives,
+  combined conflicts, and `unless` conditions. Changes to a condition provider
+  recheck existing dependents. Unreadable native metadata in an existing JAR is
+  reported in the review and does not block unrelated installations; checks for
+  that existing file are limited. Newly downloaded malformed metadata still
+  blocks installation.
 - Fabric installs and Add JARs inspect native `fabric.mod.json` requirements for
   the profile's exact Fabric Loader version, including declared bundled JARs.
   Required dependencies that are reused are also checked. Numeric comparisons,
@@ -275,7 +338,7 @@ and 24 px right padding and fills the remaining window at 1100 × 650 or larger.
   instructions for selecting or creating a usable modded profile.
 - JARs copied directly into the instance's mods folder appear on refresh. Local
   metadata remains available offline. Background checksum lookups identify
-  Modrinth-hosted files, including renamed JARs, and store a bounded optional
+  provider-hosted files, including renamed JARs, and store a bounded optional
   `gr8launcher/mod-identities.json` cache. Cached identities survive restart and
   are reused only when the actual checksum matches; replacing a JAR externally
   invalidates its former identity. A corrupt identity cache does not block local
@@ -286,7 +349,10 @@ and 24 px right padding and fills the remaining window at 1100 × 650 or larger.
   during a check, after an update check, or after install confirmation require a
   fresh review. A profile version changed after confirmation also stops the install.
 
-This initial page does not offer automatic updates or uninstall dependencies.
+Updates require confirmation; removing a mod does not automatically remove its
+dependencies. CurseForge support uses the existing requests and native keyring
+dependencies. Compatibility checks depend on authors' metadata and cannot
+guarantee that every mod combination will launch successfully.
 
 ## Validation
 
@@ -295,4 +361,5 @@ are not included in a clone or required by the GitHub build.
 
 ```powershell
 python -B -m unittest temp.test_mod_markdown temp.test_mod_services temp.test_mod_backend_audit temp.test_mod_bundled_dependencies temp.test_mod_fallbacks temp.test_ui_mods temp.test_ui_mod_list temp.test_ui_motion temp.test_ui_progress temp.test_ui_toasts
+python -B -m unittest temp.test_curseforge_services temp.test_ui_curseforge temp.test_mod_provider_credentials
 ```

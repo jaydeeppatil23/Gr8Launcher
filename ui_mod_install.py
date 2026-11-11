@@ -7,32 +7,25 @@ from typing import Callable
 import flet as ft
 
 from mod_services import InstallPlan, ModUpdate, primary_file
-from ui_controls import ACCENT, rounded_artwork
-
-
-MUTED = "#929db1"
-NAVY = "#182842"
+from ui_controls import ACCENT, MUTED, NAVY, rounded_artwork, launcher_button, format_size as _size
 
 
 def _text(value: str, size: int = 13, *, color: str = MUTED, **kwargs) -> ft.Text:
     return ft.Text(value, size=size, color=color, **kwargs)
 
 
-def _size(size: int) -> str:
-    if size < 1024:
-        return f"{size} B"
-    return f"{size / 1024 / 1024:.1f} MB" if size >= 1024 * 1024 else f"{size / 1024:.0f} KB"
-
-
 class ModInstallReview(ft.Column):
     def __init__(self, hit: dict, profile: dict, plan: InstallPlan, *,
-                 profile_icon: ft.Control, on_optional_change: Callable, updates: tuple[ModUpdate, ...] = ()):
+                 profile_icon: ft.Control, on_optional_change: Callable, updates: tuple[ModUpdate, ...] = (),
+                 on_manual_files: Callable | None = None, manual_file_ready: Callable[[dict], bool] | None = None):
         super().__init__(spacing=16, horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
         self.hit = hit
         self.profile = profile
         self.plan = plan
         self.updates = updates
         self.on_optional_change = on_optional_change
+        self.on_manual_files = on_manual_files
+        self.manual_file_ready = manual_file_ready or (lambda file: False)
         self.optional_projects: set[str] = set()
         self.checkboxes: dict[str, ft.Checkbox] = {}
         self.checking = False
@@ -68,6 +61,8 @@ class ModInstallReview(ft.Column):
         return min(550, 296 + (48 + 64 * len(self.plan.dependencies) if self.plan.dependencies else 0 if self.updates else 38)
                    + (40 if self.plan.replacements else 0)
                    + (26 if self.plan.disabled_projects else 0)
+                   + 44 * len(self.plan.warnings)
+                   + (110 if any(primary_file(version).get("manual_required") for version in self.plan.versions) else 0)
                    + (26 if self.plan.dependencies and all(item.required for item in self.plan.dependencies) else 0)
                    + (24 if len(self.hit.get("title", "")) > 35 else 0)
                    + (24 + 56 * len(self.updates) if self.updates else 0))
@@ -150,6 +145,23 @@ class ModInstallReview(ft.Column):
                                        "Replaces " + ", ".join(plan.replacements) + ". Previous files stay in launcher trash.", 12))
         if plan.disabled_projects:
             self.controls.append(_text("Disabled mods stay disabled after updating." if self.updates else "This mod will stay disabled after the update.", 12))
+        for warning in plan.warnings:
+            self.controls.append(_text(warning, 12, color=ACCENT))
+        manual = [primary_file(version) for version in plan.versions if primary_file(version).get("manual_required")]
+        if manual:
+            from ui_mod_details import open_link
+            self.controls.extend([
+                ft.Text("Manual CurseForge downloads", font_family="ps", size=17, color=ACCENT),
+                _text("The authors restrict third-party downloads. Download these exact files on CurseForge, then select them here.", 12),
+            ])
+            for file in manual:
+                self.controls.append(ft.Row([
+                    _text(file["filename"], 12, expand=True),
+                    _text("Selected" if self.manual_file_ready(file) else "Needed", 11, color=ACCENT),
+                    launcher_button("Open CurseForge", lambda e, url=file["manual_url"]: open_link(url)),
+                ], spacing=8))
+            self.controls.append(launcher_button("Select downloaded JARs", self.on_manual_files,
+                                                disabled=self.checking or self.on_manual_files is None))
         if self.checking:
             self.controls.append(_text("Checking dependency compatibility…", 12, color=ACCENT))
         if self.error:

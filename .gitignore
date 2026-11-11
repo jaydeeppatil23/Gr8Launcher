@@ -71,3 +71,6 @@ SHA256SUMS.txt
 # OS noise
 .DS_Store
 Thumbs.db
+
+# Others
+PL-SC/

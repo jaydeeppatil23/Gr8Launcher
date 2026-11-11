@@ -56,8 +56,6 @@ class ProfileDialogHost(ft.Container):
             scale=0.98,
             animate_opacity=ft.Animation(self.ANIMATION_MS, ft.AnimationCurve.EASE_OUT_CUBIC),
             animate_scale=ft.Animation(self.ANIMATION_MS, ft.AnimationCurve.EASE_OUT_CUBIC),
-            # Absorb taps on the panel itself; only the surrounding area dismisses it.
-            on_click=lambda e: None,
             shadow=ft.BoxShadow(
                 blur_radius=18, spread_radius=0,
                 color=ft.Colors.BLACK_26, offset=ft.Offset(0, 6),
@@ -92,16 +90,25 @@ class ProfileDialogHost(ft.Container):
             bgcolor=ft.Colors.with_opacity(0.28, ft.Colors.BLACK),
             opacity=0,
             animate_opacity=ft.Animation(self.ANIMATION_MS, ft.AnimationCurve.EASE_OUT_CUBIC),
-            on_click=self._dismiss,
         )
         self.controls = [
             self._backdrop,
-            ft.Container(
+            ft.GestureDetector(
                 left=0, top=0, right=0, bottom=0,
-                padding=self.MARGIN,
-                alignment=ft.Alignment.CENTER,
-                content=self._panel,
-                on_click=self._dismiss,
+                # Modal surfaces catch taps without advertising a button cursor.
+                mouse_cursor=ft.MouseCursor.BASIC,
+                on_tap=self._dismiss,
+                content=ft.Container(
+                    padding=self.MARGIN,
+                    alignment=ft.Alignment.CENTER,
+                    content=ft.GestureDetector(
+                        # Absorb panel taps, including its padding, so they never
+                        # dismiss it. Child buttons and inputs keep their cursors.
+                        mouse_cursor=ft.MouseCursor.BASIC,
+                        on_tap=lambda e: None,
+                        content=self._panel,
+                    ),
+                ),
             ),
         ]
         self.ignore_interactions = False

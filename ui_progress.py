@@ -247,7 +247,7 @@ class ProgressHost(ft.Container):
                                    max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
         self.bar = _SmoothProgressBar(page)
         self.text_row = ft.Row([self.status_text, self.detail_text], spacing=12,
-                               height=18, vertical_alignment=ft.CrossAxisAlignment.CENTER, visible=show_text)
+                               height=18, vertical_alignment=ft.CrossAxisAlignment.CENTER, visible=False)
         super().__init__(padding=ft.Padding.only(left=20, right=24, top=4, bottom=8),
                          content=ft.Column([
                              self.text_row,
@@ -340,12 +340,22 @@ class ProgressHost(ft.Container):
                 return
             snapshot = self.snapshot
             show_text = self._show_text
-        rendered = (snapshot, show_text)
+            ready = [(token, op) for token, op in self._operations.items() if op.ready_at <= self._clock()]
+            active_op = max(ready, key=lambda item: (item[1].priority, item[0]))[1] if ready else None
+            # Only show text for installation/active operation events; not for page loading or idle
+            is_installation = active_op is not None and (
+                active_op.priority >= 50 or
+                any(keyword in active_op.label.lower() for keyword in (
+                    "install", "download", "updating", "unpack", "verifying", "launch", "repair", "saving", "signing"
+                ))
+            )
+        rendered = (snapshot, show_text, is_installation)
         if rendered == self._last_rendered:
             return
-        self.text_row.visible = show_text
+        # Display the text row ONLY during real operations/installations: no idle text, and no page-loading text.
+        self.text_row.visible = show_text and is_installation
         self.status_text.value = snapshot.label
-        self.detail_text.value = snapshot.detail
+        self.detail_text.value = snapshot.detail if is_installation else ""
         self.bar.value = snapshot.value
         try:
             self.update()
