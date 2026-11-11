@@ -17,6 +17,7 @@ public final class Gr8PerformanceAgent {
 
     public static void premain(String agentArguments, Instrumentation instrumentation) {
         System.setProperty("org.lwjgl.util.NoChecks", "true");
+        instrumentation.addTransformer(new Gr8FpsTransformer(), false);
         if (agentArguments == null || agentArguments.trim().isEmpty()) {
             return;
         }
