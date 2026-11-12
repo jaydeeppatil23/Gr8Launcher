@@ -271,7 +271,10 @@ def trusted_url(value: str, *, api: bool = False) -> str:
     if (parsed.scheme != "https" or not valid_host or parsed.username
             or parsed.password or port not in (None, 443)):
         raise UpdateError("The release contains an unsupported download address.")
-    if hostname == "github.com" and not parsed.path.startswith(f"/{REPOSITORY}/releases/"):
+    if hostname == "github.com" and not (
+        parsed.path == f"/{REPOSITORY}/releases"
+        or parsed.path.startswith(f"/{REPOSITORY}/releases/")
+    ):
         raise UpdateError("The download is outside the launcher repository.")
     return value
 

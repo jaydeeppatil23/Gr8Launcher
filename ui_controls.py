@@ -73,6 +73,32 @@ def launcher_button(label: str, on_click: Callable | None, *, primary: bool = Fa
     )
 
 
+def launcher_pill(label: str, on_click: Callable | None, *, icon=None, primary: bool = False,
+                  tooltip: str | None = None, **kwargs) -> ft.Container:
+    """Standard frosted pill button matching Gr8 Launcher cards and toolbars."""
+    fg = "#182842" if primary else ACCENT
+    bg = ACCENT if primary else ft.Colors.BLACK_26
+    controls: list[ft.Control] = []
+    if icon is not None:
+        controls.append(ft.Icon(icon, size=14, color=fg))
+    controls.append(ft.Text(label, font_family="ps", color=fg, size=13, weight=ft.FontWeight.BOLD if primary else ft.FontWeight.NORMAL))
+    return ft.Container(
+        bgcolor=bg,
+        border_radius=5,
+        padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+        ink=True,
+        tooltip=tooltip,
+        content=ft.Row(
+            controls,
+            spacing=6,
+            tight=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        on_click=on_click,
+        **kwargs,
+    )
+
+
 def rounded_artwork(content: ft.Control, *, size: int) -> ft.Container:
     """Clip artwork to the launcher's 5 px corners on every renderer."""
     return ft.Container(

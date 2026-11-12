@@ -19,6 +19,7 @@ from ui_controls import (SimpleInput, AcrylicSelector, launcher_button, launcher
 from ui_motion import StaggeredReveal
 from ui_profiles import ProfileList, profile_card_surface, profile_list_surface
 from ui_progress import ProgressHost, ProgressTask, track_progress
+from ui_scroll_views import ScrollColumn
 
 BODY_FONT = "Segoe UI"
 DETAIL_MUTED = "#929db1"
@@ -364,7 +365,7 @@ class ModDetailsPage(ft.Container):
             description = "Loading mod details..." if self.loading else "This JAR does not include a description."
         project_url = self.project.get("project_url") or ("https://modrinth.com/mod/" + self.project["id"] if self.project.get("id") else "")
         base_url = project_url or "https://modrinth.com/"
-        main = ft.Column([markdown(description, base_url=base_url)],
+        main = ScrollColumn([markdown(description, base_url=base_url)], bottom_fade=True,
                          expand=True, scroll=ft.ScrollMode.AUTO, spacing=16,
                          horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
         facts = []
@@ -406,7 +407,7 @@ class ModDetailsPage(ft.Container):
         panel = ft.Container(padding=16, bgcolor=ft.Colors.BLACK_26, border_radius=5,
                              content=ft.Column(sidebar, spacing=12, horizontal_alignment=ft.CrossAxisAlignment.STRETCH))
         return ft.Row([main, ft.Container(width=SIDEBAR_WIDTH, visible=bool(facts or links),
-                                         content=ft.Column([panel], scroll=ft.ScrollMode.AUTO, expand=True))],
+                                         content=ScrollColumn([panel], bottom_fade=True, scroll=ft.ScrollMode.AUTO, expand=True))],
                       expand=True, spacing=24, vertical_alignment=ft.CrossAxisAlignment.STRETCH)
 
     def _render_versions(self) -> None:
@@ -528,7 +529,7 @@ class ModDetailsPage(ft.Container):
         dependencies = [d for d in version.get("dependencies", []) if d.get("dependency_type") == "required"]
         if dependencies:
             controls.append(text(f"{len(dependencies)} required dependencies will be resolved before installation.", 13))
-        return ft.Column(controls, expand=True, scroll=ft.ScrollMode.AUTO, spacing=16)
+        return ScrollColumn(controls, bottom_fade=True, expand=True, scroll=ft.ScrollMode.AUTO, spacing=16)
 
     def _gallery(self) -> ft.Column:
         controls = []
@@ -541,7 +542,7 @@ class ModDetailsPage(ft.Container):
                     text(item.get("description") or "", 13),
                 ], spacing=10),
             ))
-        return ft.Column(controls, expand=True, scroll=ft.ScrollMode.AUTO, spacing=16)
+        return ScrollColumn(controls, bottom_fade=True, expand=True, scroll=ft.ScrollMode.AUTO, spacing=16)
 
     def _install_latest(self, e) -> None:
         if self.local:

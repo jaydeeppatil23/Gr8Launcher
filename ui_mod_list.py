@@ -8,6 +8,7 @@ from typing import Callable, Sequence
 import flet as ft
 
 from ui_profiles import ProfileList
+from ui_scroll_views import bottom_scroll_padding
 
 
 class ModList(ProfileList):
@@ -52,15 +53,21 @@ class ModList(ProfileList):
         viewport = self._viewport_height or 400
         # Clamp after removals/filtering, before asking the client to restore
         # an offset whose row might no longer exist.
-        offset = min(self._scroll_pixels, max(0, count * self.ROW_EXTENT - viewport))
+        bottom_padding = bottom_scroll_padding(self._viewport_height) if count else 0
+        offset = min(self._scroll_pixels, max(0, count * self.ROW_EXTENT + bottom_padding - viewport))
         self._scroll_pixels = offset
         first = max(0, int(offset // self.ROW_EXTENT) - self.OVERSCAN)
         last = min(count, math.ceil((offset + viewport) / self.ROW_EXTENT) + self.OVERSCAN)
+        bottom_height = (count - last) * self.ROW_EXTENT + bottom_padding
         if not force and self._window == (first, last):
+            if self._bottom.height != bottom_height:
+                self._bottom.height = bottom_height
+                if update:
+                    self._update()
             return
         self._window = (first, last)
         self._top.height = first * self.ROW_EXTENT
-        self._bottom.height = (count - last) * self.ROW_EXTENT
+        self._bottom.height = bottom_height
         cards = [self._card_builder(item) for item in self._items[first:last]]
         for card in cards:
             card.height = self.ROW_HEIGHT

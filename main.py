@@ -55,6 +55,7 @@ from launcher_services import (
 )
 from ui_motion import StaggeredReveal
 from ui_scroll import SmoothWheel
+from ui_scroll_views import BOTTOM_SCROLL_GAP, ScrollColumn
 from ui_dialogs import ProfileDialogHost
 from ui_toasts import ToastHost
 from ui_progress import ProgressHost, track_progress
@@ -819,6 +820,31 @@ def main(page: ft.Page):
         if key == "skins":
             page.run_task(sync_active_skin)
 
+    settings_update_dot = ft.Container(
+        width=7,
+        height=7,
+        border_radius=4,
+        bgcolor=accent_color,
+        visible=False,
+    )
+    sub_update_badge_dot = ft.Container(
+        width=7,
+        height=7,
+        border_radius=4,
+        bgcolor=accent_color,
+        visible=False,
+    )
+
+    def on_updater_badge_change():
+        has_update = bool(updater_ui and updater_ui.phase in ("available", "ready"))
+        for dot in (settings_update_dot, sub_update_badge_dot):
+            if dot.visible != has_update:
+                dot.visible = has_update
+                try:
+                    dot.update()
+                except RuntimeError:
+                    pass
+
     def make_nav_btn(key: str, label: str, icon_name: str):
         is_active = key == active_tab
         img = ft.Image(
@@ -840,11 +866,18 @@ def main(page: ft.Page):
         icon_controls[key] = img
         text_controls[key] = txt
 
+        row_controls = [img, txt]
+        if key == "settings":
+            row_controls.extend([
+                ft.Container(expand=True),
+                settings_update_dot,
+            ])
+
         btn = ft.Container(
             content=ft.Row(
                 spacing=12,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                controls=[img, txt],
+                controls=row_controls,
             ),
             padding=ft.Padding.symmetric(horizontal=14, vertical=10),
             border_radius=5,
@@ -1226,7 +1259,7 @@ def main(page: ft.Page):
         expand=True,
         spacing=2,
         auto_scroll=True,
-        padding=ft.Padding.all(10),
+        padding=ft.Padding.only(left=10, top=10, right=10, bottom=BOTTOM_SCROLL_GAP),
     )
 
     logs_status_indicator = ft.Container(
@@ -1491,7 +1524,7 @@ def main(page: ft.Page):
             username, get_account_avatar_bytes(account, scale=1),
         )
 
-    accounts_list_column = ft.Column(
+    accounts_list_column = ScrollColumn(
         spacing=8,
         scroll=ft.ScrollMode.AUTO,
         expand=True,
@@ -4553,8 +4586,8 @@ def main(page: ft.Page):
                 control=logs_switch,
             ),
         ]
-        return ft.Column(
-            spacing=14, scroll=ft.ScrollMode.ADAPTIVE, expand=True, controls=cards
+        return ScrollColumn(
+            spacing=14, scroll=ft.ScrollMode.ADAPTIVE, expand=True, controls=cards, bottom_fade=True
         )
 
     def build_java_section() -> ft.Control:
@@ -4775,8 +4808,8 @@ def main(page: ft.Page):
                 bottom_control=java_bottom,
             ),
         ]
-        return ft.Column(
-            spacing=14, scroll=ft.ScrollMode.ADAPTIVE, expand=True, controls=cards
+        return ScrollColumn(
+            spacing=14, scroll=ft.ScrollMode.ADAPTIVE, expand=True, controls=cards, bottom_fade=True
         )
 
     def build_display_section() -> ft.Control:
@@ -4915,8 +4948,8 @@ def main(page: ft.Page):
                 control=skins_switch,
             ),
         ]
-        return ft.Column(
-            spacing=14, scroll=ft.ScrollMode.ADAPTIVE, expand=True, controls=cards
+        return ScrollColumn(
+            spacing=14, scroll=ft.ScrollMode.ADAPTIVE, expand=True, controls=cards, bottom_fade=True
         )
 
     def build_about_section() -> ft.Control:
@@ -4997,18 +5030,24 @@ def main(page: ft.Page):
                     ft.Container(height=4),
                     ft.Row(
                         [
-                            # ft.Container(
-                            #     bgcolor=ft.Colors.BLACK_26,
-                            #     border_radius=5,
-                            #     padding=ft.Padding.symmetric(horizontal=10, vertical=4),
-                            #     content=ft.Text(
-                            #         "v2.0.0",
-                            #         font_family="ps",
-                            #         color=accent_color,
-                            #         size=13,
-                            #         weight=ft.FontWeight.BOLD,
-                            #     ),
-                            # ),
+                            ft.Container(
+                                bgcolor=ft.Colors.BLACK_26,
+                                border_radius=5,
+                                padding=ft.Padding.symmetric(horizontal=10, vertical=4),
+                                ink=True,
+                                tooltip="View What's New",
+                                content=ft.Row([
+                                    ft.Icon(ft.Icons.AUTO_AWESOME_SHARP, size=12, color=accent_color),
+                                    ft.Text(
+                                        launcher_updates.version_label(),
+                                        font_family="ps",
+                                        color=accent_color,
+                                        size=13,
+                                        weight=ft.FontWeight.BOLD,
+                                    ),
+                                ], spacing=5, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                                on_click=lambda e: (updater_ui.show_release_notes() if updater_ui else None),
+                            ),
                             ft.Text(
                                 "A lightweight, minimal Minecraft launcher",
                                 color="#9ba3b4",
@@ -5328,16 +5367,27 @@ def main(page: ft.Page):
             reset_card,
             footer,
         ]
-        if updater_ui:
-            cards.insert(1, updater_ui.card)
-        return ft.Column(
-            spacing=14, scroll=ft.ScrollMode.ADAPTIVE, expand=True, controls=cards
+        return ScrollColumn(
+            spacing=14, scroll=ft.ScrollMode.ADAPTIVE, expand=True, controls=cards, bottom_fade=True
         )
+
+    def build_updates_section() -> ft.Control:
+        if updater_ui:
+            return updater_ui.build_section(make_setting_card)
+        return ft.Column([
+            ft.Container(
+                bgcolor=ft.Colors.BLACK_26,
+                border_radius=5,
+                padding=ft.Padding.symmetric(horizontal=16, vertical=14),
+                content=ft.Text("Updates service initializing...", color="#747e95", size=13),
+            )
+        ])
 
     sub_nav_items = [
         ("general", "General", ft.Icons.TUNE_SHARP),
         ("java", "Java & Memory", ft.Icons.MEMORY_SHARP),
         ("display", "Display / Game", ft.Icons.DESKTOP_WINDOWS_SHARP),
+        ("updates", "Updates", ft.Icons.UPDATE_SHARP),
         ("about", "About", ft.Icons.INFO_SHARP),
     ]
 
@@ -5370,6 +5420,8 @@ def main(page: ft.Page):
             section = build_java_section()
         elif key == "display":
             section = build_display_section()
+        elif key == "updates":
+            section = build_updates_section()
         elif key == "about":
             section = build_about_section()
         else:
@@ -5380,21 +5432,27 @@ def main(page: ft.Page):
     sub_sidebar_controls = []
     for k, label, icon in sub_nav_items:
         is_sel = k == active_settings_sub_tab[0]
+        row_controls = [
+            ft.Icon(icon, size=18, color=accent_color if is_sel else "#747e95"),
+            ft.Text(
+                label,
+                font_family="ps",
+                color=accent_color if is_sel else "#747e95",
+                size=13,
+                weight=ft.FontWeight.BOLD if is_sel else ft.FontWeight.NORMAL,
+            ),
+        ]
+        if k == "updates":
+            row_controls.extend([
+                ft.Container(expand=True),
+                sub_update_badge_dot,
+            ])
         btn = ft.Container(
             bgcolor=ft.Colors.BLACK_26 if is_sel else ft.Colors.TRANSPARENT,
             border_radius=5,
             padding=ft.Padding.symmetric(horizontal=12, vertical=10),
             content=ft.Row(
-                [
-                    ft.Icon(icon, size=18, color=accent_color if is_sel else "#747e95"),
-                    ft.Text(
-                        label,
-                        font_family="ps",
-                        color=accent_color if is_sel else "#747e95",
-                        size=13,
-                        weight=ft.FontWeight.BOLD if is_sel else ft.FontWeight.NORMAL,
-                    ),
-                ],
+                row_controls,
                 spacing=10,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
@@ -5422,7 +5480,7 @@ def main(page: ft.Page):
                 spacing=16,
                 controls=[
                     settings_sub_sidebar,
-                    settings_section_container,
+                    profile_list_surface(settings_section_container),
                 ],
             ),
         ],
@@ -7012,6 +7070,8 @@ def main(page: ft.Page):
         busy=lambda: bool(state.launcher_log_state.get("running") or mods_content.busy),
         close=close_window,
     )
+    updater_ui.on_state_change = on_updater_badge_change
+    on_updater_badge_change()
     page.on_keyboard_event = profile_dialogs.handle_keyboard_event
 
     # Dedicated background layer for the roaming gradient (isolated to prevent UI redraw flickers)

@@ -22,6 +22,7 @@ from ui_mod_list import ModList
 from ui_motion import StaggeredReveal
 from ui_profiles import ProfileList, profile_card_surface, profile_list_surface
 from ui_progress import ProgressHost, track_progress
+from ui_scroll_views import ScrollColumn
 
 
 CONTENT_OPTIONS = [("mods", "Mods"), ("modpacks", "Modpacks")]
@@ -259,27 +260,27 @@ class ModpackDetailsPage(ft.Container):
             controls = [_text(self.error or "Loading pack details...", 14, color="#e57373" if self.error else MUTED)]
             if self.error:
                 controls.append(launcher_button("Retry", self._retry))
-            self.body.content = ft.Column(controls, spacing=12, scroll=ft.ScrollMode.AUTO)
+            self.body.content = ScrollColumn(controls, bottom_fade=True, spacing=12, scroll=ft.ScrollMode.AUTO)
         elif self.section == "versions":
             self._render_versions()
             self.body.content = self.versions_panel
         elif self.section == "gallery":
             gallery = self.project.get("gallery") or []
-            self.body.content = ft.Column([
+            self.body.content = ScrollColumn([
                 ft.Container(content=ft.Image(src=item["url"], fit=ft.BoxFit.CONTAIN, height=220,
                              error_content=_text("Image unavailable", 12)), border_radius=5,
                              clip_behavior=ft.ClipBehavior.ANTI_ALIAS)
                 for item in gallery if isinstance(item, dict) and item.get("url")
-            ] or [_text("No screenshots supplied for this pack.", 14)], spacing=16, scroll=ft.ScrollMode.AUTO,
+            ] or [_text("No screenshots supplied for this pack.", 14)], bottom_fade=True, spacing=16, scroll=ft.ScrollMode.AUTO,
                horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
         else:
             base_url = "https://www.curseforge.com/" if self.project.get("provider") == "curseforge" else "https://modrinth.com/"
             links = [("Pack website", self.project.get("project_url")), ("Source", self.project.get("source_url")),
                      ("Issues", self.project.get("issues_url")), ("Wiki", self.project.get("wiki_url"))]
-            self.body.content = ft.Column([
+            self.body.content = ScrollColumn([
                 ft.Row([launcher_button(label, lambda e, link=url: open_link(link)) for label, url in links if url], wrap=True, spacing=8),
                 markdown(self.project.get("body") or self.project.get("description", ""), base_url=base_url),
-            ], spacing=16, scroll=ft.ScrollMode.AUTO, horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
+            ], bottom_fade=True, spacing=16, scroll=ft.ScrollMode.AUTO, horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
 
     def _filter_versions(self, e) -> None:
         self.version_offset = 0

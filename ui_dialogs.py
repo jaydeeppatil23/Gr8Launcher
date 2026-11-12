@@ -5,6 +5,8 @@ from dataclasses import fields
 
 import flet as ft
 
+from ui_scroll_views import ScrollColumn
+
 
 class ProfileDialogHost(ft.Container):
     MARGIN = 20
@@ -65,7 +67,7 @@ class ProfileDialogHost(ft.Container):
                 horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
                 controls=[
                     title,
-                    ft.Column(
+                    ScrollColumn(
                         controls=[content],
                         expand=True,
                         spacing=0,

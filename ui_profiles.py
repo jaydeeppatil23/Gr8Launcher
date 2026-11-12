@@ -7,6 +7,8 @@ from dataclasses import fields
 import flet as ft
 from flet.controls.base_control import BaseControl
 
+from ui_scroll_views import SCROLL_FADE_START, bottom_scroll_padding
+
 
 def _copy_control(value):
     """Copy the drag preview without copying sessions or bound callbacks."""
@@ -83,6 +85,7 @@ class ProfileList(ft.Container):
         return ft.ListView(
             expand=True, scroll=ft.ScrollMode.AUTO,
             on_scroll=self._scrolled, scroll_interval=16, cache_extent=self._cache_extent,
+            padding=ft.Padding.only(bottom=bottom_scroll_padding(getattr(self, "_viewport_height", 0))),
         )
 
     async def scroll_to(self, **kwargs):
@@ -265,7 +268,17 @@ class ProfileList(ft.Container):
 
     def _measure_view(self, e):
         ft.context.disable_auto_update()
+        if e.height <= 0:
+            return
         self._viewport_height = e.height
+        if isinstance(self.content, ft.ListView):
+            padding = ft.Padding.only(bottom=bottom_scroll_padding(e.height))
+            if self.content.padding != padding:
+                self.content.padding = padding
+                try:
+                    self.content.update()
+                except RuntimeError:
+                    pass  # The list may have been detached during navigation.
 
     def _measure_header(self, e):
         ft.context.disable_auto_update()
@@ -306,7 +319,8 @@ class ProfileList(ft.Container):
         self._target_positions = dict(self._original_positions)
         self._viewport_top = (self._initial_top - self._original_positions[card.data]
                               - self._header_height + self._initial_scroll)
-        extent = sum(self._sizes[item.data][1] for item in self._cards) + self._header_height
+        extent = (sum(self._sizes[item.data][1] for item in self._cards) + self._header_height
+                  + bottom_scroll_padding(self._viewport_height))
         self._max_scroll = max(self._max_scroll, extent - self._viewport_height)
         self._drag_layout = {
             item.data: (item.offset, item.animate_offset, item.opacity) for item in self._cards
@@ -557,7 +571,7 @@ def profile_list_surface(view: ft.Control):
             begin=ft.Alignment.TOP_CENTER,
             end=ft.Alignment.BOTTOM_CENTER,
             colors=["#ffffffff", "#00ffffff"],
-            stops=[0.85, 1.0],
+            stops=[SCROLL_FADE_START, 1.0],
         ),
     )
 
