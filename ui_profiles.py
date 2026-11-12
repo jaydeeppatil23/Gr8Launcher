@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import fields
 
 import flet as ft
+import ui_theme as theme
 from flet.controls.base_control import BaseControl
 
 from ui_scroll_views import SCROLL_FADE_START, bottom_scroll_padding
@@ -555,7 +556,7 @@ def profile_card_surface(content, *, glow_color, selected=False, horizontal_padd
     return ft.Container(
         border_radius=5,
         clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
-        bgcolor=ft.Colors.BLACK_26,
+        bgcolor=theme.SURFACE,
         blur=ft.Blur(5, 5),
         content=content,
     )
@@ -570,7 +571,7 @@ def profile_list_surface(view: ft.Control):
         shader=ft.LinearGradient(
             begin=ft.Alignment.TOP_CENTER,
             end=ft.Alignment.BOTTOM_CENTER,
-            colors=["#ffffffff", "#00ffffff"],
+            colors=[theme.MASK_OPAQUE, theme.MASK_TRANSPARENT],
             stops=[SCROLL_FADE_START, 1.0],
         ),
     )
@@ -581,17 +582,17 @@ def profile_row(profile: dict, *, icon: ft.Control, badges: list[ft.Control],
                 selected: bool = False, body_builder: Callable | None = None) -> ft.Container:
     """Build the Library profile row, with actions supplied by its screen."""
     icon_box = ft.Container(
-        width=36, height=36, border_radius=0, bgcolor=ft.Colors.BLACK_38,
+        width=36, height=36, border_radius=0, bgcolor=theme.SURFACE_STRONG,
         alignment=ft.Alignment.CENTER, content=icon,
     )
     info = ft.Column([
         ft.Row([
             ft.Text(profile.get("name", "Unnamed Profile"), font_family="ps",
-                    color="#ffffff", size=16, weight=ft.FontWeight.W_500,
+                    color=theme.TEXT, size=16, weight=ft.FontWeight.W_500,
                     max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
             *badges,
         ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        ft.Text(details, size=12, color="#747e95", max_lines=1,
+        ft.Text(details, size=12, color=theme.NAV_MUTED, max_lines=1,
                 overflow=ft.TextOverflow.ELLIPSIS),
     ], spacing=2, expand=True)
     body = body_builder(icon_box, info) if body_builder else ft.Row(

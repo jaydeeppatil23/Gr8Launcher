@@ -23,6 +23,7 @@ if __name__ == "__main__":
 import minecraft_launcher_lib
 from PIL import Image
 import flet as ft
+import ui_theme as theme
 
 import ely_auth
 from launcher import (
@@ -62,14 +63,10 @@ from ui_progress import ProgressHost, track_progress
 from ui_updates import UpdateController
 from ui_profiles import ProfileList, profile_card_surface, profile_drag_region, profile_list_surface, profile_row
 from ui_mods import ModsPage
-from ui_controls import SimpleInput, SimpleButton, AcrylicSelector, launcher_back_button
+from ui_controls import SimpleInput, SimpleButton, AcrylicSelector, launcher_back_button, launcher_asset_icon
 from skin_viewer import SkinViewer
 from home_skin_viewer import HomeSkinViewer
 
-bg_color_main = "#182842"
-bg_glow_color = "#454641"  # Warm lively ambient highlight from top-right corner
-accent_color = "#f5de9a"
-input_bg_color = ft.Colors.BLACK_26
 ASSETS_DIR = Path(__file__).resolve().parent / ".assets"
 LATEST_RELEASE_PROFILE_ID = "latest-release"
 _PROGRESS_UNCHANGED = object()
@@ -125,7 +122,7 @@ def build_profile_icon_content(
     profile: dict | None,
     size: int = 32,
     default_icon_size: int = 28,
-    color: str = accent_color,
+    color: str = theme.ACCENT,
 ) -> ft.Control:
     icon_src = resolve_profile_icon_src((profile or {}).get("icon"))
     if icon_src:
@@ -164,7 +161,7 @@ def main(page: ft.Page):
     page.window.height = 650
     page.padding = 0
     page.spacing = 0
-    page.bgcolor = bg_color_main
+    page.bgcolor = theme.BACKGROUND
     page.window.title_bar_hidden = True
     page.window.title_bar_buttons_hidden = True
     page.vertical_alignment = ft.MainAxisAlignment.START
@@ -221,7 +218,7 @@ def main(page: ft.Page):
         content=ft.Text(
             "-",
             font_family="ps",
-            color=accent_color,
+            color=theme.ACCENT,
             size=18,
             text_align=ft.TextAlign.CENTER,
         ),
@@ -234,7 +231,7 @@ def main(page: ft.Page):
         content=ft.Container(
             width=10,
             height=10,
-            border=ft.Border.all(1.5, color=accent_color),
+            border=ft.Border.all(1.5, color=theme.ACCENT),
         ),
         width=32,
         alignment=ft.Alignment.CENTER,
@@ -245,7 +242,7 @@ def main(page: ft.Page):
         content=ft.Text(
             "X",
             font_family="ps",
-            color=accent_color,
+            color=theme.ACCENT,
             size=14,
             text_align=ft.TextAlign.CENTER,
         ),
@@ -287,7 +284,7 @@ def main(page: ft.Page):
                                             ft.Text(
                                                 "Gr8 Launcher",
                                                 font_family="ps",
-                                                color=accent_color,
+                                                color=theme.ACCENT,
                                                 weight=ft.FontWeight.BOLD,
                                             ),
                                         ]
@@ -351,7 +348,7 @@ def main(page: ft.Page):
     login_error_text = ft.Text(
         "",
         font_family="ps",
-        color="#f87171",
+        color=theme.ERROR,
         size=13,
         text_align=ft.TextAlign.CENTER,
         visible=False,
@@ -360,17 +357,17 @@ def main(page: ft.Page):
         ft.Image("titles/Gr8_title.png", fit=ft.BoxFit.COVER, width=300),
         alignment=ft.Alignment.CENTER,
     )
-    login_title_text = ft.Text("Login", font_family="ps", color=accent_color, size=55)
+    login_title_text = ft.Text("Login", font_family="ps", color=theme.ACCENT, size=55)
     login_button_label = ft.Text(
-        "Login", font_family="ps", color=bg_color_main, size=20
+        "Login", font_family="ps", color=theme.ON_ACCENT, size=20
     )
     login_button = ft.Button(
         login_button_label,
         height=45,
         width=400,
         style=ft.ButtonStyle(
-            bgcolor=accent_color,
-            overlay_color=ft.Colors.TRANSPARENT,
+            bgcolor=theme.ACCENT,
+            overlay_color=theme.TRANSPARENT,
             shape=ft.RoundedRectangleBorder(radius=5),
         ),
     )
@@ -383,11 +380,11 @@ def main(page: ft.Page):
         ),
         style=ft.ButtonStyle(
             color={
-                ft.ControlState.HOVERED: accent_color,
-                ft.ControlState.DEFAULT: "#747e95",
+                ft.ControlState.HOVERED: theme.ACCENT,
+                ft.ControlState.DEFAULT: theme.NAV_MUTED,
             },
-            bgcolor=ft.Colors.TRANSPARENT,
-            overlay_color=ft.Colors.TRANSPARENT,
+            bgcolor=theme.TRANSPARENT,
+            overlay_color=theme.TRANSPARENT,
             padding=ft.Padding.symmetric(horizontal=8, vertical=0),
         ),
         visible=(auth_mode == "ely_by"),
@@ -403,22 +400,22 @@ def main(page: ft.Page):
         width=13,
         height=13,
         border_radius=2,
-        bgcolor="#0e1c32" if auth_mode != "ely_by" else accent_color,
+        bgcolor=theme.AUTH_INACTIVE if auth_mode != "ely_by" else theme.ACCENT,
     )
 
     offline_indicator = ft.Container(
         width=13,
         height=13,
         border_radius=2,
-        bgcolor=accent_color if auth_mode == "offline" else "#0e1c32",
+        bgcolor=theme.ACCENT if auth_mode == "offline" else theme.AUTH_INACTIVE,
     )
 
     def select_auth(mode, update_controls: bool = True):
         nonlocal auth_mode
         auth_mode = mode
-        ely_indicator.bgcolor = accent_color if auth_mode == "ely_by" else "#0e1c32"
+        ely_indicator.bgcolor = theme.ACCENT if auth_mode == "ely_by" else theme.AUTH_INACTIVE
         offline_indicator.bgcolor = (
-            accent_color if auth_mode == "offline" else "#0e1c32"
+            theme.ACCENT if auth_mode == "offline" else theme.AUTH_INACTIVE
         )
         pass_field.visible = auth_mode == "ely_by"
         ely_register_btn.visible = auth_mode == "ely_by"
@@ -442,7 +439,7 @@ def main(page: ft.Page):
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             controls=[
                 ely_indicator,
-                ft.Text("Ely.by", font_family="ps", color=accent_color, size=15),
+                ft.Text("Ely.by", font_family="ps", color=theme.ACCENT, size=15),
             ],
         ),
         on_click=lambda e: select_auth("ely_by"),
@@ -454,7 +451,7 @@ def main(page: ft.Page):
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             controls=[
                 offline_indicator,
-                ft.Text("Offline", font_family="ps", color=accent_color, size=15),
+                ft.Text("Offline", font_family="ps", color=theme.ACCENT, size=15),
             ],
         ),
         on_click=lambda e: select_auth("offline"),
@@ -628,7 +625,7 @@ def main(page: ft.Page):
                     ft.Text(
                         "Launcher",
                         font_family="ps",
-                        color=accent_color,
+                        color=theme.ACCENT,
                         size=55,
                     ),
                     alignment=ft.Alignment.CENTER,
@@ -771,9 +768,10 @@ def main(page: ft.Page):
                 if is_active
                 else f"sidebar/{icon_name}_muted.png"
             )
-            text_controls[k].color = accent_color if is_active else "#747e95"
+            icon_controls[k].color = theme.ACCENT if is_active else theme.NAV_MUTED
+            text_controls[k].color = theme.ACCENT if is_active else theme.NAV_MUTED
             sidebar_btn_controls[k].bgcolor = (
-                ft.Colors.BLACK_26 if is_active else ft.Colors.TRANSPARENT
+                theme.SURFACE if is_active else theme.TRANSPARENT
             )
             try:
                 sidebar_btn_controls[k].update()
@@ -824,14 +822,14 @@ def main(page: ft.Page):
         width=7,
         height=7,
         border_radius=4,
-        bgcolor=accent_color,
+        bgcolor=theme.ACCENT,
         visible=False,
     )
     sub_update_badge_dot = ft.Container(
         width=7,
         height=7,
         border_radius=4,
-        bgcolor=accent_color,
+        bgcolor=theme.ACCENT,
         visible=False,
     )
 
@@ -847,12 +845,13 @@ def main(page: ft.Page):
 
     def make_nav_btn(key: str, label: str, icon_name: str):
         is_active = key == active_tab
-        img = ft.Image(
+        img = launcher_asset_icon(
             src=(
                 f"sidebar/{icon_name}.png"
                 if is_active
                 else f"sidebar/{icon_name}_muted.png"
             ),
+            color=theme.ACCENT if is_active else theme.NAV_MUTED,
             width=28,
             height=28,
             fit=ft.BoxFit.CONTAIN,
@@ -861,7 +860,7 @@ def main(page: ft.Page):
             label,
             font_family="ps",
             size=16,
-            color=accent_color if is_active else "#747e95",
+            color=theme.ACCENT if is_active else theme.NAV_MUTED,
         )
         icon_controls[key] = img
         text_controls[key] = txt
@@ -881,7 +880,7 @@ def main(page: ft.Page):
             ),
             padding=ft.Padding.symmetric(horizontal=14, vertical=10),
             border_radius=5,
-            bgcolor=ft.Colors.BLACK_26 if is_active else ft.Colors.TRANSPARENT,
+            bgcolor=theme.SURFACE if is_active else theme.TRANSPARENT,
             on_click=lambda e, k=key: set_active_tab(k),
             # on_hover=on_hover,
             opacity=0.0,
@@ -937,11 +936,11 @@ def main(page: ft.Page):
     HERO_BANNER_HEIGHT = 280
     PLAY_BTN_HEIGHT = 50
 
-    play_button_icon = ft.Icon(ft.Icons.PLAY_ARROW_SHARP, color=bg_color_main, size=24)
+    play_button_icon = ft.Icon(ft.Icons.PLAY_ARROW_SHARP, color=theme.ON_ACCENT, size=24)
     play_button_text = ft.Text(
         "PLAY",
         font_family="ps",
-        color=bg_color_main,
+        color=theme.ON_ACCENT,
         size=20,
         weight=ft.FontWeight.BOLD,
     )
@@ -964,8 +963,8 @@ def main(page: ft.Page):
         width=210,
         height=PLAY_BTN_HEIGHT,
         style=ft.ButtonStyle(
-            bgcolor=accent_color,
-            overlay_color=ft.Colors.TRANSPARENT,
+            bgcolor=theme.ACCENT,
+            overlay_color=theme.TRANSPARENT,
             shape=ft.RoundedRectangleBorder(
                 radius=0
             ),
@@ -980,7 +979,7 @@ def main(page: ft.Page):
         alignment=ft.Alignment.CENTER,
         content=ft.Row(
             [
-                ft.Icon(ft.Icons.TERMINAL, color=bg_color_main, size=20),
+                ft.Icon(ft.Icons.TERMINAL, color=theme.ON_ACCENT, size=20),
             ],
             spacing=8,
             alignment=ft.MainAxisAlignment.CENTER,
@@ -995,7 +994,7 @@ def main(page: ft.Page):
         # bgcolor=ft.Colors.BLACK_38,
         # blur=ft.Blur(3, 3),
         border_radius=5,
-        bgcolor=accent_color,
+        bgcolor=theme.ACCENT,
         clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
         content=ft.Row(
             [
@@ -1003,7 +1002,7 @@ def main(page: ft.Page):
                 ft.Container(
                     width=1,
                     height=28,
-                    bgcolor=ft.Colors.with_opacity(1, bg_color_main),
+                    bgcolor=ft.Colors.with_opacity(1, theme.BACKGROUND),
                 ),
                 logs_action_btn,
             ],
@@ -1021,17 +1020,17 @@ def main(page: ft.Page):
         clean = (loader_name or "").strip()
         low = clean.lower()
         if low == "fabric":
-            return "FABRIC", "#82b1ff"
+            return "FABRIC", theme.LOADER_FABRIC
         elif low == "forge":
-            return "FORGE", "#ffb74d"
+            return "FORGE", theme.LOADER_FORGE
         elif low == "neoforge":
-            return "NEOFORGE", "#ff8a65"
+            return "NEOFORGE", theme.LOADER_NEOFORGE
         elif low == "quilt":
-            return "QUILT", "#ce93d8"
+            return "QUILT", theme.LOADER_QUILT
         elif low in ("vanilla", ""):
             return "", ""
         else:
-            return "MODDED", "#b0bec5"
+            return "MODDED", theme.LOADER_OTHER
 
     def build_profile_badges(profile: dict) -> list[ft.Control]:
         badges = []
@@ -1041,10 +1040,10 @@ def main(page: ft.Page):
                     content=ft.Text(
                         "INSTANCE",
                         size=9,
-                        color=accent_color,
+                        color=theme.ACCENT,
                         weight=ft.FontWeight.BOLD,
                     ),
-                    bgcolor=ft.Colors.with_opacity(0.45, ft.Colors.BLACK),
+                    bgcolor=ft.Colors.with_opacity(0.45, theme.BLACK),
                     border_radius=4,
                     padding=ft.Padding.symmetric(horizontal=6, vertical=2),
                 )
@@ -1061,7 +1060,7 @@ def main(page: ft.Page):
                         color=badge_color,
                         weight=ft.FontWeight.BOLD,
                     ),
-                    bgcolor=ft.Colors.with_opacity(0.45, ft.Colors.BLACK),
+                    bgcolor=ft.Colors.with_opacity(0.45, theme.BLACK),
                     border_radius=4,
                     padding=ft.Padding.symmetric(horizontal=6, vertical=2),
                 )
@@ -1072,21 +1071,21 @@ def main(page: ft.Page):
         width=52,
         height=52,
         border_radius=0,
-        bgcolor=ft.Colors.with_opacity(0.40, ft.Colors.BLACK),
-        border=ft.Border.all(1, ft.Colors.with_opacity(0.3, accent_color)),
+        bgcolor=ft.Colors.with_opacity(0.40, theme.BLACK),
+        border=ft.Border.all(1, ft.Colors.with_opacity(0.3, theme.ACCENT)),
         alignment=ft.Alignment.CENTER,
         content=build_profile_icon_content(
             None,
             size=44,
             default_icon_size=32,
-            color=accent_color,
+            color=theme.ACCENT,
         ),
     )
 
     hero_profile_name = ft.Text(
         "Loading...",
         font_family="ps",
-        color=ft.Colors.WHITE,
+        color=theme.TEXT,
         size=26,
         weight=ft.FontWeight.BOLD,
         max_lines=1,
@@ -1096,13 +1095,13 @@ def main(page: ft.Page):
     hero_instance_badge_text = ft.Text(
         "INSTANCE",
         size=9,
-        color=accent_color,
+        color=theme.ACCENT,
         weight=ft.FontWeight.BOLD,
     )
 
     hero_instance_badge = ft.Container(
         content=hero_instance_badge_text,
-        bgcolor=ft.Colors.with_opacity(0.45, ft.Colors.BLACK),
+        bgcolor=ft.Colors.with_opacity(0.45, theme.BLACK),
         border_radius=4,
         padding=ft.Padding.symmetric(horizontal=6, vertical=2),
         visible=False,
@@ -1111,13 +1110,13 @@ def main(page: ft.Page):
     hero_loader_badge_text = ft.Text(
         "",
         size=9,
-        color=ft.Colors.WHITE,
+        color=theme.TEXT,
         weight=ft.FontWeight.BOLD,
     )
 
     hero_loader_badge = ft.Container(
         content=hero_loader_badge_text,
-        bgcolor=ft.Colors.with_opacity(0.45, ft.Colors.BLACK),
+        bgcolor=ft.Colors.with_opacity(0.45, theme.BLACK),
         border_radius=4,
         padding=ft.Padding.symmetric(horizontal=6, vertical=2),
         visible=False,
@@ -1132,7 +1131,7 @@ def main(page: ft.Page):
     hero_details_text = ft.Text(
         "",
         size=13,
-        color="#d6dfea",
+        color=theme.TEXT_STATUS,
         weight=ft.FontWeight.W_400,
     )
 
@@ -1140,34 +1139,34 @@ def main(page: ft.Page):
         width=8,
         height=8,
         border_radius=4,
-        bgcolor="#81c784",
+        bgcolor=theme.SUCCESS,
     )
 
     hero_status_text = ft.Text(
         "Ready to Play",
         size=12,
-        color=ft.Colors.WHITE,
+        color=theme.TEXT,
         weight=ft.FontWeight.W_500,
     )
 
     hero_mods_separator = ft.Text(
         "•",
         size=12,
-        color=ft.Colors.WHITE_70,
+        color=theme.TEXT_DIM,
         visible=False,
     )
 
     hero_mods_icon = ft.Icon(
         ft.Icons.EXTENSION_ROUNDED,
         size=13,
-        color=accent_color,
+        color=theme.ACCENT,
         visible=False,
     )
 
     hero_mods_text = ft.Text(
         "0 Mods",
         size=12,
-        color=ft.Colors.WHITE,
+        color=theme.TEXT,
         weight=ft.FontWeight.W_500,
         visible=False,
     )
@@ -1196,7 +1195,7 @@ def main(page: ft.Page):
     )
 
     hero_info_card = ft.Container(
-        bgcolor=ft.Colors.BLACK_26,
+        bgcolor=theme.SURFACE,
         blur=ft.Blur(10, 10),
         border_radius=8,
         clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
@@ -1266,7 +1265,7 @@ def main(page: ft.Page):
         width=8,
         height=8,
         border_radius=4,
-        bgcolor="#747e95",
+        bgcolor=theme.NAV_MUTED,
         tooltip="Idle",
     )
 
@@ -1303,14 +1302,14 @@ def main(page: ft.Page):
             if not cleaned:
                 continue
             logs_data_buffer.append(cleaned)
-            text_color = "#cfd8dc"
+            text_color = theme.TEXT_LOG
             low = cleaned.lower()
             if "error" in low or "exception" in low or "fatal" in low or "crash" in low:
-                text_color = "#ef5350"
+                text_color = theme.LOG_ERROR
             elif "warn" in low:
-                text_color = "#ffca28"
+                text_color = theme.LOG_WARNING
             elif "info" in low:
-                text_color = "#90caf9"
+                text_color = theme.LOG_INFO
             logs_list_view.controls.append(
                 ft.Text(
                     cleaned, size=11, color=text_color,
@@ -1345,10 +1344,10 @@ def main(page: ft.Page):
 
     logs_panel_container = ft.Container(
         expand=True,
-        bgcolor=ft.Colors.with_opacity(0.25, ft.Colors.BLACK),
+        bgcolor=ft.Colors.with_opacity(0.25, theme.BLACK),
         blur=ft.Blur(10, 10),
         border_radius=8,
-        border=ft.Border.all(1, ft.Colors.with_opacity(0.18, "#ffffff")),
+        border=ft.Border.all(1, ft.Colors.with_opacity(0.18, theme.TEXT)),
         padding=0,
         visible=False,
         clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
@@ -1360,9 +1359,9 @@ def main(page: ft.Page):
                 ft.Container(
                     height=36,
                     padding=ft.Padding.symmetric(horizontal=12, vertical=0),
-                    bgcolor=ft.Colors.with_opacity(0.30, ft.Colors.BLACK),
+                    bgcolor=ft.Colors.with_opacity(0.30, theme.BLACK),
                     border=ft.Border(
-                        bottom=ft.BorderSide(1, ft.Colors.with_opacity(0.12, "#ffffff"))
+                        bottom=ft.BorderSide(1, ft.Colors.with_opacity(0.12, theme.TEXT))
                     ),
                     content=ft.Row(
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -1373,12 +1372,12 @@ def main(page: ft.Page):
                                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                 controls=[
                                     ft.Icon(
-                                        ft.Icons.TERMINAL, color=accent_color, size=16
+                                        ft.Icons.TERMINAL, color=theme.ACCENT, size=16
                                     ),
                                     ft.Text(
                                         "Logs",
                                         font_family="ps",
-                                        color=accent_color,
+                                        color=theme.ACCENT,
                                         size=14,
                                         weight=ft.FontWeight.BOLD,
                                     ),
@@ -1392,10 +1391,10 @@ def main(page: ft.Page):
                                     ft.IconButton(
                                         icon=ft.Icons.COPY_ALL_SHARP,
                                         icon_size=15,
-                                        icon_color="#8a94a6",
+                                        icon_color=theme.ICON_MUTED,
                                         tooltip="Copy all logs to clipboard",
                                         style=ft.ButtonStyle(
-                                            overlay_color=ft.Colors.TRANSPARENT,
+                                            overlay_color=theme.TRANSPARENT,
                                             padding=2,
                                         ),
                                         on_click=do_copy_logs,
@@ -1403,10 +1402,10 @@ def main(page: ft.Page):
                                     ft.IconButton(
                                         icon=ft.Icons.DELETE_SWEEP_SHARP,
                                         icon_size=16,
-                                        icon_color="#8a94a6",
+                                        icon_color=theme.ICON_MUTED,
                                         tooltip="Clear logs",
                                         style=ft.ButtonStyle(
-                                            overlay_color=ft.Colors.TRANSPARENT,
+                                            overlay_color=theme.TRANSPARENT,
                                             padding=2,
                                         ),
                                         on_click=do_clear_logs,
@@ -1414,10 +1413,10 @@ def main(page: ft.Page):
                                     ft.IconButton(
                                         icon=ft.Icons.CLOSE_SHARP,
                                         icon_size=16,
-                                        icon_color="#ffffff",
+                                        icon_color=theme.TEXT,
                                         tooltip="Close Logs",
                                         style=ft.ButtonStyle(
-                                            overlay_color=ft.Colors.TRANSPARENT,
+                                            overlay_color=theme.TRANSPARENT,
                                             padding=2,
                                         ),
                                         on_click=lambda e: set_logs_view_visible(False),
@@ -1430,7 +1429,7 @@ def main(page: ft.Page):
                 # Terminal Body
                 ft.Container(
                     expand=True,
-                    bgcolor=ft.Colors.with_opacity(0.20, ft.Colors.BLACK),
+                    bgcolor=ft.Colors.with_opacity(0.20, theme.BLACK),
                     content=logs_list_view,
                 ),
             ],
@@ -1452,11 +1451,11 @@ def main(page: ft.Page):
         ),
         style=ft.ButtonStyle(
             color={
-                ft.ControlState.HOVERED: accent_color,
-                ft.ControlState.DEFAULT: "#747e95",
+                ft.ControlState.HOVERED: theme.ACCENT,
+                ft.ControlState.DEFAULT: theme.NAV_MUTED,
             },
-            bgcolor=ft.Colors.TRANSPARENT,
-            overlay_color=ft.Colors.TRANSPARENT,
+            bgcolor=theme.TRANSPARENT,
+            overlay_color=theme.TRANSPARENT,
             padding=ft.Padding.symmetric(horizontal=8, vertical=0),
         ),
         on_click=lambda e: set_active_tab("library"),
@@ -1481,7 +1480,7 @@ def main(page: ft.Page):
                         ft.Text(
                             "Profiles",
                             font_family="ps",
-                            color=accent_color,
+                            color=theme.ACCENT,
                             size=16,
                             weight=ft.FontWeight.BOLD,
                         ),
@@ -1603,7 +1602,7 @@ def main(page: ft.Page):
                     fit=ft.BoxFit.CONTAIN,
                 )
                 if avatar_bytes
-                else ft.Icon(ft.Icons.PERSON_SHARP, color=accent_color, size=30)
+                else ft.Icon(ft.Icons.PERSON_SHARP, color=theme.ACCENT, size=30)
             )
 
             # Select button / active indicator
@@ -1611,18 +1610,18 @@ def main(page: ft.Page):
                 select_btn = ft.Container(
                     content=ft.Row(
                         [
-                            ft.Icon(ft.Icons.CHECK_SHARP, color=bg_color_main, size=15),
+                            ft.Icon(ft.Icons.CHECK_SHARP, color=theme.ON_ACCENT, size=15),
                             ft.Text(
                                 "Selected",
                                 font_family="ps",
-                                color=bg_color_main,
+                                color=theme.ON_ACCENT,
                                 size=13,
                             ),
                         ],
                         spacing=4,
                         alignment=ft.MainAxisAlignment.CENTER,
                     ),
-                    bgcolor=accent_color,
+                    bgcolor=theme.ACCENT,
                     border_radius=5,
                     padding=ft.Padding.symmetric(horizontal=10, vertical=6),
                 )
@@ -1630,10 +1629,10 @@ def main(page: ft.Page):
                 select_btn = ft.Button(
                     content=ft.Row(
                         [
-                            ft.Icon(ft.Icons.CHECK_SHARP, color=accent_color, size=15),
+                            ft.Icon(ft.Icons.CHECK_SHARP, color=theme.ACCENT, size=15),
                             ft.Text(
                                 "Sign in" if needs_login else "Select",
-                                font_family="ps", color=accent_color, size=13
+                                font_family="ps", color=theme.ACCENT, size=13
                             ),
                         ],
                         spacing=4,
@@ -1641,8 +1640,8 @@ def main(page: ft.Page):
                     ),
                     height=30,
                     style=ft.ButtonStyle(
-                        bgcolor=ft.Colors.TRANSPARENT,
-                        overlay_color=ft.Colors.TRANSPARENT,
+                        bgcolor=theme.TRANSPARENT,
+                        overlay_color=theme.TRANSPARENT,
                         shape=ft.RoundedRectangleBorder(radius=5),
                         padding=ft.Padding.symmetric(horizontal=10, vertical=0),
                     ),
@@ -1656,10 +1655,10 @@ def main(page: ft.Page):
             # Remove button
             remove_btn = ft.IconButton(
                 icon=ft.Icons.DELETE_OUTLINE_SHARP,
-                icon_color="#e57373",
+                icon_color=theme.DANGER,
                 icon_size=18,
                 style=ft.ButtonStyle(
-                    overlay_color=ft.Colors.TRANSPARENT,
+                    overlay_color=theme.TRANSPARENT,
                     padding=0,
                 ),
                 tooltip="Remove Account",
@@ -1670,7 +1669,7 @@ def main(page: ft.Page):
             account_label = "Ely.by Account" if acc_type == "ely" else "Offline Account"
 
             card = ft.Container(
-                bgcolor=ft.Colors.BLACK_26,
+                bgcolor=theme.SURFACE,
                 border_radius=5,
                 padding=ft.Padding.symmetric(horizontal=16, vertical=12),
                 content=ft.Row(
@@ -1683,13 +1682,13 @@ def main(page: ft.Page):
                                 ft.Text(
                                     username,
                                     font_family="ps",
-                                    color=accent_color,
+                                    color=theme.ACCENT,
                                     size=18,
                                 ),
                                 ft.Text(
                                     account_label,
                                     size=11,
-                                    color="#747e95",
+                                    color=theme.NAV_MUTED,
                                 ),
                             ],
                             spacing=1,
@@ -1717,16 +1716,16 @@ def main(page: ft.Page):
     add_account_btn = ft.Button(
         content=ft.Row(
             [
-                ft.Icon(ft.Icons.ADD_SHARP, color=bg_color_main, size=18),
-                ft.Text("Add Account", font_family="ps", color=bg_color_main, size=15),
+                ft.Icon(ft.Icons.ADD_SHARP, color=theme.ON_ACCENT, size=18),
+                ft.Text("Add Account", font_family="ps", color=theme.ON_ACCENT, size=15),
             ],
             spacing=6,
             alignment=ft.MainAxisAlignment.CENTER,
         ),
         height=38,
         style=ft.ButtonStyle(
-            bgcolor=accent_color,
-            overlay_color=ft.Colors.TRANSPARENT,
+            bgcolor=theme.ACCENT,
+            overlay_color=theme.TRANSPARENT,
             shape=ft.RoundedRectangleBorder(radius=5),
         ),
         on_click=lambda e: open_login(is_add_account=True),
@@ -1742,7 +1741,7 @@ def main(page: ft.Page):
                 ft.Row(
                     [
                         ft.Text(
-                            "Accounts", font_family="ps", color=accent_color, size=32
+                            "Accounts", font_family="ps", color=theme.ACCENT, size=32
                         ),
                         add_account_btn,
                     ],
@@ -1852,9 +1851,9 @@ def main(page: ft.Page):
         on_double_tap=handle_double_tap,
     )
 
-    skin_player_name_text = ft.Text("", font_family="ps", color=accent_color, size=32)
-    skin_model_info_text = ft.Text("", font_family="ps", color=accent_color, size=13)
-    skin_status_text = ft.Text("", size=12, color="#747e95")
+    skin_player_name_text = ft.Text("", font_family="ps", color=theme.ACCENT, size=32)
+    skin_model_info_text = ft.Text("", font_family="ps", color=theme.ACCENT, size=13)
+    skin_status_text = ft.Text("", size=12, color=theme.NAV_MUTED)
     skin_account_avatar = ft.Image(
         src=b"", width=36, height=36, filter_quality=ft.FilterQuality.NONE
     )
@@ -1917,19 +1916,19 @@ def main(page: ft.Page):
                 pass
 
     refresh_skin_btn_text = ft.Text(
-        "Refresh", font_family="ps", color=accent_color, size=13
+        "Refresh", font_family="ps", color=theme.ACCENT, size=13
     )
     refresh_skin_btn = ft.Container(
         content=ft.Row(
             [
-                ft.Icon(ft.Icons.REFRESH_SHARP, color=accent_color, size=15),
+                ft.Icon(ft.Icons.REFRESH_SHARP, color=theme.ACCENT, size=15),
                 refresh_skin_btn_text,
             ],
             spacing=6,
             alignment=ft.MainAxisAlignment.CENTER,
         ),
         height=34,
-        bgcolor=ft.Colors.TRANSPARENT,
+        bgcolor=theme.TRANSPARENT,
         border_radius=5,
         padding=ft.Padding.symmetric(horizontal=12, vertical=0),
         alignment=ft.Alignment.CENTER,
@@ -1939,9 +1938,9 @@ def main(page: ft.Page):
     manage_skin_online_btn = ft.Button(
         content=ft.Row(
             [
-                ft.Icon(ft.Icons.OPEN_IN_NEW_SHARP, color=bg_color_main, size=15),
+                ft.Icon(ft.Icons.OPEN_IN_NEW_SHARP, color=theme.ON_ACCENT, size=15),
                 ft.Text(
-                    "Manage on Ely.by", font_family="ps", color=bg_color_main, size=15
+                    "Manage on Ely.by", font_family="ps", color=theme.ON_ACCENT, size=15
                 ),
 
             ],
@@ -1951,8 +1950,8 @@ def main(page: ft.Page):
         height=40,
         width=300,
         style=ft.ButtonStyle(
-            bgcolor=accent_color,
-            overlay_color=ft.Colors.TRANSPARENT,
+            bgcolor=theme.ACCENT,
+            overlay_color=theme.TRANSPARENT,
             shape=ft.RoundedRectangleBorder(radius=5),
             padding=ft.Padding.symmetric(horizontal=14, vertical=0),
         ),
@@ -1962,14 +1961,14 @@ def main(page: ft.Page):
     switch_account_btn = ft.Container(
         content=ft.Row(
             [
-                ft.Icon(ft.Icons.MANAGE_ACCOUNTS_SHARP, color=accent_color, size=15),
-                ft.Text("Accounts", font_family="ps", color=accent_color, size=13),
+                ft.Icon(ft.Icons.MANAGE_ACCOUNTS_SHARP, color=theme.ACCENT, size=15),
+                ft.Text("Accounts", font_family="ps", color=theme.ACCENT, size=13),
             ],
             spacing=6,
             alignment=ft.MainAxisAlignment.CENTER,
         ),
         height=34,
-        bgcolor=ft.Colors.TRANSPARENT,
+        bgcolor=theme.TRANSPARENT,
         border_radius=5,
         padding=ft.Padding.symmetric(horizontal=12, vertical=0),
         alignment=ft.Alignment.CENTER,
@@ -1996,18 +1995,18 @@ def main(page: ft.Page):
                         spacing=16,
                         controls=[
                             ft.Icon(
-                                ft.Icons.PERSON_OFF_SHARP, color=accent_color, size=48
+                                ft.Icons.PERSON_OFF_SHARP, color=theme.ACCENT, size=48
                             ),
                             ft.Text(
                                 "Ely.by Account Required",
                                 font_family="ps",
-                                color=accent_color,
+                                color=theme.ACCENT,
                                 size=24,
                             ),
                             ft.Text(
                                 "Please select/add an Ely.by account in order to use skins.",
                                 size=14,
-                                color="#a0aec0",
+                                color=theme.TEXT_SUPPORT,
                                 text_align=ft.TextAlign.CENTER,
                             ),
                             ft.Container(height=4),
@@ -2016,13 +2015,13 @@ def main(page: ft.Page):
                                     [
                                         ft.Icon(
                                             ft.Icons.MANAGE_ACCOUNTS_SHARP,
-                                            color=bg_color_main,
+                                            color=theme.ON_ACCENT,
                                             size=18,
                                         ),
                                         ft.Text(
                                             "Go to Accounts",
                                             font_family="ps",
-                                            color=bg_color_main,
+                                            color=theme.ON_ACCENT,
                                             size=15,
                                         ),
                                     ],
@@ -2032,8 +2031,8 @@ def main(page: ft.Page):
                                 height=42,
                                 width=180,
                                 style=ft.ButtonStyle(
-                                    bgcolor=accent_color,
-                                    overlay_color=ft.Colors.TRANSPARENT,
+                                    bgcolor=theme.ACCENT,
+                                    overlay_color=theme.TRANSPARENT,
                                     shape=ft.RoundedRectangleBorder(radius=5),
                                 ),
                                 on_click=lambda e: set_active_tab("accounts"),
@@ -2066,9 +2065,9 @@ def main(page: ft.Page):
                         "Front",
                         height=28,
                         style=ft.ButtonStyle(
-                            bgcolor=ft.Colors.TRANSPARENT,
-                            color=accent_color,
-                            overlay_color=ft.Colors.TRANSPARENT,
+                            bgcolor=theme.TRANSPARENT,
+                            color=theme.ACCENT,
+                            overlay_color=theme.TRANSPARENT,
                             shape=ft.RoundedRectangleBorder(radius=5),
                             padding=ft.Padding.symmetric(horizontal=12, vertical=0),
                         ),
@@ -2078,9 +2077,9 @@ def main(page: ft.Page):
                         "Back",
                         height=28,
                         style=ft.ButtonStyle(
-                            bgcolor=ft.Colors.TRANSPARENT,
-                            color=accent_color,
-                            overlay_color=ft.Colors.TRANSPARENT,
+                            bgcolor=theme.TRANSPARENT,
+                            color=theme.ACCENT,
+                            overlay_color=theme.TRANSPARENT,
                             shape=ft.RoundedRectangleBorder(radius=5),
                             padding=ft.Padding.symmetric(horizontal=12, vertical=0),
                         ),
@@ -2090,9 +2089,9 @@ def main(page: ft.Page):
                         "Reset",
                         height=28,
                         style=ft.ButtonStyle(
-                            bgcolor=ft.Colors.TRANSPARENT,
-                            color=accent_color,
-                            overlay_color=ft.Colors.TRANSPARENT,
+                            bgcolor=theme.TRANSPARENT,
+                            color=theme.ACCENT,
+                            overlay_color=theme.TRANSPARENT,
                             shape=ft.RoundedRectangleBorder(radius=5),
                             padding=ft.Padding.symmetric(horizontal=12, vertical=0),
                         ),
@@ -2115,8 +2114,8 @@ def main(page: ft.Page):
                     #         center=ft.Alignment(0, 0.18),
                     #         radius=0.68,
                     #         colors=[
-                    #             ft.Colors.with_opacity(0.09, accent_color),
-                    #             ft.Colors.with_opacity(0.025, accent_color),
+                    #             ft.Colors.with_opacity(0.09, theme.ACCENT),
+                    #             ft.Colors.with_opacity(0.025, theme.ACCENT),
                     #             ft.Colors.TRANSPARENT,
                     #         ],
                     #         stops=[0.0, 0.6, 1.0],
@@ -2133,7 +2132,7 @@ def main(page: ft.Page):
                     #         end=ft.Alignment.CENTER_RIGHT,
                     #         colors=[
                     #             ft.Colors.TRANSPARENT,
-                    #             ft.Colors.with_opacity(1, accent_color),
+                    #             ft.Colors.with_opacity(1, theme.ACCENT),
                     #             ft.Colors.TRANSPARENT,
                     #         ],
                     #     ),
@@ -2159,14 +2158,14 @@ def main(page: ft.Page):
                             "Your Character",
                             font_family="ps",
                             size=13,
-                            color="#747e95",
+                            color=theme.NAV_MUTED,
                         ),
                         skin_stage,
                         angle_btns,
                         ft.Text(
                             "Drag to rotate · double-click to reset",
                             size=11,
-                            color="#747e95",
+                            color=theme.NAV_MUTED,
                             text_align=ft.TextAlign.CENTER,
                         ),
                     ],
@@ -2191,7 +2190,7 @@ def main(page: ft.Page):
                                         width=44,
                                         height=44,
                                         border_radius=5,
-                                        bgcolor=ft.Colors.BLACK_26,
+                                        bgcolor=theme.SURFACE,
                                         alignment=ft.Alignment.CENTER,
                                         content=skin_account_avatar,
                                     ),
@@ -2202,7 +2201,7 @@ def main(page: ft.Page):
                                             ft.Text(
                                                 "ACTIVE ELY.BY ACCOUNT",
                                                 size=11,
-                                                color="#747e95",
+                                                color=theme.NAV_MUTED,
                                                 weight=ft.FontWeight.BOLD,
                                             ),
                                             skin_player_name_text,
@@ -2212,14 +2211,14 @@ def main(page: ft.Page):
                                 ],
                             ),
                             ft.Container(
-                                bgcolor=ft.Colors.BLACK_26,
+                                bgcolor=theme.SURFACE,
                                 border_radius=5,
                                 padding=ft.Padding.symmetric(horizontal=10, vertical=7),
                                 content=ft.Row(
                                     [
                                         ft.Icon(
                                             ft.Icons.CHECK_SHARP,
-                                            color=accent_color,
+                                            color=theme.ACCENT,
                                             size=13,
                                         ),
                                         skin_model_info_text,
@@ -2231,7 +2230,7 @@ def main(page: ft.Page):
                             ft.Text(
                                 "Make it yours on Ely.by, then refresh your preview here.",
                                 size=12,
-                                color="#8b97ab",
+                                color=theme.TEXT_PLACEHOLDER,
                             ),
                             ft.Column(
                                 spacing=8,
@@ -2257,7 +2256,7 @@ def main(page: ft.Page):
                     expand=True,
                     spacing=16,
                     controls=[
-                        ft.Text("Skins", font_family="ps", color=accent_color, size=32),
+                        ft.Text("Skins", font_family="ps", color=theme.ACCENT, size=32),
                         ft.Container(
                             expand=True,
                             alignment=ft.Alignment.CENTER,
@@ -2326,14 +2325,14 @@ def main(page: ft.Page):
     home_gamertag_text = ft.Text(
         "",
         font_family="ps",
-        color="#ffffff",
+        color=theme.TEXT,
         size=13,
         weight=ft.FontWeight.W_500,
     )
 
     home_gamertag_container = ft.Container(
         content=home_gamertag_text,
-        bgcolor=ft.Colors.BLACK_54,
+        bgcolor=theme.SCRIM,
         padding=ft.Padding.symmetric(horizontal=8, vertical=2),
         border_radius=3,
         on_size_change=on_gamertag_resize,
@@ -2342,13 +2341,13 @@ def main(page: ft.Page):
     edit_icon_overlay = ft.Container(
         content=ft.Icon(
             ft.Icons.EDIT_SHARP,
-            color="#ffffff",
+            color=theme.TEXT,
             size=28,
             shadows=[
                 ft.BoxShadow(
                     spread_radius=1,
                     blur_radius=8,
-                    color=ft.Colors.WHITE,
+                    color=theme.TEXT,
                 )
             ],
         ),
@@ -2384,7 +2383,7 @@ def main(page: ft.Page):
             fit=ft.BoxFit.FIT_HEIGHT,
             filter_quality=ft.FilterQuality.NONE,
         ),
-        bgcolor=input_bg_color,
+        bgcolor=theme.SURFACE,
         border_radius=10,
         # padding=ft.Padding.only(top=10,bottom=10),
         height=280,
@@ -2725,10 +2724,10 @@ def main(page: ft.Page):
                 None,
                 size=44,
                 default_icon_size=32,
-                color=accent_color,
+                color=theme.ACCENT,
             )
             hero_details_text.value = "Select or create a profile to start playing"
-            hero_status_dot.bgcolor = "#747e95"
+            hero_status_dot.bgcolor = theme.NAV_MUTED
             hero_status_text.value = "No Installation"
             hero_mods_separator.visible = False
             hero_mods_icon.visible = False
@@ -2739,7 +2738,7 @@ def main(page: ft.Page):
 
             hero_profile_name.value = name
             hero_profile_icon_box.content = build_profile_icon_content(
-                profile, size=44, default_icon_size=32, color=accent_color
+                profile, size=44, default_icon_size=32, color=theme.ACCENT
             )
 
             if is_inst:
@@ -2766,13 +2765,13 @@ def main(page: ft.Page):
             is_game_started = state.launcher_log_state.get("game_started", False)
 
             if is_running and is_downloading:
-                hero_status_dot.bgcolor = "#64b5f6"
+                hero_status_dot.bgcolor = theme.INFO
                 hero_status_text.value = "Installing..."
             elif is_running and is_game_started:
-                hero_status_dot.bgcolor = "#81c784"
+                hero_status_dot.bgcolor = theme.SUCCESS
                 hero_status_text.value = "Game Running"
             elif is_running:
-                hero_status_dot.bgcolor = "#ffb74d"
+                hero_status_dot.bgcolor = theme.WARNING
                 hero_status_text.value = "Starting..."
             else:
                 target_vid = profile.get("version_id") or profile.get(
@@ -2788,16 +2787,16 @@ def main(page: ft.Page):
                     is_installed = False
 
                 if profile.get("id") == LATEST_RELEASE_PROFILE_ID and not target_vid:
-                    hero_status_dot.bgcolor = "#747e95"
+                    hero_status_dot.bgcolor = theme.NAV_MUTED
                     hero_status_text.value = (
                         "Checking for updates..." if latest_release_state["loading"]
                         else "Internet Required"
                     )
                 elif is_installed:
-                    hero_status_dot.bgcolor = "#81c784"
+                    hero_status_dot.bgcolor = theme.SUCCESS
                     hero_status_text.value = "Ready to Play"
                 else:
-                    hero_status_dot.bgcolor = "#ffa726"
+                    hero_status_dot.bgcolor = theme.WARNING_ACTIVE
                     hero_status_text.value = "Not Installed"
 
             # Mods (if is a modloader and instance)
@@ -2830,47 +2829,47 @@ def main(page: ft.Page):
             play_button_text.value = "CANCELLING..."
             play_button_icon.name = ft.Icons.HOURGLASS_EMPTY_SHARP
             play_button.disabled = True
-            play_button.style.bgcolor = accent_color
-            play_button_text.color = bg_color_main
-            play_button_icon.color = bg_color_main
+            play_button.style.bgcolor = theme.ACCENT
+            play_button_text.color = theme.ON_ACCENT
+            play_button_icon.color = theme.ON_ACCENT
         elif is_running and is_downloading:
             play_button_text.value = "CANCEL"
             play_button_icon.name = ft.Icons.CLOSE_SHARP
             play_button.disabled = False
-            play_button.style.bgcolor = "#e57373"
-            play_button_text.color = "#ffffff"
-            play_button_icon.color = "#ffffff"
+            play_button.style.bgcolor = theme.DANGER
+            play_button_text.color = theme.TEXT
+            play_button_icon.color = theme.TEXT
         elif is_running and is_game_started:
             play_button_text.value = "RUNNING"
             play_button_icon.name = ft.Icons.SPORTS_ESPORTS_SHARP
             play_button.disabled = True
-            play_button.style.bgcolor = accent_color
-            play_button_text.color = bg_color_main
-            play_button_icon.color = bg_color_main
+            play_button.style.bgcolor = theme.ACCENT
+            play_button_text.color = theme.ON_ACCENT
+            play_button_icon.color = theme.ON_ACCENT
         elif is_running:
             play_button_text.value = "STARTING..."
             play_button_icon.name = ft.Icons.HOURGLASS_EMPTY_SHARP
             play_button.disabled = True
-            play_button.style.bgcolor = accent_color
-            play_button_text.color = bg_color_main
-            play_button_icon.color = bg_color_main
+            play_button.style.bgcolor = theme.ACCENT
+            play_button_text.color = theme.ON_ACCENT
+            play_button_icon.color = theme.ON_ACCENT
         else:
             play_button_text.value = "PLAY"
             play_button_icon.name = ft.Icons.PLAY_ARROW_SHARP
             play_button.disabled = False
-            play_button.style.bgcolor = accent_color
-            play_button_text.color = bg_color_main
-            play_button_icon.color = bg_color_main
+            play_button.style.bgcolor = theme.ACCENT
+            play_button_text.color = theme.ON_ACCENT
+            play_button_icon.color = theme.ON_ACCENT
 
         # Update floating logs indicator state
         if is_running and is_game_started:
-            logs_status_indicator.bgcolor = "#81c784"
+            logs_status_indicator.bgcolor = theme.SUCCESS
             logs_status_indicator.tooltip = "Game Running"
         elif is_running:
-            logs_status_indicator.bgcolor = "#ffb74d"
+            logs_status_indicator.bgcolor = theme.WARNING
             logs_status_indicator.tooltip = "Launching / Installing"
         else:
-            logs_status_indicator.bgcolor = "#747e95"
+            logs_status_indicator.bgcolor = theme.NAV_MUTED
             logs_status_indicator.tooltip = "Idle"
 
         try:
@@ -3171,7 +3170,7 @@ def main(page: ft.Page):
             content_padding=ft.Padding.symmetric(horizontal=16, vertical=12),
             autofocus=not is_latest_release,
             read_only=is_latest_release,
-            color="#747e95" if is_latest_release else "#ffffff",
+            color=theme.NAV_MUTED if is_latest_release else theme.TEXT,
         )
 
         jvm_field = SimpleInput(
@@ -3186,14 +3185,14 @@ def main(page: ft.Page):
             width=48,
             height=48,
             border_radius=6,
-            bgcolor=ft.Colors.BLACK_38,
-            border=ft.Border.all(1.5, accent_color),
+            bgcolor=theme.SURFACE_STRONG,
+            border=ft.Border.all(1.5, theme.ACCENT),
             alignment=ft.Alignment.CENTER,
             content=build_profile_icon_content(
                 {"icon": selected_icon["value"]},
                 size=40,
                 default_icon_size=32,
-                color=accent_color,
+                color=theme.ACCENT,
             ),
         )
 
@@ -3205,7 +3204,7 @@ def main(page: ft.Page):
                 {"icon": icon_path},
                 size=40,
                 default_icon_size=32,
-                color=accent_color,
+                color=theme.ACCENT,
             )
             try:
                 preview_icon_container.update()
@@ -3215,12 +3214,12 @@ def main(page: ft.Page):
             for path_key, c in tile_containers.items():
                 is_active = (selected_icon["value"] or "") == (path_key or "")
                 c.border = ft.Border.all(
-                    1.5, accent_color if is_active else ft.Colors.TRANSPARENT
+                    1.5, theme.ACCENT if is_active else theme.TRANSPARENT
                 )
                 c.bgcolor = (
-                    ft.Colors.with_opacity(0.30, accent_color)
+                    ft.Colors.with_opacity(0.30, theme.ACCENT)
                     if is_active
-                    else ft.Colors.BLACK_38
+                    else theme.SURFACE_STRONG
                 )
                 try:
                     c.update()
@@ -3263,12 +3262,12 @@ def main(page: ft.Page):
                 height=42,
                 border_radius=6,
                 bgcolor=(
-                    ft.Colors.with_opacity(0.30, accent_color)
+                    ft.Colors.with_opacity(0.30, theme.ACCENT)
                     if is_active
-                    else ft.Colors.BLACK_38
+                    else theme.SURFACE_STRONG
                 ),
                 border=ft.Border.all(
-                    1.5, accent_color if is_active else ft.Colors.TRANSPARENT
+                    1.5, theme.ACCENT if is_active else theme.TRANSPARENT
                 ),
                 alignment=ft.Alignment.CENTER,
                 tooltip=tooltip_text,
@@ -3279,24 +3278,24 @@ def main(page: ft.Page):
             return c
 
         icon_action_style = ft.ButtonStyle(
-            bgcolor=ft.Colors.BLACK_38,
-            overlay_color=ft.Colors.TRANSPARENT,
+            bgcolor=theme.SURFACE_STRONG,
+            overlay_color=theme.TRANSPARENT,
             shape=ft.RoundedRectangleBorder(radius=5),
             padding=ft.Padding.symmetric(horizontal=10, vertical=0),
-            side=ft.BorderSide(1, ft.Colors.with_opacity(0.35, accent_color)),
+            side=ft.BorderSide(1, ft.Colors.with_opacity(0.35, theme.ACCENT)),
         )
         reset_icon_button = ft.IconButton(
             ft.Icons.RESTART_ALT_SHARP,
-            icon_color=accent_color,
+            icon_color=theme.ACCENT,
             icon_size=20,
             width=36,
             height=36,
             style=ft.ButtonStyle(
-                bgcolor=ft.Colors.BLACK_38,
-                overlay_color=ft.Colors.TRANSPARENT,
+                bgcolor=theme.SURFACE_STRONG,
+                overlay_color=theme.TRANSPARENT,
                 shape=ft.RoundedRectangleBorder(radius=5),
                 padding=0,
-                side=ft.BorderSide(1, ft.Colors.with_opacity(0.35, accent_color)),
+                side=ft.BorderSide(1, ft.Colors.with_opacity(0.35, theme.ACCENT)),
             ),
             tooltip="Reset to default icon",
             on_click=lambda e: select_icon(""),
@@ -3360,11 +3359,11 @@ def main(page: ft.Page):
                             controls=[
                                 ft.Text(
                                     "Profile Name", size=13,
-                                    weight=ft.FontWeight.W_500, color="#ffffff",
+                                    weight=ft.FontWeight.W_500, color=theme.TEXT,
                                 ),
                                 *(
                                     [ft.Text(
-                                        "(cannot be changed)", size=11, color="#747e95",
+                                        "(cannot be changed)", size=11, color=theme.NAV_MUTED,
                                     )]
                                     if is_latest_release else []
                                 ),
@@ -3392,7 +3391,7 @@ def main(page: ft.Page):
                                         preview_icon_container,
                                         ft.Text(
                                             "Profile Icon", size=13,
-                                            weight=ft.FontWeight.W_500, color="#ffffff",
+                                            weight=ft.FontWeight.W_500, color=theme.TEXT,
                                             expand=True,
                                         ),
                                     ],
@@ -3407,10 +3406,10 @@ def main(page: ft.Page):
                                                 controls=[
                                                     ft.Icon(
                                                         ft.Icons.UPLOAD_FILE_SHARP,
-                                                        color=accent_color, size=16,
+                                                        color=theme.ACCENT, size=16,
                                                     ),
                                                     ft.Text(
-                                                        "Import...", color=accent_color, size=11,
+                                                        "Import...", color=theme.ACCENT, size=11,
                                                     ),
                                                 ],
                                                 spacing=6,
@@ -3432,7 +3431,7 @@ def main(page: ft.Page):
                             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
                             controls=[
                                 ft.Text(
-                                    "Blocks", size=11, color="#747e95",
+                                    "Blocks", size=11, color=theme.NAV_MUTED,
                                     weight=ft.FontWeight.BOLD,
                                 ),
                                 ft.Row(controls=block_tiles, spacing=6, run_spacing=6, wrap=True),
@@ -3443,7 +3442,7 @@ def main(page: ft.Page):
                             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
                             controls=[
                                 ft.Text(
-                                    "Mobs & Characters", size=11, color="#747e95",
+                                    "Mobs & Characters", size=11, color=theme.NAV_MUTED,
                                     weight=ft.FontWeight.BOLD,
                                 ),
                                 ft.Row(controls=face_tiles, spacing=6, run_spacing=6, wrap=True),
@@ -3457,12 +3456,12 @@ def main(page: ft.Page):
                     controls=[
                         ft.Text(
                             "JVM Arguments", size=13,
-                            weight=ft.FontWeight.W_500, color="#ffffff",
+                            weight=ft.FontWeight.W_500, color=theme.TEXT,
                         ),
                         jvm_field,
                         ft.Text(
                             "Custom arguments passed to Java when launching this profile.",
-                            size=11, color="#747e95",
+                            size=11, color=theme.NAV_MUTED,
                         ),
                     ],
                 ),
@@ -3477,16 +3476,16 @@ def main(page: ft.Page):
                 controls=[
                     ft.Row(
                         controls=[
-                            ft.Icon(ft.Icons.EDIT_SHARP, color=accent_color, size=22),
+                            ft.Icon(ft.Icons.EDIT_SHARP, color=theme.ACCENT, size=22),
                             ft.Text(
-                                "Edit Profile", font_family="ps", color=accent_color,
+                                "Edit Profile", font_family="ps", color=theme.ACCENT,
                                 size=18, weight=ft.FontWeight.BOLD,
                             ),
                         ],
                         spacing=8,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    ft.Text(format_profile_details(profile), size=12, color="#747e95"),
+                    ft.Text(format_profile_details(profile), size=12, color=theme.NAV_MUTED),
                 ],
             ),
             actions=[
@@ -3494,8 +3493,8 @@ def main(page: ft.Page):
                     "Cancel",
                     height=36,
                     style=ft.ButtonStyle(
-                        color="#747e95",
-                        overlay_color=ft.Colors.TRANSPARENT,
+                        color=theme.NAV_MUTED,
+                        overlay_color=theme.TRANSPARENT,
                         shape=ft.RoundedRectangleBorder(radius=5),
                         padding=ft.Padding.symmetric(horizontal=16, vertical=0),
                     ),
@@ -3505,9 +3504,9 @@ def main(page: ft.Page):
                     "Save Changes",
                     height=36,
                     style=ft.ButtonStyle(
-                        bgcolor=accent_color,
-                        color=bg_color_main,
-                        overlay_color=ft.Colors.TRANSPARENT,
+                        bgcolor=theme.ACCENT,
+                        color=theme.ON_ACCENT,
+                        overlay_color=theme.TRANSPARENT,
                         shape=ft.RoundedRectangleBorder(radius=5),
                         padding=ft.Padding.symmetric(horizontal=20, vertical=0),
                     ),
@@ -3531,7 +3530,7 @@ def main(page: ft.Page):
                 content=ft.Text(
                     "No installations found.",
                     font_family="ps",
-                    color="#747e95",
+                    color=theme.NAV_MUTED,
                     size=14,
                 ),
             )
@@ -3544,13 +3543,13 @@ def main(page: ft.Page):
                     width=36,
                     height=36,
                     border_radius=0,
-                    bgcolor=ft.Colors.BLACK_38,
+                    bgcolor=theme.SURFACE_STRONG,
                     alignment=ft.Alignment.CENTER,
                     content=build_profile_icon_content(
                         profile,
                         size=32,
                         default_icon_size=24,
-                        # color=accent_color if is_selected else "#8a94a6",
+                        # color=theme.ACCENT if is_selected else theme.ICON_MUTED,
                     ),
                 )
 
@@ -3558,7 +3557,7 @@ def main(page: ft.Page):
                     ft.Text(
                         profile.get("name", "Unnamed Profile"),
                         font_family="ps",
-                        color=accent_color if is_selected else "#ffffff",
+                        color=theme.ACCENT if is_selected else theme.TEXT,
                         size=16,
                         weight=ft.FontWeight.W_500,
                     ),
@@ -3568,7 +3567,7 @@ def main(page: ft.Page):
                 details_text = ft.Text(
                     format_profile_details(profile),
                     size=12,
-                    color="#747e95",
+                    color=theme.NAV_MUTED,
                 )
 
                 info_column = ft.Column(
@@ -3591,7 +3590,7 @@ def main(page: ft.Page):
                             [
                                 ft.Icon(
                                     ft.Icons.PLAY_ARROW_SHARP,
-                                    color=bg_color_main,
+                                    color=theme.ON_ACCENT,
                                     size=16,
                                 ),
                             ],
@@ -3601,8 +3600,8 @@ def main(page: ft.Page):
                         height=30,
                         disabled=is_game_running,
                         style=ft.ButtonStyle(
-                            bgcolor=accent_color,
-                            overlay_color=ft.Colors.TRANSPARENT,
+                            bgcolor=theme.ACCENT,
+                            overlay_color=theme.TRANSPARENT,
                             shape=ft.RoundedRectangleBorder(radius=5),
                             padding=ft.Padding.symmetric(horizontal=10, vertical=0),
                         ),
@@ -3613,11 +3612,11 @@ def main(page: ft.Page):
 
                 folder_btn = ft.IconButton(
                     icon=ft.Icons.FOLDER_OPEN_SHARP,
-                    icon_color=accent_color,
+                    icon_color=theme.ACCENT,
                     icon_size=20,
                     tooltip="Open Game Folder",
                     style=ft.ButtonStyle(
-                        overlay_color=ft.Colors.TRANSPARENT,
+                        overlay_color=theme.TRANSPARENT,
                         padding=4,
                     ),
                     on_click=lambda e, p=profile: open_profile_folder(p),
@@ -3626,12 +3625,12 @@ def main(page: ft.Page):
 
                 edit_btn = ft.IconButton(
                     icon=ft.Icons.EDIT_SHARP,
-                    icon_color=accent_color,
+                    icon_color=theme.ACCENT,
                     icon_size=18,
                     tooltip="Edit Profile",
                     disabled=is_game_running,
                     style=ft.ButtonStyle(
-                        overlay_color=ft.Colors.TRANSPARENT,
+                        overlay_color=theme.TRANSPARENT,
                         padding=4,
                     ),
                     on_click=lambda e, p=profile: open_edit_profile_dialog(p),
@@ -3649,19 +3648,19 @@ def main(page: ft.Page):
                     data=pid,
                     margin=ft.Padding.only(bottom=8),
                     border=ft.Border.all(
-                        1, accent_color if is_selected else ft.Colors.TRANSPARENT
+                        1, theme.ACCENT if is_selected else theme.TRANSPARENT
                     ),
                     border_radius=5,
                     animate=ft.Animation(180, ft.AnimationCurve.EASE_OUT_CUBIC),
                     animate_scale=ft.Animation(180, ft.AnimationCurve.EASE_OUT_CUBIC),
                     content=profile_card_surface(
-                        glow_color=accent_color,
+                        glow_color=theme.ACCENT,
                         selected=is_selected,
                         content=ft.Row(
                             [
                                 profile_drag_region(
                                     icon_box, info_column,
-                                    color=accent_color if is_selected else "#747e95",
+                                    color=theme.ACCENT if is_selected else theme.NAV_MUTED,
                                     view=profiles_list_view,
                                     profile_id=pid,
                                     on_select=lambda e: select_profile(e.control.data),
@@ -3711,18 +3710,18 @@ def main(page: ft.Page):
     discord_btn = ft.Container(
         content=ft.Row(
             [
-                ft.Image(
+                launcher_asset_icon(
                     src="icons/discord.svg",
                     width=16,
                     height=16,
                     fit=ft.BoxFit.CONTAIN,
                 ),
-                ft.Text("Discord", font_family="ps", color=accent_color, size=13),
+                ft.Text("Discord", font_family="ps", color=theme.ACCENT, size=13),
             ],
             spacing=6,
             alignment=ft.MainAxisAlignment.CENTER,
         ),
-        bgcolor=ft.Colors.BLACK_26,
+        bgcolor=theme.SURFACE,
         border_radius=5,
         padding=ft.Padding.symmetric(horizontal=10, vertical=8),
         expand=True,
@@ -3732,18 +3731,18 @@ def main(page: ft.Page):
     github_btn = ft.Container(
         content=ft.Row(
             [
-                ft.Image(
+                launcher_asset_icon(
                     src="icons/github.svg",
                     width=16,
                     height=16,
                     fit=ft.BoxFit.CONTAIN,
                 ),
-                ft.Text("GitHub", font_family="ps", color=accent_color, size=13),
+                ft.Text("GitHub", font_family="ps", color=theme.ACCENT, size=13),
             ],
             spacing=6,
             alignment=ft.MainAxisAlignment.CENTER,
         ),
-        bgcolor=ft.Colors.BLACK_26,
+        bgcolor=theme.SURFACE,
         border_radius=5,
         padding=ft.Padding.symmetric(horizontal=10, vertical=8),
         expand=True,
@@ -3766,7 +3765,7 @@ def main(page: ft.Page):
                     ft.Text(
                         "Community",
                         font_family="ps",
-                        color=accent_color,
+                        color=theme.ACCENT,
                         size=14,
                         weight=ft.FontWeight.BOLD,
                     ),
@@ -3820,7 +3819,7 @@ def main(page: ft.Page):
             expand=True,
             spacing=16,
             controls=[
-                ft.Text("Library", font_family="ps", color=accent_color, size=32),
+                ft.Text("Library", font_family="ps", color=theme.ACCENT, size=32),
                 profile_list_surface(library_list_view),
             ],
         ),
@@ -3958,17 +3957,17 @@ def main(page: ft.Page):
                     else f"Are you sure you want to remove '{p_name}' from your profiles?"
                 ),
                 # font_family="ps",
-                color="#ffffff",
+                color=theme.TEXT,
                 size=13,
             ),
             height=200,
             title=ft.Row(
                 [
-                    ft.Icon(ft.Icons.DELETE_OUTLINE_SHARP, color="#e57373", size=22),
+                    ft.Icon(ft.Icons.DELETE_OUTLINE_SHARP, color=theme.DANGER, size=22),
                     ft.Text(
                         f"Delete {'Instance' if is_inst else 'Profile'}?",
                         font_family="ps",
-                        color=accent_color,
+                        color=theme.ACCENT,
                         size=18,
                         weight=ft.FontWeight.BOLD,
                     ),
@@ -3981,8 +3980,8 @@ def main(page: ft.Page):
                     height=36,
                     autofocus=True,
                     style=ft.ButtonStyle(
-                        color="#747e95",
-                        overlay_color=ft.Colors.TRANSPARENT,
+                        color=theme.NAV_MUTED,
+                        overlay_color=theme.TRANSPARENT,
                         shape=ft.RoundedRectangleBorder(radius=5),
                         padding=ft.Padding.symmetric(horizontal=16, vertical=0),
                     ),
@@ -3992,9 +3991,9 @@ def main(page: ft.Page):
                     "Delete Instance" if is_inst else "Remove Profile",
                     height=36,
                     style=ft.ButtonStyle(
-                        bgcolor="#e57373",
-                        color=bg_color_main,
-                        overlay_color=ft.Colors.TRANSPARENT,
+                        bgcolor=theme.DANGER,
+                        color=theme.ON_ACCENT,
+                        overlay_color=theme.TRANSPARENT,
                         shape=ft.RoundedRectangleBorder(radius=5),
                         padding=ft.Padding.symmetric(horizontal=20, vertical=0),
                     ),
@@ -4158,12 +4157,12 @@ def main(page: ft.Page):
 
         def on_new_profile_hover(e):
             new_profile_slot.border = ft.Border.all(
-                1, accent_color if e.data == "true" else ft.Colors.TRANSPARENT
+                1, theme.ACCENT if e.data == "true" else theme.TRANSPARENT
             )
             new_profile_slot.bgcolor = (
-                ft.Colors.with_opacity(0.35, ft.Colors.BLACK)
+                ft.Colors.with_opacity(0.35, theme.BLACK)
                 if e.data == "true"
-                else ft.Colors.BLACK_26
+                else theme.SURFACE
             )
             try:
                 new_profile_slot.update()
@@ -4174,14 +4173,14 @@ def main(page: ft.Page):
             width=36,
             height=36,
             border_radius=0,
-            bgcolor=ft.Colors.BLACK_38,
+            bgcolor=theme.SURFACE_STRONG,
             alignment=ft.Alignment.CENTER,
-            content=ft.Icon(ft.Icons.ADD_SHARP, color=accent_color, size=22),
+            content=ft.Icon(ft.Icons.ADD_SHARP, color=theme.ACCENT, size=22),
         )
 
         new_profile_slot = ft.Container(
-            bgcolor=ft.Colors.BLACK_26,
-            border=ft.Border.all(1, ft.Colors.TRANSPARENT),
+            bgcolor=theme.SURFACE,
+            border=ft.Border.all(1, theme.TRANSPARENT),
             border_radius=5,
             padding=ft.Padding.symmetric(horizontal=16, vertical=12),
             content=ft.Row(
@@ -4192,14 +4191,14 @@ def main(page: ft.Page):
                             ft.Text(
                                 "New Profile",
                                 font_family="ps",
-                                color=accent_color,
+                                color=theme.ACCENT,
                                 size=16,
                                 weight=ft.FontWeight.W_500,
                             ),
                             ft.Text(
                                 "Create a new custom profile or instance",
                                 size=12,
-                                color="#747e95",
+                                color=theme.NAV_MUTED,
                             ),
                         ],
                         spacing=2,
@@ -4207,7 +4206,7 @@ def main(page: ft.Page):
                     ),
                     ft.Icon(
                         ft.Icons.ADD_SHARP,
-                        color=accent_color,
+                        color=theme.ACCENT,
                         size=20,
                     ),
                 ],
@@ -4227,7 +4226,7 @@ def main(page: ft.Page):
                 content=ft.Text(
                     "No installations found in Library.",
                     font_family="ps",
-                    color="#747e95",
+                    color=theme.NAV_MUTED,
                     size=14,
                 ),
             )
@@ -4243,11 +4242,11 @@ def main(page: ft.Page):
                 if is_modded_profile:
                     mods_btn = ft.IconButton(
                         icon=ft.Icons.EXTENSION_SHARP,
-                        icon_color=accent_color,
+                        icon_color=theme.ACCENT,
                         icon_size=20,
                         tooltip="Manage Mods",
                         style=ft.ButtonStyle(
-                            overlay_color=ft.Colors.TRANSPARENT,
+                            overlay_color=theme.TRANSPARENT,
                             padding=4,
                         ),
                         on_click=lambda e, p=profile: open_profile_mods(p),
@@ -4256,11 +4255,11 @@ def main(page: ft.Page):
 
                 folder_btn = ft.IconButton(
                     icon=ft.Icons.FOLDER_OPEN_SHARP,
-                    icon_color=accent_color,
+                    icon_color=theme.ACCENT,
                     icon_size=20,
                     tooltip="Open Game Folder",
                     style=ft.ButtonStyle(
-                        overlay_color=ft.Colors.TRANSPARENT,
+                        overlay_color=theme.TRANSPARENT,
                         padding=4,
                     ),
                     on_click=lambda e, p=profile: open_profile_folder(p),
@@ -4269,12 +4268,12 @@ def main(page: ft.Page):
 
                 edit_btn = ft.IconButton(
                     icon=ft.Icons.EDIT_SHARP,
-                    icon_color=accent_color,
+                    icon_color=theme.ACCENT,
                     icon_size=19,
                     tooltip="Edit Profile",
                     disabled=is_game_running,
                     style=ft.ButtonStyle(
-                        overlay_color=ft.Colors.TRANSPARENT,
+                        overlay_color=theme.TRANSPARENT,
                         padding=4,
                     ),
                     on_click=lambda e, p=profile: open_edit_profile_dialog(p),
@@ -4283,12 +4282,12 @@ def main(page: ft.Page):
 
                 repair_btn = ft.IconButton(
                     icon=ft.Icons.BUILD_SHARP,
-                    icon_color=accent_color,
+                    icon_color=theme.ACCENT,
                     icon_size=18,
                     tooltip="Repair & Verify Files",
                     disabled=is_game_running,
                     style=ft.ButtonStyle(
-                        overlay_color=ft.Colors.TRANSPARENT,
+                        overlay_color=theme.TRANSPARENT,
                         padding=4,
                     ),
                     on_click=lambda e, p=profile: page.run_task(repair_profile, p),
@@ -4297,12 +4296,12 @@ def main(page: ft.Page):
 
                 remove_btn = ft.IconButton(
                     icon=ft.Icons.DELETE_OUTLINE_SHARP,
-                    icon_color="#e57373",
+                    icon_color=theme.DANGER,
                     icon_size=20,
                     tooltip="Delete Instance" if is_inst else "Remove Profile",
                     disabled=is_game_running,
                     style=ft.ButtonStyle(
-                        overlay_color=ft.Colors.TRANSPARENT,
+                        overlay_color=theme.TRANSPARENT,
                         padding=4,
                     ),
                     on_click=lambda e, p=profile: confirm_remove_profile(p),
@@ -4313,7 +4312,7 @@ def main(page: ft.Page):
                     key=ft.ValueKey(f"library-profile-{pid}"),
                     data=pid,
                     margin=ft.Padding.only(bottom=8),
-                    border=ft.Border.all(1, ft.Colors.TRANSPARENT),
+                    border=ft.Border.all(1, theme.TRANSPARENT),
                     border_radius=5,
                     animate=ft.Animation(180, ft.AnimationCurve.EASE_OUT_CUBIC),
                     animate_scale=ft.Animation(180, ft.AnimationCurve.EASE_OUT_CUBIC),
@@ -4323,9 +4322,9 @@ def main(page: ft.Page):
                         badges=build_profile_badges(profile),
                         details=format_profile_details(profile),
                         actions=actions,
-                        glow_color=accent_color,
+                        glow_color=theme.ACCENT,
                         body_builder=lambda icon, info, profile_id=pid: profile_drag_region(
-                            icon, info, color="#747e95",
+                            icon, info, color=theme.NAV_MUTED,
                             view=library_list_view, profile_id=profile_id,
                         ),
                     ),
@@ -4390,11 +4389,11 @@ def main(page: ft.Page):
                 ft.Text(
                     title,
                     font_family="ps",
-                    color=accent_color,
+                    color=theme.ACCENT,
                     size=15,
                     weight=ft.FontWeight.BOLD,
                 ),
-                ft.Text(description, font_family="ps", color="#747e95", size=12),
+                ft.Text(description, font_family="ps", color=theme.NAV_MUTED, size=12),
             ],
         )
         if control:
@@ -4412,7 +4411,7 @@ def main(page: ft.Page):
             card_children.append(bottom_control)
 
         return ft.Container(
-            bgcolor=ft.Colors.BLACK_26,
+            bgcolor=theme.SURFACE,
             border_radius=5,
             padding=ft.Padding.symmetric(horizontal=16, vertical=14),
             content=ft.Column(spacing=0, controls=card_children),
@@ -4436,15 +4435,15 @@ def main(page: ft.Page):
             rebuild_settings_view()
 
         dlg = ft.AlertDialog(
-            bgcolor="#182842",
+            bgcolor=theme.BACKGROUND,
             shape=ft.RoundedRectangleBorder(radius=5),
             title=ft.Row(
                 [
-                    ft.Icon(ft.Icons.RESTORE_SHARP, color="#e57373", size=22),
+                    ft.Icon(ft.Icons.RESTORE_SHARP, color=theme.DANGER, size=22),
                     ft.Text(
                         "Reset All Settings?",
                         font_family="ps",
-                        color=accent_color,
+                        color=theme.ACCENT,
                         size=18,
                         weight=ft.FontWeight.BOLD,
                     ),
@@ -4454,24 +4453,24 @@ def main(page: ft.Page):
             content=ft.Text(
                 "Are you sure you want to restore all launcher settings to default values? Custom memory limits, resolution preferences, and launch behaviors will be reset. Your accounts and instances will remain untouched.",
                 font_family="ps",
-                color="#ffffff",
+                color=theme.TEXT,
                 size=13,
             ),
             actions=[
                 ft.TextButton(
                     "Cancel",
                     style=ft.ButtonStyle(
-                        color="#747e95",
-                        overlay_color=ft.Colors.TRANSPARENT,
+                        color=theme.NAV_MUTED,
+                        overlay_color=theme.TRANSPARENT,
                     ),
                     on_click=do_cancel,
                 ),
                 ft.Button(
                     "Reset to Defaults",
                     style=ft.ButtonStyle(
-                        bgcolor="#e57373",
-                        color="#ffffff",
-                        overlay_color=ft.Colors.TRANSPARENT,
+                        bgcolor=theme.DANGER,
+                        color=theme.TEXT,
+                        overlay_color=theme.TRANSPARENT,
                         shape=ft.RoundedRectangleBorder(radius=5),
                     ),
                     on_click=do_reset,
@@ -4511,8 +4510,8 @@ def main(page: ft.Page):
 
         orbs_switch = ft.Switch(
             value=bool(settings.get("enable_orbs", True)),
-            active_color=accent_color,
-            track_color="#2b3b55",
+            active_color=theme.ACCENT,
+            track_color=theme.SWITCH_TRACK,
             on_change=on_enable_orbs_change,
         )
 
@@ -4526,8 +4525,8 @@ def main(page: ft.Page):
 
         head_tracking_switch = ft.Switch(
             value=bool(settings.get("enable_head_tracking", True)),
-            active_color=accent_color,
-            track_color="#2b3b55",
+            active_color=theme.ACCENT,
+            track_color=theme.SWITCH_TRACK,
             on_change=on_head_tracking_change,
         )
 
@@ -4538,8 +4537,8 @@ def main(page: ft.Page):
 
         logs_switch = ft.Switch(
             value=bool(settings.get("capture_logs", True)),
-            active_color=accent_color,
-            track_color="#2b3b55",
+            active_color=theme.ACCENT,
+            track_color=theme.SWITCH_TRACK,
             on_change=on_capture_logs_change,
         )
 
@@ -4553,8 +4552,8 @@ def main(page: ft.Page):
 
         discord_rpc_switch = ft.Switch(
             value=bool(settings.get("discord_rpc", True)),
-            active_color=accent_color,
-            track_color="#2b3b55",
+            active_color=theme.ACCENT,
+            track_color=theme.SWITCH_TRACK,
             on_change=on_discord_rpc_change,
         )
 
@@ -4602,12 +4601,12 @@ def main(page: ft.Page):
             width=100,
             # height=36,
             text_size=13,
-            # text_style=ft.TextStyle(font_family="ps", color=accent_color),
-            # border_color="#2b3b55",
-            # bgcolor="#182842",
+            # text_style=ft.TextStyle(font_family="ps", color=theme.ACCENT),
+            # border_color=theme.SWITCH_TRACK,
+            # bgcolor=theme.BACKGROUND,
             # border_radius=5,
             suffix="MB",
-            suffix_style=ft.TextStyle(font_family="ps", color="#747e95", size=11),
+            suffix_style=ft.TextStyle(font_family="ps", color=theme.NAV_MUTED, size=11),
             text_align=ft.TextAlign.CENTER,
             # content_padding=ft.Padding.symmetric(horizontal=8, vertical=4),
         )
@@ -4618,8 +4617,8 @@ def main(page: ft.Page):
             max=max_ram_mb,
             divisions=divisions_count,
             value=curr_ram,
-            active_color=accent_color,
-            inactive_color="#2b3b55",
+            active_color=theme.ACCENT,
+            inactive_color=theme.SWITCH_TRACK,
             expand=True,
         )
 
@@ -4679,11 +4678,11 @@ def main(page: ft.Page):
             if val <= max_ram_mb:
                 preset_chips.append(
                     ft.Container(
-                        bgcolor=ft.Colors.BLACK_26,
+                        bgcolor=theme.SURFACE,
                         border_radius=5,
                         padding=ft.Padding.symmetric(horizontal=12, vertical=6),
                         content=ft.Text(
-                            label, font_family="ps", color=accent_color, size=12
+                            label, font_family="ps", color=theme.ACCENT, size=12
                         ),
                         on_click=lambda e, m=val: apply_ram_preset(m),
                     )
@@ -4731,16 +4730,16 @@ def main(page: ft.Page):
 
         java_buttons = [
             ft.Container(
-                bgcolor=ft.Colors.BLACK_26,
+                bgcolor=theme.SURFACE,
                 border_radius=5,
                 padding=ft.Padding.symmetric(horizontal=12, vertical=8),
                 content=ft.Row(
                     [
                         ft.Icon(
-                            ft.Icons.FOLDER_OPEN_SHARP, size=16, color=accent_color
+                            ft.Icons.FOLDER_OPEN_SHARP, size=16, color=theme.ACCENT
                         ),
                         ft.Text(
-                            "Browse...", font_family="ps", color=accent_color, size=12
+                            "Browse...", font_family="ps", color=theme.ACCENT, size=12
                         ),
                     ],
                     spacing=6,
@@ -4751,16 +4750,16 @@ def main(page: ft.Page):
         if curr_java:
             java_buttons.append(
                 ft.Container(
-                    bgcolor=ft.Colors.BLACK_26,
+                    bgcolor=theme.SURFACE,
                     border_radius=5,
                     padding=ft.Padding.symmetric(horizontal=12, vertical=8),
                     content=ft.Row(
                         [
-                            ft.Icon(ft.Icons.REFRESH_SHARP, size=16, color="#747e95"),
+                            ft.Icon(ft.Icons.REFRESH_SHARP, size=16, color=theme.NAV_MUTED),
                             ft.Text(
                                 "Auto-detect",
                                 font_family="ps",
-                                color="#747e95",
+                                color=theme.NAV_MUTED,
                                 size=12,
                             ),
                         ],
@@ -4774,7 +4773,7 @@ def main(page: ft.Page):
             [
                 ft.Container(
                     expand=True,
-                    bgcolor="#182842",
+                    bgcolor=theme.BACKGROUND,
                     border_radius=5,
                     padding=ft.Padding.symmetric(horizontal=12, vertical=8),
                     content=ft.Text(
@@ -4784,7 +4783,7 @@ def main(page: ft.Page):
                             else "Auto-detect (System & bundled JVM)"
                         ),
                         font_family="ps",
-                        color=accent_color if curr_java else "#747e95",
+                        color=theme.ACCENT if curr_java else theme.NAV_MUTED,
                         size=12,
                         no_wrap=True,
                         overflow=ft.TextOverflow.ELLIPSIS,
@@ -4823,12 +4822,12 @@ def main(page: ft.Page):
             width=90,
             # height=36,
             text_size=13,
-            # text_style=ft.TextStyle(font_family="ps", color=accent_color),
-            # border_color="#2b3b55",
-            # bgcolor="#182842",
+            # text_style=ft.TextStyle(font_family="ps", color=theme.ACCENT),
+            # border_color=theme.SWITCH_TRACK,
+            # bgcolor=theme.BACKGROUND,
             # border_radius=5,
             prefix="W: ",
-            prefix_style=ft.TextStyle(font_family="ps", color="#747e95", size=11),
+            prefix_style=ft.TextStyle(font_family="ps", color=theme.NAV_MUTED, size=11),
             content_padding=ft.Padding.symmetric(horizontal=8, vertical=4),
         )
 
@@ -4837,12 +4836,12 @@ def main(page: ft.Page):
             width=90,
             # height=36,
             text_size=13,
-            # text_style=ft.TextStyle(font_family="ps", color=accent_color),
-            # border_color="#2b3b55",
-            # bgcolor="#182842",
+            # text_style=ft.TextStyle(font_family="ps", color=theme.ACCENT),
+            # border_color=theme.SWITCH_TRACK,
+            # bgcolor=theme.BACKGROUND,
             # border_radius=5,
             prefix="H: ",
-            prefix_style=ft.TextStyle(font_family="ps", color="#747e95", size=11),
+            prefix_style=ft.TextStyle(font_family="ps", color=theme.NAV_MUTED, size=11),
             content_padding=ft.Padding.symmetric(horizontal=8, vertical=4),
         )
 
@@ -4882,10 +4881,10 @@ def main(page: ft.Page):
         ]
         res_chips = [
             ft.Container(
-                bgcolor=ft.Colors.BLACK_26,
+                bgcolor=theme.SURFACE,
                 border_radius=5,
                 padding=ft.Padding.symmetric(horizontal=12, vertical=6),
-                content=ft.Text(lbl, font_family="ps", color=accent_color, size=12),
+                content=ft.Text(lbl, font_family="ps", color=theme.ACCENT, size=12),
                 on_click=lambda e, pw=pw, ph=ph: apply_res_preset(pw, ph),
             )
             for lbl, pw, ph in res_presets
@@ -4897,7 +4896,7 @@ def main(page: ft.Page):
                 ft.Row(
                     [
                         w_field,
-                        ft.Text("×", font_family="ps", color="#747e95", size=16),
+                        ft.Text("×", font_family="ps", color=theme.NAV_MUTED, size=16),
                         h_field,
                     ],
                     spacing=8,
@@ -4914,8 +4913,8 @@ def main(page: ft.Page):
 
         fullscreen_switch = ft.Switch(
             value=bool(settings.get("fullscreen", False)),
-            active_color=accent_color,
-            track_color="#2b3b55",
+            active_color=theme.ACCENT,
+            track_color=theme.SWITCH_TRACK,
             on_change=on_fullscreen_change,
         )
 
@@ -4926,8 +4925,8 @@ def main(page: ft.Page):
 
         skins_switch = ft.Switch(
             value=bool(settings.get("enable_custom_skins", True)),
-            active_color=accent_color,
-            track_color="#2b3b55",
+            active_color=theme.ACCENT,
+            track_color=theme.SWITCH_TRACK,
             on_change=on_skins_change,
         )
 
@@ -4985,10 +4984,10 @@ def main(page: ft.Page):
             orig_content = btn.content
             btn.content = ft.Row(
                 [
-                    ft.Icon(ft.Icons.CHECK_SHARP, size=13, color="#34d399"),
+                    ft.Icon(ft.Icons.CHECK_SHARP, size=13, color=theme.SUCCESS_BRIGHT),
                     ft.Text(
                         success_label,
-                        color="#34d399",
+                        color=theme.SUCCESS_BRIGHT,
                         size=11,
                         weight=ft.FontWeight.BOLD,
                     ),
@@ -5023,7 +5022,7 @@ def main(page: ft.Page):
                     ft.Text(
                         "Launcher",
                         font_family="ps",
-                        color=accent_color,
+                        color=theme.ACCENT,
                         size=55,
                         # weight=ft.FontWeight.BOLD,
                     ),
@@ -5031,17 +5030,17 @@ def main(page: ft.Page):
                     ft.Row(
                         [
                             ft.Container(
-                                bgcolor=ft.Colors.BLACK_26,
+                                bgcolor=theme.SURFACE,
                                 border_radius=5,
                                 padding=ft.Padding.symmetric(horizontal=10, vertical=4),
                                 ink=True,
                                 tooltip="View What's New",
                                 content=ft.Row([
-                                    ft.Icon(ft.Icons.AUTO_AWESOME_SHARP, size=12, color=accent_color),
+                                    ft.Icon(ft.Icons.AUTO_AWESOME_SHARP, size=12, color=theme.ACCENT),
                                     ft.Text(
                                         launcher_updates.version_label(),
                                         font_family="ps",
-                                        color=accent_color,
+                                        color=theme.ACCENT,
                                         size=13,
                                         weight=ft.FontWeight.BOLD,
                                     ),
@@ -5050,7 +5049,7 @@ def main(page: ft.Page):
                             ),
                             ft.Text(
                                 "A lightweight, minimal Minecraft launcher",
-                                color="#9ba3b4",
+                                color=theme.TEXT_CAPTION,
                                 size=13,
                             ),
                         ],
@@ -5067,7 +5066,7 @@ def main(page: ft.Page):
         # 2. COMMUNITY & CREATOR CARD
         # ==========================================
         discord_tag_pill = ft.Container(
-            bgcolor=ft.Colors.BLACK_26,
+            bgcolor=theme.SURFACE,
             border_radius=5,
             padding=ft.Padding.symmetric(horizontal=10, vertical=6),
             tooltip="Click to copy Discord handle",
@@ -5077,14 +5076,14 @@ def main(page: ft.Page):
                 tight=True,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 controls=[
-                    ft.Icon(ft.Icons.DISCORD, size=15, color=accent_color),
+                    ft.Icon(ft.Icons.DISCORD, size=15, color=theme.ACCENT),
                     ft.Text(
                         "@jaydeeppatil23",
-                        color="#d6e1f0",
+                        color=theme.TEXT_CODE,
                         size=12,
                         weight=ft.FontWeight.BOLD,
                     ),
-                    ft.Icon(ft.Icons.CONTENT_COPY_SHARP, size=12, color="#747e95"),
+                    ft.Icon(ft.Icons.CONTENT_COPY_SHARP, size=12, color=theme.NAV_MUTED),
                 ],
             ),
         )
@@ -5137,7 +5136,7 @@ def main(page: ft.Page):
         )
 
         creator_card = ft.Container(
-            bgcolor=ft.Colors.BLACK_26,
+            bgcolor=theme.SURFACE,
             border_radius=5,
             padding=ft.Padding.symmetric(horizontal=16, vertical=16),
             content=ft.Column(expand=True,
@@ -5153,7 +5152,7 @@ def main(page: ft.Page):
                                     ft.Text(
                                         "Made with ❤️ by Jaydeep.",
                                         font_family="ps",
-                                        color=accent_color,
+                                        color=theme.ACCENT,
                                         size=15,
                                         weight=ft.FontWeight.BOLD,
                                     ),
@@ -5183,15 +5182,15 @@ def main(page: ft.Page):
         # ==========================================
         def make_dir_entry(label: str, target: Path, icon_data):
             copy_pill = ft.Container(
-                bgcolor=ft.Colors.BLACK_26,
+                bgcolor=theme.SURFACE,
                 border_radius=5,
                 padding=ft.Padding.symmetric(horizontal=10, vertical=6),
                 tooltip="Copy path to clipboard",
                 ink=True,
                 content=ft.Row(
                     [
-                        ft.Icon(ft.Icons.CONTENT_COPY_SHARP, size=13, color=accent_color),
-                        ft.Text("Copy", color=accent_color, size=12),
+                        ft.Icon(ft.Icons.CONTENT_COPY_SHARP, size=13, color=theme.ACCENT),
+                        ft.Text("Copy", color=theme.ACCENT, size=12),
                     ],
                     spacing=5,
                     tight=True,
@@ -5201,15 +5200,15 @@ def main(page: ft.Page):
             copy_pill.on_click = lambda e, b=copy_pill, p=str(target): on_pill_copy(b, p)
 
             open_pill = ft.Container(
-                bgcolor=ft.Colors.BLACK_26,
+                bgcolor=theme.SURFACE,
                 border_radius=5,
                 padding=ft.Padding.symmetric(horizontal=10, vertical=6),
                 tooltip="Open in file explorer",
                 ink=True,
                 content=ft.Row(
                     [
-                        ft.Icon(ft.Icons.FOLDER_OPEN_SHARP, size=14, color=accent_color),
-                        ft.Text("Open", color=accent_color, size=12),
+                        ft.Icon(ft.Icons.FOLDER_OPEN_SHARP, size=14, color=theme.ACCENT),
+                        ft.Text("Open", color=theme.ACCENT, size=12),
                     ],
                     spacing=5,
                     tight=True,
@@ -5219,12 +5218,12 @@ def main(page: ft.Page):
             )
 
             return ft.Container(
-                bgcolor=ft.Colors.BLACK_26,
+                bgcolor=theme.SURFACE,
                 border_radius=5,
                 padding=ft.Padding.symmetric(horizontal=14, vertical=10),
                 content=ft.Row(
                     [
-                        ft.Icon(icon_data, size=18, color=accent_color),
+                        ft.Icon(icon_data, size=18, color=theme.ACCENT),
                         ft.Column(
                             spacing=2,
                             expand=True,
@@ -5232,13 +5231,13 @@ def main(page: ft.Page):
                                 ft.Text(
                                     label,
                                     font_family="ps",
-                                    color=accent_color,
+                                    color=theme.ACCENT,
                                     size=13,
                                     weight=ft.FontWeight.BOLD,
                                 ),
                                 ft.Text(
                                     str(target),
-                                    color="#9ba3b4",
+                                    color=theme.TEXT_CAPTION,
                                     size=12,
                                     no_wrap=True,
                                     overflow=ft.TextOverflow.ELLIPSIS,
@@ -5261,7 +5260,7 @@ def main(page: ft.Page):
             )
 
         storage_card = ft.Container(
-            bgcolor=ft.Colors.BLACK_26,
+            bgcolor=theme.SURFACE,
             border_radius=5,
             padding=ft.Padding.symmetric(horizontal=16, vertical=14),
             content=ft.Column(
@@ -5273,13 +5272,13 @@ def main(page: ft.Page):
                             ft.Text(
                                 "Storage Directories",
                                 font_family="ps",
-                                color=accent_color,
+                                color=theme.ACCENT,
                                 size=15,
                                 weight=ft.FontWeight.BOLD,
                             ),
                             ft.Text(
                                 "Direct shortcuts to installation folders, instances, and configurations.",
-                                color="#747e95",
+                                color=theme.NAV_MUTED,
                                 size=12,
                             ),
                         ],
@@ -5295,16 +5294,16 @@ def main(page: ft.Page):
         # 4. RESET SETTINGS CARD
         # ==========================================
         reset_btn = ft.Container(
-            bgcolor="#e57373",
+            bgcolor=theme.DANGER,
             border_radius=5,
             padding=ft.Padding.symmetric(horizontal=14, vertical=8),
             ink=True,
             content=ft.Row(
                 [
-                    ft.Icon(ft.Icons.RESTORE_SHARP, size=15, color=bg_color_main),
+                    ft.Icon(ft.Icons.RESTORE_SHARP, size=15, color=theme.ON_ACCENT),
                     ft.Text(
                         "Reset to Default Values",
-                        color=bg_color_main,
+                        color=theme.ON_ACCENT,
                         size=12,
                         weight=ft.FontWeight.BOLD,
                     ),
@@ -5316,7 +5315,7 @@ def main(page: ft.Page):
         )
 
         reset_card = ft.Container(
-            bgcolor=ft.Colors.BLACK_26,
+            bgcolor=theme.SURFACE,
             border_radius=5,
             padding=ft.Padding.symmetric(horizontal=16, vertical=14),
             content=ft.Row(
@@ -5330,13 +5329,13 @@ def main(page: ft.Page):
                             ft.Text(
                                 "Reset Launcher Settings",
                                 font_family="ps",
-                                color=accent_color,
+                                color=theme.ACCENT,
                                 size=15,
                                 weight=ft.FontWeight.BOLD,
                             ),
                             ft.Text(
                                 "Revert RAM allocation, window dimensions, and flags to defaults. Accounts and instances remain untouched.",
-                                color="#747e95",
+                                color=theme.NAV_MUTED,
                                 size=12,
                             ),
                         ],
@@ -5354,7 +5353,7 @@ def main(page: ft.Page):
             padding=ft.Padding.only(top=6, bottom=14),
             content=ft.Text(
                 f"Gr8 Launcher {launcher_updates.version_label()} • Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.",
-                color="#50617a",
+                color=theme.TEXT_FOOTNOTE,
                 size=11,
                 text_align=ft.TextAlign.CENTER,
             ),
@@ -5376,10 +5375,10 @@ def main(page: ft.Page):
             return updater_ui.build_section(make_setting_card)
         return ft.Column([
             ft.Container(
-                bgcolor=ft.Colors.BLACK_26,
+                bgcolor=theme.SURFACE,
                 border_radius=5,
                 padding=ft.Padding.symmetric(horizontal=16, vertical=14),
-                content=ft.Text("Updates service initializing...", color="#747e95", size=13),
+                content=ft.Text("Updates service initializing...", color=theme.NAV_MUTED, size=13),
             )
         ])
 
@@ -5401,11 +5400,11 @@ def main(page: ft.Page):
         active_settings_sub_tab[0] = key
         for k, btn in sub_nav_buttons.items():
             is_sel = k == key
-            btn.bgcolor = ft.Colors.BLACK_26 if is_sel else ft.Colors.TRANSPARENT
+            btn.bgcolor = theme.SURFACE if is_sel else theme.TRANSPARENT
             row = btn.content
             if isinstance(row, ft.Row) and len(row.controls) >= 2:
-                row.controls[0].color = accent_color if is_sel else "#747e95"
-                row.controls[1].color = accent_color if is_sel else "#747e95"
+                row.controls[0].color = theme.ACCENT if is_sel else theme.NAV_MUTED
+                row.controls[1].color = theme.ACCENT if is_sel else theme.NAV_MUTED
                 row.controls[1].weight = (
                     ft.FontWeight.BOLD if is_sel else ft.FontWeight.NORMAL
                 )
@@ -5433,11 +5432,11 @@ def main(page: ft.Page):
     for k, label, icon in sub_nav_items:
         is_sel = k == active_settings_sub_tab[0]
         row_controls = [
-            ft.Icon(icon, size=18, color=accent_color if is_sel else "#747e95"),
+            ft.Icon(icon, size=18, color=theme.ACCENT if is_sel else theme.NAV_MUTED),
             ft.Text(
                 label,
                 font_family="ps",
-                color=accent_color if is_sel else "#747e95",
+                color=theme.ACCENT if is_sel else theme.NAV_MUTED,
                 size=13,
                 weight=ft.FontWeight.BOLD if is_sel else ft.FontWeight.NORMAL,
             ),
@@ -5448,7 +5447,7 @@ def main(page: ft.Page):
                 sub_update_badge_dot,
             ])
         btn = ft.Container(
-            bgcolor=ft.Colors.BLACK_26 if is_sel else ft.Colors.TRANSPARENT,
+            bgcolor=theme.SURFACE if is_sel else theme.TRANSPARENT,
             border_radius=5,
             padding=ft.Padding.symmetric(horizontal=12, vertical=10),
             content=ft.Row(
@@ -5474,7 +5473,7 @@ def main(page: ft.Page):
         expand=True,
         spacing=16,
         controls=[
-            ft.Text("Settings", font_family="ps", color=accent_color, size=32),
+            ft.Text("Settings", font_family="ps", color=theme.ACCENT, size=32),
             ft.Row(
                 expand=True,
                 spacing=16,
@@ -5537,7 +5536,7 @@ def main(page: ft.Page):
             {"icon": np_state["icon"]},
             size=34,
             default_icon_size=22,
-            color=accent_color,
+            color=theme.ACCENT,
         ),
         alignment=ft.Alignment.CENTER,
     )
@@ -5545,17 +5544,17 @@ def main(page: ft.Page):
     np_icon_edit_overlay = ft.Container(
         content=ft.Icon(
             ft.Icons.EDIT_SHARP,
-            color="#ffffff",
+            color=theme.TEXT,
             size=18,
             shadows=[
                 ft.BoxShadow(
                     spread_radius=1,
                     blur_radius=8,
-                    color=ft.Colors.WHITE,
+                    color=theme.TEXT,
                 )
             ],
         ),
-        bgcolor=ft.Colors.with_opacity(0.40, "#000000"),
+        bgcolor=ft.Colors.with_opacity(0.40, theme.BLACK),
         border_radius=5,
         alignment=ft.Alignment.CENTER,
         opacity=0.0,
@@ -5573,9 +5572,9 @@ def main(page: ft.Page):
     np_icon_btn_container = ft.Container(
         width=45,
         height=45,
-        bgcolor=input_bg_color,
+        bgcolor=theme.SURFACE,
         border_radius=5,
-        border=ft.Border.all(1.5, accent_color),
+        border=ft.Border.all(1.5, theme.ACCENT),
         alignment=ft.Alignment.CENTER,
         tooltip="Change Profile Icon",
         content=ft.Stack(
@@ -5602,25 +5601,25 @@ def main(page: ft.Page):
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
 
-    np_loader_text = ft.Text("Mod Loader: Vanilla", color="#ffffff", size=14)
+    np_loader_text = ft.Text("Mod Loader: Vanilla", color=theme.TEXT, size=14)
     np_loader_btn_container = ft.Container(
         width=400,
         height=45,
-        bgcolor=input_bg_color,
+        bgcolor=theme.SURFACE,
         border_radius=5,
-        border=ft.Border.all(1.5, ft.Colors.TRANSPARENT),
+        border=ft.Border.all(1.5, theme.TRANSPARENT),
         padding=ft.Padding.symmetric(horizontal=14),
         content=ft.Row(
             [
                 ft.Row(
                     [
-                        ft.Icon(ft.Icons.TUNE_SHARP, color=accent_color, size=18),
+                        ft.Icon(ft.Icons.TUNE_SHARP, color=theme.ACCENT, size=18),
                         np_loader_text,
                     ],
                     spacing=8,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
-                ft.Icon(ft.Icons.CHEVRON_RIGHT_SHARP, color="#747e95", size=18),
+                ft.Icon(ft.Icons.CHEVRON_RIGHT_SHARP, color=theme.NAV_MUTED, size=18),
             ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -5633,20 +5632,20 @@ def main(page: ft.Page):
 
     np_mc_version_text = ft.Text(
         f"MC: {np_state['mc_version']}",
-        color="#ffffff",
+        color=theme.TEXT,
         size=13,
         weight=ft.FontWeight.W_500,
     )
     np_mc_version_btn_container = ft.Container(
         width=195,
         height=45,
-        bgcolor=input_bg_color,
+        bgcolor=theme.SURFACE,
         border_radius=5,
-        border=ft.Border.all(1.5, ft.Colors.TRANSPARENT),
+        border=ft.Border.all(1.5, theme.TRANSPARENT),
         padding=ft.Padding.symmetric(horizontal=12),
         content=ft.Row(
             [
-                ft.Icon(ft.Icons.SPORTS_ESPORTS_SHARP, color=accent_color, size=16),
+                ft.Icon(ft.Icons.SPORTS_ESPORTS_SHARP, color=theme.ACCENT, size=16),
                 np_mc_version_text,
             ],
             spacing=8,
@@ -5660,18 +5659,18 @@ def main(page: ft.Page):
     )
 
     np_loader_version_text = ft.Text(
-        "Loader: N/A", color="#ffffff", size=13, weight=ft.FontWeight.W_500
+        "Loader: N/A", color=theme.TEXT, size=13, weight=ft.FontWeight.W_500
     )
     np_loader_version_btn_container = ft.Container(
         width=195,
         height=45,
-        bgcolor=input_bg_color,
+        bgcolor=theme.SURFACE,
         border_radius=5,
-        border=ft.Border.all(1.5, ft.Colors.TRANSPARENT),
+        border=ft.Border.all(1.5, theme.TRANSPARENT),
         padding=ft.Padding.symmetric(horizontal=12),
         content=ft.Row(
             [
-                ft.Icon(ft.Icons.LAYERS_SHARP, color=accent_color, size=16),
+                ft.Icon(ft.Icons.LAYERS_SHARP, color=theme.ACCENT, size=16),
                 np_loader_version_text,
             ],
             spacing=8,
@@ -5690,14 +5689,14 @@ def main(page: ft.Page):
 
     instance_switch = ft.Switch(
         value=True,
-        active_color=accent_color,
-        track_color="#2b3b55",
+        active_color=theme.ACCENT,
+        track_color=theme.SWITCH_TRACK,
         on_change=on_instance_toggle,
     )
 
     instance_toggle_row = ft.Container(
         width=400,
-        bgcolor=input_bg_color,
+        bgcolor=theme.SURFACE,
         border_radius=5,
         padding=ft.Padding.symmetric(horizontal=14, vertical=10),
         content=ft.Row(
@@ -5706,13 +5705,13 @@ def main(page: ft.Page):
                     [
                         ft.Text(
                             "Separate Instance Folder",
-                            color="#ffffff",
+                            color=theme.TEXT,
                             size=14,
                         ),
                         ft.Text(
                             "Keep mods, saves, and configs isolated in a custom folder",
                             size=11,
-                            color="#747e95",
+                            color=theme.NAV_MUTED,
                         ),
                     ],
                     spacing=2,
@@ -5728,7 +5727,7 @@ def main(page: ft.Page):
     np_folder_field = SimpleInput(hint_text="Instance Folder Name", width=400)
     np_folder_error_text = ft.Text(
         "",
-        color="#e57373",
+        color=theme.DANGER,
         size=11,
         visible=False,
     )
@@ -5880,16 +5879,16 @@ def main(page: ft.Page):
         content=ft.Container(
             width=400,
             height=45,
-            bgcolor=accent_color,
+            bgcolor=theme.ACCENT,
             border_radius=5,
             alignment=ft.Alignment.CENTER,
             content=ft.Row(
                 [
-                    ft.Icon(ft.Icons.ADD_SHARP, color=bg_color_main, size=18),
+                    ft.Icon(ft.Icons.ADD_SHARP, color=theme.ON_ACCENT, size=18),
                     ft.Text(
                         "Create Profile",
                         font_family="ps",
-                        color=bg_color_main,
+                        color=theme.ON_ACCENT,
                         size=15,
                         weight=ft.FontWeight.BOLD,
                     ),
@@ -5911,7 +5910,7 @@ def main(page: ft.Page):
                     content=ft.Text(
                         "New Profile",
                         font_family="ps",
-                        color=accent_color,
+                        color=theme.ACCENT,
                         size=36,
                         text_align=ft.TextAlign.CENTER,
                     ),
@@ -5944,14 +5943,14 @@ def main(page: ft.Page):
         width=56,
         height=56,
         border_radius=6,
-        bgcolor=ft.Colors.BLACK_38,
-        border=ft.Border.all(1.5, accent_color),
+        bgcolor=theme.SURFACE_STRONG,
+        border=ft.Border.all(1.5, theme.ACCENT),
         alignment=ft.Alignment.CENTER,
         content=build_profile_icon_content(
             {"icon": np_state["icon"]},
             size=44,
             default_icon_size=32,
-            color=accent_color,
+            color=theme.ACCENT,
         ),
     )
 
@@ -5961,13 +5960,13 @@ def main(page: ft.Page):
             {"icon": icon_path},
             size=44,
             default_icon_size=32,
-            color=accent_color,
+            color=theme.ACCENT,
         )
         np_avatar_container.content = build_profile_icon_content(
             {"icon": icon_path},
             size=34,
             default_icon_size=22,
-            color=accent_color,
+            color=theme.ACCENT,
         )
         try:
             np_preview_icon_container.update()
@@ -5978,12 +5977,12 @@ def main(page: ft.Page):
         for path_key, c in np_tile_containers.items():
             is_active = (np_state["icon"] or "") == (path_key or "")
             c.border = ft.Border.all(
-                1.5, accent_color if is_active else ft.Colors.TRANSPARENT
+                1.5, theme.ACCENT if is_active else theme.TRANSPARENT
             )
             c.bgcolor = (
-                ft.Colors.with_opacity(0.30, accent_color)
+                ft.Colors.with_opacity(0.30, theme.ACCENT)
                 if is_active
-                else ft.Colors.BLACK_38
+                else theme.SURFACE_STRONG
             )
             try:
                 c.update()
@@ -6028,12 +6027,12 @@ def main(page: ft.Page):
             height=42,
             border_radius=6,
             bgcolor=(
-                ft.Colors.with_opacity(0.30, accent_color)
+                ft.Colors.with_opacity(0.30, theme.ACCENT)
                 if is_active
-                else ft.Colors.BLACK_38
+                else theme.SURFACE_STRONG
             ),
             border=ft.Border.all(
-                1.5, accent_color if is_active else ft.Colors.TRANSPARENT
+                1.5, theme.ACCENT if is_active else theme.TRANSPARENT
             ),
             alignment=ft.Alignment.CENTER,
             tooltip=tooltip_text,
@@ -6074,12 +6073,12 @@ def main(page: ft.Page):
                                                 "Profile Icon",
                                                 size=13,
                                                 weight=ft.FontWeight.W_500,
-                                                color="#ffffff",
+                                                color=theme.TEXT,
                                             ),
                                             ft.Text(
                                                 "Select an icon or import custom",
                                                 size=11,
-                                                color="#747e95",
+                                                color=theme.NAV_MUTED,
                                             ),
                                         ],
                                     ),
@@ -6094,12 +6093,12 @@ def main(page: ft.Page):
                                             [
                                                 ft.Icon(
                                                     ft.Icons.UPLOAD_FILE_SHARP,
-                                                    color=accent_color,
+                                                    color=theme.ACCENT,
                                                     size=16,
                                                 ),
                                                 ft.Text(
                                                     "Import...",
-                                                    color=accent_color,
+                                                    color=theme.ACCENT,
                                                     size=11,
                                                 ),
                                             ],
@@ -6108,8 +6107,8 @@ def main(page: ft.Page):
                                         ),
                                         height=32,
                                         style=ft.ButtonStyle(
-                                            bgcolor=ft.Colors.BLACK_38,
-                                            overlay_color=ft.Colors.TRANSPARENT,
+                                            bgcolor=theme.SURFACE_STRONG,
+                                            overlay_color=theme.TRANSPARENT,
                                             shape=ft.RoundedRectangleBorder(radius=5),
                                             padding=ft.Padding.symmetric(
                                                 horizontal=8, vertical=0
@@ -6117,7 +6116,7 @@ def main(page: ft.Page):
                                             side=ft.BorderSide(
                                                 1,
                                                 ft.Colors.with_opacity(
-                                                    0.35, accent_color
+                                                    0.35, theme.ACCENT
                                                 ),
                                             ),
                                         ),
@@ -6133,7 +6132,7 @@ def main(page: ft.Page):
                 ft.Container(
                     width=400,
                     content=ft.Text(
-                        "Blocks", size=11, color="#747e95", weight=ft.FontWeight.BOLD
+                        "Blocks", size=11, color=theme.NAV_MUTED, weight=ft.FontWeight.BOLD
                     ),
                 ),
                 ft.Container(
@@ -6149,7 +6148,7 @@ def main(page: ft.Page):
                     content=ft.Text(
                         "Mobs & Characters",
                         size=11,
-                        color="#747e95",
+                        color=theme.NAV_MUTED,
                         weight=ft.FontWeight.BOLD,
                     ),
                 ),
@@ -6229,9 +6228,9 @@ def main(page: ft.Page):
                     width=400,
                     height=52,
                     border_radius=6,
-                    bgcolor=input_bg_color,
+                    bgcolor=theme.SURFACE,
                     border=ft.Border.all(
-                        1, accent_color if is_active else ft.Colors.TRANSPARENT
+                        1, theme.ACCENT if is_active else theme.TRANSPARENT
                     ),
                     padding=ft.Padding.symmetric(horizontal=12, vertical=6),
                     content=ft.Row(
@@ -6240,7 +6239,7 @@ def main(page: ft.Page):
                                 [
                                     ft.Icon(
                                         icon,
-                                        color=accent_color if is_active else "#ffffff",
+                                        color=theme.ACCENT if is_active else theme.TEXT,
                                         size=20,
                                     ),
                                     ft.Column(
@@ -6249,9 +6248,9 @@ def main(page: ft.Page):
                                                 name,
                                                 size=13,
                                                 weight=ft.FontWeight.W_500,
-                                                color="#ffffff",
+                                                color=theme.TEXT,
                                             ),
-                                            ft.Text(desc, size=10, color="#747e95"),
+                                            ft.Text(desc, size=10, color=theme.NAV_MUTED),
                                         ],
                                         spacing=1,
                                         alignment=ft.MainAxisAlignment.CENTER,
@@ -6266,7 +6265,7 @@ def main(page: ft.Page):
                                     if is_active
                                     else ft.Icons.RADIO_BUTTON_UNCHECKED
                                 ),
-                                color=accent_color if is_active else "#747e95",
+                                color=theme.ACCENT if is_active else theme.NAV_MUTED,
                                 size=16,
                             ),
                         ],
@@ -6288,11 +6287,11 @@ def main(page: ft.Page):
                                 "Select Mod Loader",
                                 size=20,
                                 # weight=ft.FontWeight.BOLD,
-                                color=accent_color,
+                                color=theme.ACCENT,
                                 font_family="ps"
 
                             ),
-                            ft.Text("5 options", size=11, color="#747e95"),
+                            ft.Text("5 options", size=11, color=theme.NAV_MUTED),
                         ],
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -6310,7 +6309,7 @@ def main(page: ft.Page):
         hint_text="Search version", width=270
     )
     mc_releases_only_switch = ft.Switch(
-        value=True, active_color=accent_color, track_color="#2b3b55"
+        value=True, active_color=theme.ACCENT, track_color=theme.SWITCH_TRACK
     )
     mc_version_list_view = ft.ListView(expand=True, spacing=4)
 
@@ -6345,7 +6344,7 @@ def main(page: ft.Page):
                             ft.Text(
                                 "Loading Minecraft versions...",
                                 size=13,
-                                color="#ffffff",
+                                color=theme.TEXT,
                             ),
                         ],
                         spacing=10,
@@ -6378,12 +6377,12 @@ def main(page: ft.Page):
                     height=38,
                     border_radius=4,
                     bgcolor=(
-                        ft.Colors.with_opacity(0.25, accent_color)
+                        ft.Colors.with_opacity(0.25, theme.ACCENT)
                         if is_sel
-                        else ft.Colors.BLACK_26
+                        else theme.SURFACE
                     ),
                     border=ft.Border.all(
-                        1, accent_color if is_sel else ft.Colors.TRANSPARENT
+                        1, theme.ACCENT if is_sel else theme.TRANSPARENT
                     ),
                     padding=ft.Padding.symmetric(horizontal=12),
                     content=ft.Row(
@@ -6397,7 +6396,7 @@ def main(page: ft.Page):
                                             else ft.Icons.RADIO_BUTTON_UNCHECKED
                                         ),
                                         size=14,
-                                        color=accent_color if is_sel else "#747e95",
+                                        color=theme.ACCENT if is_sel else theme.NAV_MUTED,
                                     ),
                                     ft.Text(
                                         vid,
@@ -6407,7 +6406,7 @@ def main(page: ft.Page):
                                             if is_sel
                                             else ft.FontWeight.NORMAL
                                         ),
-                                        color="#ffffff",
+                                        color=theme.TEXT,
                                     ),
                                 ],
                                 spacing=8,
@@ -6420,15 +6419,15 @@ def main(page: ft.Page):
                                             "Latest" if is_latest else vtype.capitalize(),
                                             size=10,
                                             color=(
-                                                accent_color
+                                                theme.ACCENT
                                                 if (is_latest or vtype == "release")
-                                                 else "#747e95"
+                                                 else theme.NAV_MUTED
                                             ),
                                         ),
                                         bgcolor=(
-                                            ft.Colors.with_opacity(0.12, accent_color)
+                                            ft.Colors.with_opacity(0.12, theme.ACCENT)
                                             if (is_latest or vtype == "release")
-                                            else ft.Colors.BLACK_38
+                                            else theme.SURFACE_STRONG
                                         ),
                                         padding=ft.Padding.symmetric(
                                             horizontal=6, vertical=2
@@ -6453,7 +6452,7 @@ def main(page: ft.Page):
                     padding=20,
                     alignment=ft.Alignment.CENTER,
                     content=ft.Text(
-                        "No Minecraft versions found.", size=12, color="#747e95"
+                        "No Minecraft versions found.", size=12, color=theme.NAV_MUTED
                     ),
                 )
             )
@@ -6505,7 +6504,7 @@ def main(page: ft.Page):
     ensure_mc_versions_loaded()
 
     mc_version_panel = ft.Column(
-        [   ft.Text("Select a Version",font_family="ps",size=20,color=accent_color),
+        [   ft.Text("Select a Version",font_family="ps",size=20,color=theme.ACCENT),
             ft.Container(
                 width=400,
                 content=ft.Row(
@@ -6513,7 +6512,7 @@ def main(page: ft.Page):
                         mc_version_search_field,
                         ft.Row(
                             [
-                                ft.Text("Releases", size=11, color="#747e95"),
+                                ft.Text("Releases", size=11, color=theme.NAV_MUTED),
                                 mc_releases_only_switch,
                             ],
                             spacing=4,
@@ -6527,7 +6526,7 @@ def main(page: ft.Page):
             ft.Container(
                 width=400,
                 height=360,
-                bgcolor=input_bg_color,
+                bgcolor=theme.SURFACE,
                 border_radius=6,
                 padding=6,
                 content=mc_version_list_view,
@@ -6624,7 +6623,7 @@ def main(page: ft.Page):
                             ft.Text(
                                 f"Loading {loader_key} versions...",
                                 size=13,
-                                color="#ffffff",
+                                color=theme.TEXT,
                             ),
                         ],
                         spacing=10,
@@ -6642,23 +6641,23 @@ def main(page: ft.Page):
                             ft.Icon(
                                 ft.Icons.WARNING_AMBER_ROUNDED,
                                 size=32,
-                                color=accent_color,
+                                color=theme.ACCENT,
                             ),
                             ft.Text(
                                 f"No {loader_key} builds found for Minecraft {np_state['mc_version']}.",
                                 size=12,
-                                color="#747e95",
+                                color=theme.NAV_MUTED,
                                 text_align=ft.TextAlign.CENTER,
                             ),
                             SimpleButton(
                                 content=ft.Container(
                                     content=ft.Text(
                                         "Retry",
-                                        color=bg_color_main,
+                                        color=theme.ON_ACCENT,
                                         size=11,
                                         weight=ft.FontWeight.BOLD,
                                     ),
-                                    bgcolor=accent_color,
+                                    bgcolor=theme.ACCENT,
                                     border_radius=4,
                                     padding=ft.Padding.symmetric(
                                         horizontal=14, vertical=6
@@ -6686,13 +6685,13 @@ def main(page: ft.Page):
                         height=38,
                         border_radius=4,
                         bgcolor=(
-                            ft.Colors.with_opacity(0.25, accent_color)
+                            ft.Colors.with_opacity(0.25, theme.ACCENT)
                             if is_sel
-                            else ft.Colors.BLACK_26
+                            else theme.SURFACE
                         ),
                         border=ft.Border.all(
                             1.5 if is_sel else 1,
-                            accent_color if is_sel else ft.Colors.TRANSPARENT,
+                            theme.ACCENT if is_sel else theme.TRANSPARENT,
                         ),
                         padding=ft.Padding.symmetric(horizontal=12),
                         content=ft.Row(
@@ -6706,7 +6705,7 @@ def main(page: ft.Page):
                                                 else ft.Icons.RADIO_BUTTON_UNCHECKED
                                             ),
                                             size=14,
-                                            color=accent_color if is_sel else "#747e95",
+                                            color=theme.ACCENT if is_sel else theme.NAV_MUTED,
                                         ),
                                         ft.Text(
                                             ver,
@@ -6716,7 +6715,7 @@ def main(page: ft.Page):
                                                 if is_sel
                                                 else ft.FontWeight.NORMAL
                                             ),
-                                            color="#ffffff",
+                                            color=theme.TEXT,
                                         ),
                                     ],
                                     spacing=8,
@@ -6726,12 +6725,12 @@ def main(page: ft.Page):
                                     content=ft.Text(
                                         "Latest" if is_latest else "Build",
                                         size=10,
-                                        color=accent_color if is_latest else "#747e95",
+                                        color=theme.ACCENT if is_latest else theme.NAV_MUTED,
                                     ),
                                     bgcolor=(
-                                        ft.Colors.with_opacity(0.12, accent_color)
+                                        ft.Colors.with_opacity(0.12, theme.ACCENT)
                                         if is_latest
-                                        else ft.Colors.BLACK_38
+                                        else theme.SURFACE_STRONG
                                     ),
                                     padding=ft.Padding.symmetric(horizontal=6, vertical=2),
                                     border_radius=3,
@@ -6754,12 +6753,12 @@ def main(page: ft.Page):
     loader_version_search_field.on_change = lambda e: update_loader_version_list_ui()
 
     loader_version_panel = ft.Column(
-        [ft.Text("Select a Version",font_family="ps",size=20,color=accent_color),
+        [ft.Text("Select a Version",font_family="ps",size=20,color=theme.ACCENT),
             loader_version_search_field,
             ft.Container(
                 width=400,
                 height=360,
-                bgcolor=input_bg_color,
+                bgcolor=theme.SURFACE,
                 border_radius=6,
                 padding=6,
                 content=loader_version_list_view,
@@ -6773,36 +6772,36 @@ def main(page: ft.Page):
     vanilla_info_panel = ft.Container(
         width=400,
         height=360,
-        bgcolor=input_bg_color,
+        bgcolor=theme.SURFACE,
         border_radius=6,
         padding=20,
         alignment=ft.Alignment.CENTER,
         content=ft.Column(
             [
                 ft.Icon(
-                    ft.Icons.INFO_OUTLINE_ROUNDED, size=40, color=accent_color
+                    ft.Icons.INFO_OUTLINE_ROUNDED, size=40, color=theme.ACCENT
                 ),
                 ft.Text(
                     "Vanilla Minecraft",
                     size=16,
                     weight=ft.FontWeight.BOLD,
-                    color="#ffffff",
+                    color=theme.TEXT,
                 ),
                 ft.Text(
                     "Vanilla does not use a mod loader. Choose Fabric, Forge, NeoForge, or Quilt to install mods.",
                     size=12,
-                    color="#747e95",
+                    color=theme.NAV_MUTED,
                     text_align=ft.TextAlign.CENTER,
                 ),
                 SimpleButton(
                     content=ft.Container(
                         content=ft.Text(
                             "Select Mod Loader",
-                            color=bg_color_main,
+                            color=theme.ON_ACCENT,
                             size=12,
                             font_family="ps",
                         ),
-                        bgcolor=accent_color,
+                        bgcolor=theme.ACCENT,
                         border_radius=5,
                         padding=ft.Padding.symmetric(horizontal=14, vertical=8),
                     ),
@@ -6826,17 +6825,17 @@ def main(page: ft.Page):
         np_state["active_panel"] = panel_name
 
         np_icon_btn_container.border = ft.Border.all(
-            1.5, accent_color if panel_name == "icon" else ft.Colors.TRANSPARENT
+            1.5, theme.ACCENT if panel_name == "icon" else theme.TRANSPARENT
         )
         np_loader_btn_container.border = ft.Border.all(
-            1.5, accent_color if panel_name == "loader" else ft.Colors.TRANSPARENT
+            1.5, theme.ACCENT if panel_name == "loader" else theme.TRANSPARENT
         )
         np_mc_version_btn_container.border = ft.Border.all(
-            1.5, accent_color if panel_name == "mc_version" else ft.Colors.TRANSPARENT
+            1.5, theme.ACCENT if panel_name == "mc_version" else theme.TRANSPARENT
         )
         np_loader_version_btn_container.border = ft.Border.all(
             1.5,
-            accent_color if panel_name == "loader_version" else ft.Colors.TRANSPARENT,
+            theme.ACCENT if panel_name == "loader_version" else theme.TRANSPARENT,
         )
 
         try:
@@ -7084,8 +7083,8 @@ def main(page: ft.Page):
             center=ft.Alignment.TOP_RIGHT,
             radius=0.9,
             colors=[
-                bg_glow_color,
-                bg_color_main,
+                theme.GLOW,
+                theme.BACKGROUND,
             ],
         ),
     )
@@ -7199,7 +7198,7 @@ def main(page: ft.Page):
                 bg_gradient_layer.gradient = ft.RadialGradient(
                     center=ft.Alignment(curr_x, curr_y),
                     radius=round(random.uniform(0.88, 1.05), 2),
-                    colors=[bg_glow_color, bg_color_main],
+                    colors=[theme.GLOW, theme.BACKGROUND],
                 )
                 bg_gradient_layer.update()
 

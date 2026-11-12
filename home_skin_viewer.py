@@ -6,6 +6,7 @@ import time
 
 from PIL import Image, ImageFilter
 
+import ui_theme as theme
 from skin_viewer import SkinViewer
 
 
@@ -87,7 +88,7 @@ class HomeSkinViewer(SkinViewer):
         )
         if self._hovered:
             alpha = rendered.getchannel("A").filter(ImageFilter.MaxFilter(5))
-            outline = Image.new("RGBA", rendered.size, (255, 255, 255, 0))
+            outline = Image.new("RGBA", rendered.size, theme.TEXT)
             outline.putalpha(alpha)
             rendered = Image.alpha_composite(outline, rendered)
         buf = io.BytesIO()

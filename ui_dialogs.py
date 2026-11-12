@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import fields
 
 import flet as ft
+import ui_theme as theme
 
 from ui_scroll_views import ScrollColumn
 
@@ -51,7 +52,7 @@ class ProfileDialogHost(ft.Container):
         self._preferred_width = width
         self._preferred_height = height
         self._panel = ft.Container(
-            bgcolor="#182842",
+            bgcolor=theme.BACKGROUND,
             border_radius=8,
             padding=24,
             opacity=0,
@@ -60,7 +61,7 @@ class ProfileDialogHost(ft.Container):
             animate_scale=ft.Animation(self.ANIMATION_MS, ft.AnimationCurve.EASE_OUT_CUBIC),
             shadow=ft.BoxShadow(
                 blur_radius=18, spread_radius=0,
-                color=ft.Colors.BLACK_26, offset=ft.Offset(0, 6),
+                color=theme.SURFACE, offset=ft.Offset(0, 6),
             ),
             content=ft.Column(
                 spacing=16,
@@ -89,7 +90,7 @@ class ProfileDialogHost(ft.Container):
             # Clip the filter to the body so the title bar stays sharp.
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
             blur=ft.Blur(6, 6),
-            bgcolor=ft.Colors.with_opacity(0.28, ft.Colors.BLACK),
+            bgcolor=ft.Colors.with_opacity(0.28, theme.BLACK),
             opacity=0,
             animate_opacity=ft.Animation(self.ANIMATION_MS, ft.AnimationCurve.EASE_OUT_CUBIC),
         )

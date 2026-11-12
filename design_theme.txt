@@ -1,4 +1,5 @@
 some details abt the theme/appearance of the launcher:
+use the shared variables in ui_theme.py for all UI colors. the colors below describe the default palette.
 this is a minimal minecraft launcher.
 the main colors are "#f5de9a"-primary(usually for texts or buttons) "#182842"-secondary(usually for bg).
 all elements are either sharp or have a simple rounded rectangle style having radius of 5px.

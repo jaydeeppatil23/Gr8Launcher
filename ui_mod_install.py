@@ -5,12 +5,17 @@ from __future__ import annotations
 from typing import Callable
 
 import flet as ft
+import ui_theme as theme
 
 from mod_services import InstallPlan, ModUpdate, primary_file
-from ui_controls import ACCENT, MUTED, NAVY, rounded_artwork, launcher_button, format_size as _size
+from ui_controls import (
+    rounded_artwork,
+    launcher_button,
+    format_size as _size,
+)
 
 
-def _text(value: str, size: int = 13, *, color: str = MUTED, **kwargs) -> ft.Text:
+def _text(value: str, size: int = 13, *, color: str = theme.MUTED, **kwargs) -> ft.Text:
     return ft.Text(value, size=size, color=color, **kwargs)
 
 
@@ -36,17 +41,17 @@ class ModInstallReview(ft.Column):
         self.title = ft.Row([
             rounded_artwork(artwork, size=48),
             ft.Column([
-                ft.Text(f"Update {len(updates)} {'mod' if len(updates) == 1 else 'mods'}" if updates else f"Install {hit.get('title', 'mod')}", font_family="ps", size=22, color=ACCENT,
+                ft.Text(f"Update {len(updates)} {'mod' if len(updates) == 1 else 'mods'}" if updates else f"Install {hit.get('title', 'mod')}", font_family="ps", size=22, color=theme.ACCENT,
                         max_lines=2, overflow=ft.TextOverflow.ELLIPSIS),
                 _text("Review your updates" if updates else "Review your installation", 12),
             ], spacing=2, expand=True),
         ], spacing=14)
         self.destination = ft.Container(
-            bgcolor=ft.Colors.BLACK_26, border_radius=5, padding=12,
+            bgcolor=theme.SURFACE, border_radius=5, padding=12,
             content=ft.Row([
                 rounded_artwork(profile_icon, size=32),
                 ft.Column([
-                    _text(profile.get("name", "This profile"), 15, color=ft.Colors.WHITE,
+                    _text(profile.get("name", "This profile"), 15, color=theme.TEXT,
                           max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
                     _text(f"Minecraft {profile['minecraft_version']}  /  {profile['loader']}", 12),
                 ], spacing=2, expand=True),
@@ -78,22 +83,22 @@ class ModInstallReview(ft.Column):
             ft.Row([
                 ft.Column([
                     _text("Mod updates" if self.updates else "Selected version", 12),
-                    _text(f"{len(self.updates)} selected" if self.updates else root.get("version_number") or root.get("name", "Unknown"), 15, color=ACCENT,
+                    _text(f"{len(self.updates)} selected" if self.updates else root.get("version_number") or root.get("name", "Unknown"), 15, color=theme.ACCENT,
                           max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, tooltip=root.get("name")),
                 ], spacing=4, expand=True),
                 ft.Column([
                     _text(f"{count} {'download' if count == 1 else 'downloads'}", 12),
-                    _text(total, 15, color=ft.Colors.WHITE),
+                    _text(total, 15, color=theme.TEXT),
                 ], spacing=4, horizontal_alignment=ft.CrossAxisAlignment.END),
             ], spacing=16),
         ]
         if self.updates:
             targets = {version["project_id"]: version for version in plan.root_versions}
             self.controls.append(ft.Container(
-                bgcolor=ft.Colors.BLACK_26, border_radius=5, padding=12,
+                bgcolor=theme.SURFACE, border_radius=5, padding=12,
                 content=ft.Column([
                     ft.Column([
-                        _text(update.mod.name, 14, color=ft.Colors.WHITE, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                        _text(update.mod.name, 14, color=theme.TEXT, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
                         _text(f"{update.mod.version}  to  {targets.get(update.mod.project_id, update.version).get('version_number', '')}"
                               + ("  /  Disabled" if not update.mod.enabled else ""), 12),
                     ], spacing=3) for update in self.updates
@@ -106,16 +111,16 @@ class ModInstallReview(ft.Column):
                 status = "Installed" if item.installed else "Required" if item.required else "Optional"
                 if item.required or item.installed:
                     leading = ft.Container(
-                        ft.Icon(ft.Icons.LOCK_SHARP, size=18, color=MUTED if item.installed else ACCENT,
+                        ft.Icon(ft.Icons.LOCK_SHARP, size=18, color=theme.MUTED if item.installed else theme.ACCENT,
                                 semantics_label=f"{status} dependency: {item.name}"),
                         width=36, height=40, alignment=ft.Alignment.CENTER,
                     )
                 else:
                     leading = ft.Checkbox(
                         value=item.project_id in self.optional_projects, disabled=self.checking or bool(item.issue),
-                        width=36, height=40, active_color=ACCENT, check_color=NAVY,
-                        fill_color={ft.ControlState.SELECTED: ACCENT},
-                        overlay_color=ft.Colors.TRANSPARENT, mouse_cursor=ft.MouseCursor.CLICK,
+                        width=36, height=40, active_color=theme.ACCENT, check_color=theme.ON_ACCENT,
+                        fill_color={ft.ControlState.SELECTED: theme.ACCENT},
+                        overlay_color=theme.TRANSPARENT, mouse_cursor=ft.MouseCursor.CLICK,
                         semantics_label=f"Optional dependency: {item.name}",
                         on_change=self._optional_handler(item.project_id),
                     )
@@ -127,14 +132,14 @@ class ModInstallReview(ft.Column):
                 rows.append(ft.Row([
                     leading,
                     ft.Column([
-                        _text(item.name, 14, color=ft.Colors.WHITE, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                        _text(item.name, 14, color=theme.TEXT, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
                         _text(detail, 12, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS),
                     ], spacing=3, expand=True),
-                    _text(status, 11, color=ACCENT if status == "Required" else MUTED),
+                    _text(status, 11, color=theme.ACCENT if status == "Required" else theme.MUTED),
                 ], spacing=8))
             self.controls.extend([
-                ft.Text("Dependencies", font_family="ps", size=17, color=ACCENT),
-                ft.Container(ft.Column(rows, spacing=10), bgcolor=ft.Colors.BLACK_26, border_radius=5, padding=10),
+                ft.Text("Dependencies", font_family="ps", size=17, color=theme.ACCENT),
+                ft.Container(ft.Column(rows, spacing=10), bgcolor=theme.SURFACE, border_radius=5, padding=10),
             ])
         elif not self.updates:
             self.controls.append(_text("No dependencies listed for this version.", 13))
@@ -146,26 +151,26 @@ class ModInstallReview(ft.Column):
         if plan.disabled_projects:
             self.controls.append(_text("Disabled mods stay disabled after updating." if self.updates else "This mod will stay disabled after the update.", 12))
         for warning in plan.warnings:
-            self.controls.append(_text(warning, 12, color=ACCENT))
+            self.controls.append(_text(warning, 12, color=theme.ACCENT))
         manual = [primary_file(version) for version in plan.versions if primary_file(version).get("manual_required")]
         if manual:
             from ui_mod_details import open_link
             self.controls.extend([
-                ft.Text("Manual CurseForge downloads", font_family="ps", size=17, color=ACCENT),
+                ft.Text("Manual CurseForge downloads", font_family="ps", size=17, color=theme.ACCENT),
                 _text("The authors restrict third-party downloads. Download these exact files on CurseForge, then select them here.", 12),
             ])
             for file in manual:
                 self.controls.append(ft.Row([
                     _text(file["filename"], 12, expand=True),
-                    _text("Selected" if self.manual_file_ready(file) else "Needed", 11, color=ACCENT),
+                    _text("Selected" if self.manual_file_ready(file) else "Needed", 11, color=theme.ACCENT),
                     launcher_button("Open CurseForge", lambda e, url=file["manual_url"]: open_link(url)),
                 ], spacing=8))
             self.controls.append(launcher_button("Select downloaded JARs", self.on_manual_files,
                                                 disabled=self.checking or self.on_manual_files is None))
         if self.checking:
-            self.controls.append(_text("Checking dependency compatibility…", 12, color=ACCENT))
+            self.controls.append(_text("Checking dependency compatibility…", 12, color=theme.ACCENT))
         if self.error:
-            self.controls.append(_text(self.error, 12, color=ACCENT))
+            self.controls.append(_text(self.error, 12, color=theme.ACCENT))
 
     def _optional_handler(self, project: str) -> Callable:
         async def changed(e) -> None:

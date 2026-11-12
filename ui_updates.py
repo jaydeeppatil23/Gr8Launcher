@@ -10,10 +10,14 @@ import webbrowser
 import zipfile
 
 import flet as ft
+import ui_theme as theme
 
 import launcher_updates as updates
 import storage
-from ui_controls import ACCENT, MUTED, launcher_button, launcher_pill
+from ui_controls import (
+    launcher_button,
+    launcher_pill,
+)
 from ui_scroll_views import ScrollColumn
 
 
@@ -58,27 +62,27 @@ class UpdateController:
             font_family="ps",
             size=14,
             weight=ft.FontWeight.BOLD,
-            color=ACCENT,
+            color=theme.ACCENT,
         )
         self.channel_badge_text = ft.Text(
             "Update preview" if preview else ("Running from source" if source else "Stable Release"),
             size=11,
-            color="#747e95",
+            color=theme.NAV_MUTED,
         )
         self.status_badge_text = ft.Text(
             "Ready to install" if self.release else "Up to date",
             font_family="ps",
             size=12,
-            color="#a7c9ff" if self.release else "#747e95",
+            color=theme.UPDATE if self.release else theme.NAV_MUTED,
         )
         self.status_badge = ft.Container(
-            bgcolor=ft.Colors.BLACK_26,
+            bgcolor=theme.SURFACE,
             border_radius=5,
             padding=ft.Padding.symmetric(horizontal=10, vertical=4),
             content=self.status_badge_text,
         )
-        self.spinner = ft.ProgressRing(width=14, height=14, stroke_width=2, color=ACCENT, visible=False)
-        self.status = ft.Text("Check for the latest launcher release.", size=12, color=MUTED)
+        self.spinner = ft.ProgressRing(width=14, height=14, stroke_width=2, color=theme.ACCENT, visible=False)
+        self.status = ft.Text("Check for the latest launcher release.", size=12, color=theme.MUTED)
 
         # Buttons (Strictly adhering to design_theme.txt: 5px rounded, BLACK_26 surfaces, ps font)
         self.check_button = launcher_pill(
@@ -94,13 +98,13 @@ class UpdateController:
         self.action_button_text = ft.Text(
             "View Update",
             font_family="ps",
-            color="#182842",
+            color=theme.ON_ACCENT,
             size=13,
             weight=ft.FontWeight.BOLD,
         )
-        self.action_button_icon = ft.Icon(ft.Icons.UPDATE_SHARP, size=15, color="#182842")
+        self.action_button_icon = ft.Icon(ft.Icons.UPDATE_SHARP, size=15, color=theme.ON_ACCENT)
         self.action_button = ft.Container(
-            bgcolor=ACCENT,
+            bgcolor=theme.ACCENT,
             border_radius=5,
             padding=ft.Padding.symmetric(horizontal=14, vertical=8),
             ink=True,
@@ -120,16 +124,16 @@ class UpdateController:
 
         # Ready notice banner (visible only when an update is downloaded & prepared)
         self.ready_banner = ft.Container(
-            bgcolor=ft.Colors.with_opacity(0.12, ACCENT),
+            bgcolor=ft.Colors.with_opacity(0.12, theme.ACCENT),
             border_radius=5,
             padding=ft.Padding.symmetric(horizontal=12, vertical=10),
             visible=bool(self.release),
             content=ft.Row([
-                ft.Icon(ft.Icons.CHECK_CIRCLE_ROUNDED, color=ACCENT, size=18),
+                ft.Icon(ft.Icons.CHECK_CIRCLE_ROUNDED, color=theme.ACCENT, size=18),
                 ft.Text(
                     f"v{self.release.version if self.release else ''} is ready. Restart when convenient to apply.",
                     size=12,
-                    color=ACCENT,
+                    color=theme.ACCENT,
                     expand=True,
                 ),
             ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
@@ -138,30 +142,30 @@ class UpdateController:
         # Switches
         self.automatic_switch = ft.Switch(
             value=bool(storage.load_settings().get("check_updates_automatically", True)),
-            active_color=ACCENT,
-            track_color="#2b3b55",
+            active_color=theme.ACCENT,
+            track_color=theme.SWITCH_TRACK,
             on_change=lambda e: self._preference("check_updates_automatically", e.control.value),
         )
         self.download_switch = ft.Switch(
             value=bool(storage.load_settings().get("download_updates_automatically", False)),
-            active_color=ACCENT,
-            track_color="#2b3b55",
+            active_color=theme.ACCENT,
+            track_color=theme.SWITCH_TRACK,
             disabled=source and not preview,
             on_change=lambda e: self._preference("download_updates_automatically", e.control.value),
         )
 
         # Primary Status Card
         self.status_card = ft.Container(
-            bgcolor=ft.Colors.BLACK_26,
+            bgcolor=theme.SURFACE,
             border_radius=5,
             padding=ft.Padding.symmetric(horizontal=16, vertical=14),
             content=ft.Column([
                 ft.Row([
                     ft.Row([
-                        ft.Icon(ft.Icons.SYSTEM_UPDATE_ALT, color=ACCENT, size=20),
+                        ft.Icon(ft.Icons.SYSTEM_UPDATE_ALT, color=theme.ACCENT, size=20),
                         ft.Column([
-                            ft.Text("Launcher Updates", font_family="ps", color=ACCENT, size=15, weight=ft.FontWeight.BOLD),
-                            ft.Row([self.version_badge_text, ft.Text("•", color="#747e95", size=10), self.channel_badge_text], spacing=6),
+                            ft.Text("Launcher Updates", font_family="ps", color=theme.ACCENT, size=15, weight=ft.FontWeight.BOLD),
+                            ft.Row([self.version_badge_text, ft.Text("•", color=theme.NAV_MUTED, size=10), self.channel_badge_text], spacing=6),
                         ], spacing=1),
                     ], spacing=10, expand=True),
                     self.status_badge,
@@ -197,25 +201,25 @@ class UpdateController:
 
         if self.phase == "ready" and self.release:
             self.status_badge_text.value = "Ready to install"
-            self.status_badge_text.color = ACCENT
+            self.status_badge_text.color = theme.ACCENT
             self.ready_banner.visible = True
             if len(self.ready_banner.content.controls) > 1:
                 self.ready_banner.content.controls[1].value = f"v{self.release.version} is verified and ready. Restart when convenient to apply."
         elif self.phase == "available" and self.release:
             self.status_badge_text.value = f"Update available: v{self.release.version}"
-            self.status_badge_text.color = "#a7c9ff"
+            self.status_badge_text.color = theme.UPDATE
             self.ready_banner.visible = False
         elif self.phase == "downloading":
             self.status_badge_text.value = "Downloading..."
-            self.status_badge_text.color = "#a7c9ff"
+            self.status_badge_text.color = theme.UPDATE
             self.ready_banner.visible = False
         elif self.phase == "checking":
             self.status_badge_text.value = "Checking..."
-            self.status_badge_text.color = "#747e95"
+            self.status_badge_text.color = theme.NAV_MUTED
             self.ready_banner.visible = False
         else:
             self.status_badge_text.value = "Up to date"
-            self.status_badge_text.color = "#747e95"
+            self.status_badge_text.color = theme.NAV_MUTED
             self.ready_banner.visible = False
 
         controls_to_update = [
@@ -285,18 +289,18 @@ class UpdateController:
 
         # Sleek version comparison card
         version_card = ft.Container(
-            bgcolor=ft.Colors.BLACK_26,
+            bgcolor=theme.SURFACE,
             border_radius=5,
             padding=ft.Padding.symmetric(horizontal=16, vertical=12),
             content=ft.Row([
                 ft.Column([
-                    ft.Text("INSTALLED", size=10, color="#747e95", weight=ft.FontWeight.BOLD),
-                    ft.Text(updates.version_label(), font_family="ps", size=16, color="#d1d7e2"),
+                    ft.Text("INSTALLED", size=10, color=theme.NAV_MUTED, weight=ft.FontWeight.BOLD),
+                    ft.Text(updates.version_label(), font_family="ps", size=16, color=theme.TEXT_SECONDARY),
                 ], spacing=2),
-                ft.Icon(ft.Icons.ARROW_FORWARD, size=18, color=ACCENT),
+                ft.Icon(ft.Icons.ARROW_FORWARD, size=18, color=theme.ACCENT),
                 ft.Column([
-                    ft.Text("NEW RELEASE", size=10, color=ACCENT, weight=ft.FontWeight.BOLD),
-                    ft.Text(f"v{self.release.version}", font_family="ps", size=16, color=ACCENT, weight=ft.FontWeight.BOLD),
+                    ft.Text("NEW RELEASE", size=10, color=theme.ACCENT, weight=ft.FontWeight.BOLD),
+                    ft.Text(f"v{self.release.version}", font_family="ps", size=16, color=theme.ACCENT, weight=ft.FontWeight.BOLD),
                 ], spacing=2),
             ], spacing=16, vertical_alignment=ft.CrossAxisAlignment.CENTER),
         )
@@ -309,27 +313,27 @@ class UpdateController:
 
         details: list[ft.Control] = [
             version_card,
-            ft.Text(status_desc, size=12, color="#d7dce7"),
+            ft.Text(status_desc, size=12, color=theme.TEXT_UPDATE),
         ]
 
         if not can_apply:
             details.append(ft.Container(
-                bgcolor=ft.Colors.BLACK_26,
+                bgcolor=theme.SURFACE,
                 border_radius=5,
                 padding=ft.Padding.symmetric(horizontal=12, vertical=8),
                 content=ft.Row([
-                    ft.Icon(ft.Icons.INFO_OUTLINE, size=15, color=MUTED),
-                    ft.Text("Running from source. Install the packaged Windows release to use automatic updates.", size=12, color=MUTED, expand=True),
+                    ft.Icon(ft.Icons.INFO_OUTLINE, size=15, color=theme.MUTED),
+                    ft.Text("Running from source. Install the packaged Windows release to use automatic updates.", size=12, color=theme.MUTED, expand=True),
                 ], spacing=8),
             ))
         if self.service.scope == "allusers":
             details.append(ft.Container(
-                bgcolor=ft.Colors.BLACK_26,
+                bgcolor=theme.SURFACE,
                 border_radius=5,
                 padding=ft.Padding.symmetric(horizontal=12, vertical=8),
                 content=ft.Row([
-                    ft.Icon(ft.Icons.SHIELD_OUTLINED, size=15, color=MUTED),
-                    ft.Text("Windows will request administrator approval for setup.", size=12, color=MUTED, expand=True),
+                    ft.Icon(ft.Icons.SHIELD_OUTLINED, size=15, color=theme.MUTED),
+                    ft.Text("Windows will request administrator approval for setup.", size=12, color=theme.MUTED, expand=True),
                 ], spacing=8),
             ))
 
@@ -340,16 +344,16 @@ class UpdateController:
             auto_follow_links=False,
             on_tap_link=lambda e: open_url(e.data) if str(e.data).startswith("http") else None,
             md_style_sheet=ft.MarkdownStyleSheet(
-                p_text_style=ft.TextStyle(size=12, color="#d1d7e2", height=1.45),
-                h1_text_style=ft.TextStyle(size=16, color=ACCENT, weight=ft.FontWeight.BOLD),
-                h2_text_style=ft.TextStyle(size=14, color=ACCENT, weight=ft.FontWeight.BOLD),
-                h3_text_style=ft.TextStyle(size=13, color=ACCENT, weight=ft.FontWeight.BOLD),
-                a_text_style=ft.TextStyle(color=ACCENT),
-                code_text_style=ft.TextStyle(font_family="Consolas", color="#e5ebf4", size=11),
-                list_bullet_text_style=ft.TextStyle(size=12, color="#d1d7e2"),
-                blockquote_decoration=ft.BoxDecoration(bgcolor="#1b2b45", border_radius=5),
+                p_text_style=ft.TextStyle(size=12, color=theme.TEXT_SECONDARY, height=1.45),
+                h1_text_style=ft.TextStyle(size=16, color=theme.ACCENT, weight=ft.FontWeight.BOLD),
+                h2_text_style=ft.TextStyle(size=14, color=theme.ACCENT, weight=ft.FontWeight.BOLD),
+                h3_text_style=ft.TextStyle(size=13, color=theme.ACCENT, weight=ft.FontWeight.BOLD),
+                a_text_style=ft.TextStyle(color=theme.ACCENT),
+                code_text_style=ft.TextStyle(font_family="Consolas", color=theme.TEXT_HEADING, size=11),
+                list_bullet_text_style=ft.TextStyle(size=12, color=theme.TEXT_SECONDARY),
+                blockquote_decoration=ft.BoxDecoration(bgcolor=theme.QUOTE_BACKGROUND, border_radius=5),
                 blockquote_padding=ft.Padding.all(10),
-                codeblock_decoration=ft.BoxDecoration(bgcolor="#121e33", border_radius=5),
+                codeblock_decoration=ft.BoxDecoration(bgcolor=theme.CODE_BACKGROUND, border_radius=5),
                 codeblock_padding=ft.Padding.all(10),
                 table_cells_padding=ft.Padding.symmetric(horizontal=8, vertical=6),
             ),
@@ -357,7 +361,7 @@ class UpdateController:
 
         details.extend([
             ft.Container(
-                bgcolor=ft.Colors.BLACK_26,
+                bgcolor=theme.SURFACE,
                 border_radius=5,
                 padding=ft.Padding.all(12),
                 content=notes_markdown,
@@ -379,8 +383,8 @@ class UpdateController:
         host.show(
             ft.Column(details, spacing=12),
             title=ft.Row([
-                ft.Icon(ft.Icons.SYSTEM_UPDATE_ALT, color=ACCENT, size=22),
-                ft.Text("Launcher Update", font_family="ps", size=20, color=ACCENT),
+                ft.Icon(ft.Icons.SYSTEM_UPDATE_ALT, color=theme.ACCENT, size=22),
+                ft.Text("Launcher Update", font_family="ps", size=20, color=theme.ACCENT),
             ], spacing=10),
             actions=actions,
             on_cancel=self.later,
@@ -427,38 +431,38 @@ class UpdateController:
             auto_follow_links=False,
             on_tap_link=lambda e: open_url(e.data) if str(e.data).startswith("http") else None,
             md_style_sheet=ft.MarkdownStyleSheet(
-                p_text_style=ft.TextStyle(size=12, color="#d1d7e2", height=1.45),
-                h1_text_style=ft.TextStyle(size=16, color=ACCENT, weight=ft.FontWeight.BOLD),
-                h2_text_style=ft.TextStyle(size=14, color=ACCENT, weight=ft.FontWeight.BOLD),
-                h3_text_style=ft.TextStyle(size=13, color=ACCENT, weight=ft.FontWeight.BOLD),
-                a_text_style=ft.TextStyle(color=ACCENT),
-                code_text_style=ft.TextStyle(font_family="Consolas", color="#e5ebf4", size=11),
-                list_bullet_text_style=ft.TextStyle(size=12, color="#d1d7e2"),
-                blockquote_decoration=ft.BoxDecoration(bgcolor="#1b2b45", border_radius=5),
+                p_text_style=ft.TextStyle(size=12, color=theme.TEXT_SECONDARY, height=1.45),
+                h1_text_style=ft.TextStyle(size=16, color=theme.ACCENT, weight=ft.FontWeight.BOLD),
+                h2_text_style=ft.TextStyle(size=14, color=theme.ACCENT, weight=ft.FontWeight.BOLD),
+                h3_text_style=ft.TextStyle(size=13, color=theme.ACCENT, weight=ft.FontWeight.BOLD),
+                a_text_style=ft.TextStyle(color=theme.ACCENT),
+                code_text_style=ft.TextStyle(font_family="Consolas", color=theme.TEXT_HEADING, size=11),
+                list_bullet_text_style=ft.TextStyle(size=12, color=theme.TEXT_SECONDARY),
+                blockquote_decoration=ft.BoxDecoration(bgcolor=theme.QUOTE_BACKGROUND, border_radius=5),
                 blockquote_padding=ft.Padding.all(10),
-                codeblock_decoration=ft.BoxDecoration(bgcolor="#121e33", border_radius=5),
+                codeblock_decoration=ft.BoxDecoration(bgcolor=theme.CODE_BACKGROUND, border_radius=5),
                 codeblock_padding=ft.Padding.all(10),
                 table_cells_padding=ft.Padding.symmetric(horizontal=8, vertical=6),
             ),
         )
 
         header_container = ft.Container(
-            bgcolor=ft.Colors.BLACK_26,
+            bgcolor=theme.SURFACE,
             border_radius=5,
             padding=ft.Padding.symmetric(horizontal=14, vertical=10),
             content=ft.Row([
                 ft.Row([
-                    ft.Icon(ft.Icons.AUTO_AWESOME_SHARP, size=16, color=ACCENT),
-                    ft.Text(f"Gr8 Launcher {version_str}", font_family="ps", size=14, color=ACCENT, weight=ft.FontWeight.BOLD),
+                    ft.Icon(ft.Icons.AUTO_AWESOME_SHARP, size=16, color=theme.ACCENT),
+                    ft.Text(f"Gr8 Launcher {version_str}", font_family="ps", size=14, color=theme.ACCENT, weight=ft.FontWeight.BOLD),
                 ], spacing=8),
-                ft.Text(badge_label, size=11, color="#747e95"),
+                ft.Text(badge_label, size=11, color=theme.NAV_MUTED),
             ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER),
         )
 
         details = [
             header_container,
             ft.Container(
-                bgcolor=ft.Colors.BLACK_26,
+                bgcolor=theme.SURFACE,
                 border_radius=5,
                 padding=ft.Padding.all(12),
                 content=notes_markdown,
@@ -473,8 +477,8 @@ class UpdateController:
         host.show(
             ft.Column(details, spacing=12),
             title=ft.Row([
-                ft.Icon(ft.Icons.NEW_RELEASES_SHARP, color=ACCENT, size=20),
-                ft.Text("Release Notes", font_family="ps", size=20, color=ACCENT),
+                ft.Icon(ft.Icons.NEW_RELEASES_SHARP, color=theme.ACCENT, size=20),
+                ft.Text("Release Notes", font_family="ps", size=20, color=theme.ACCENT),
             ], spacing=10),
             actions=actions,
             on_cancel=lambda e: self.dialogs().close(),

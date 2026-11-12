@@ -10,6 +10,7 @@ import time
 from typing import Callable
 
 import flet as ft
+import ui_theme as theme
 
 from credential_store import redact_credentials
 
@@ -106,14 +107,14 @@ class _SmoothProgressBar(ft.Container):
             # Reuse v1.2.0's feathered beam, tinted with the launcher background.
             gradient=ft.LinearGradient(
                 begin=ft.Alignment.CENTER_LEFT, end=ft.Alignment.CENTER_RIGHT,
-                colors=[ft.Colors.with_opacity(alpha, "#182842")
+                colors=[ft.Colors.with_opacity(alpha, theme.BACKGROUND)
                         for alpha in (0.0, 0.08, 0.22, 0.40, 0.22, 0.08, 0.0)],
                 stops=[0.0, 0.20, 0.38, 0.50, 0.62, 0.80, 1.0],
             ),
             animate_position=ft.Animation(0, ft.AnimationCurve.LINEAR),
         )
         self._fill = ft.Container(
-            bgcolor="#f5de9a", border_radius=5,
+            bgcolor=theme.ACCENT, border_radius=5,
             content=ft.Stack([self._shimmer], fit=ft.StackFit.EXPAND),
             clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
             # Slide a full-width fill under the clipped track. Fractional offsets
@@ -122,8 +123,8 @@ class _SmoothProgressBar(ft.Container):
             animate_offset=ft.Animation(0, ft.AnimationCurve.EASE_OUT_CUBIC),
         )
         self._unknown = ft.ProgressBar(
-            value=None, bar_height=6, color="#f5de9a",
-            bgcolor=ft.Colors.TRANSPARENT, border_radius=5, visible=False,
+            value=None, bar_height=6, color=theme.ACCENT,
+            bgcolor=theme.TRANSPARENT, border_radius=5, visible=False,
         )
         self._semantics = ft.Semantics(
             label="Progress", value="0%", container=True, exclude_semantics=True,
@@ -131,7 +132,7 @@ class _SmoothProgressBar(ft.Container):
                              on_size_change=self._measure_width),
         )
         super().__init__(
-            height=6, bgcolor=ft.Colors.BLACK_26, border_radius=5,
+            height=6, bgcolor=theme.SURFACE, border_radius=5,
             clip_behavior=ft.ClipBehavior.ANTI_ALIAS, content=self._semantics,
         )
 
@@ -241,9 +242,9 @@ class ProgressHost(ft.Container):
         self._show_text = show_text
         self._idle = ProgressSnapshot("Ready to play", 0.0, "", 0)
         self._last_rendered: tuple[ProgressSnapshot, bool] | None = None
-        self.status_text = ft.Text("Ready to play", font_family="ps", size=13, color="#f5de9a",
+        self.status_text = ft.Text("Ready to play", font_family="ps", size=13, color=theme.ACCENT,
                                    expand=True, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
-        self.detail_text = ft.Text("", size=12, color="#929db1", text_align=ft.TextAlign.RIGHT,
+        self.detail_text = ft.Text("", size=12, color=theme.MUTED, text_align=ft.TextAlign.RIGHT,
                                    max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
         self.bar = _SmoothProgressBar(page)
         self.text_row = ft.Row([self.status_text, self.detail_text], spacing=12,

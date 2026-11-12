@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 import flet as ft
+import ui_theme as theme
 from ui_controls import launcher_button
 
 
@@ -39,11 +40,11 @@ class ToastHost(ft.Container):
     WIDTH = 392
     MARGIN = 16
     TONES = {
-        "info": ("Information", "chest.png", "#f5de9a"),
-        "success": ("Success", "diamond_ore.png", "#f5de9a"),
-        "warning": ("Attention", "furnace.png", "#f5cf83"),
-        "error": ("Something went wrong", "tnt.png", "#ff9292"),
-        "update": ("Update", "grass_block.png", "#a7c9ff"),
+        "info": ("Information", "chest.png", theme.ACCENT),
+        "success": ("Success", "diamond_ore.png", theme.ACCENT),
+        "warning": ("Attention", "furnace.png", theme.TOAST_WARNING),
+        "error": ("Something went wrong", "tnt.png", theme.TOAST_ERROR),
+        "update": ("Update", "grass_block.png", theme.UPDATE),
     }
 
     def __init__(self, page: ft.Page, *, title_bar_height=40):
@@ -125,14 +126,14 @@ class ToastHost(ft.Container):
         )
         close_button = ft.IconButton(
             icon=ft.Icons.CLOSE_SHARP,
-            icon_color="#bac6d8",
+            icon_color=theme.ICON_CLOSE,
             icon_size=16,
             width=24,
             height=24,
             padding=0,
             tooltip="Dismiss notification",
             style=ft.ButtonStyle(
-                overlay_color=ft.Colors.TRANSPARENT,
+                overlay_color=theme.TRANSPARENT,
                 padding=0,
                 shape=ft.RoundedRectangleBorder(radius=2),
             ),
@@ -140,21 +141,9 @@ class ToastHost(ft.Container):
         action_button = launcher_button(action_label, None, height=30) if action_label and on_action else None
         glass = ft.Container(
             border_radius=8,
-            # border=ft.Border.all(1,"#f5de9a"),
             clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
             blur=ft.Blur(10, 10),
-            bgcolor=ft.Colors.with_opacity(0.7,"#3D5377"),
-            # gradient=ft.LinearGradient(
-            #     begin=ft.Alignment.TOP_LEFT,
-            #     end=ft.Alignment.BOTTOM_RIGHT,
-            #     colors=["#1cffffff", "#06ffffff"],
-            # ),
-            # border=ft.Border(
-            #     top=ft.BorderSide(1, ft.Colors.with_opacity(0.24, "#f5de9a")),
-            #     left=ft.BorderSide(1, ft.Colors.with_opacity(0.16, "#f5de9a")),
-            #     right=ft.BorderSide(1, ft.Colors.with_opacity(0.35, "#000000")),
-            #     bottom=ft.BorderSide(1, ft.Colors.with_opacity(0.35, "#000000")),
-            # ),
+            bgcolor=ft.Colors.with_opacity(0.7,theme.TOAST_BACKGROUND),
             content=ft.Column(
                 tight=True,
                 spacing=0,
@@ -170,7 +159,7 @@ class ToastHost(ft.Container):
                                     width=36,
                                     height=36,
                                     border_radius=2,
-                                    bgcolor=ft.Colors.BLACK_26,
+                                    bgcolor=theme.SURFACE,
                                     alignment=ft.Alignment.CENTER,
                                     content=ft.Image(
                                         src=f"icons/icon_blocks/{icon}",
@@ -191,7 +180,7 @@ class ToastHost(ft.Container):
                                         ),
                                         ft.Text(
                                             message, font_family="ps", size=14,
-                                            color="#e5ebf4", selectable=True,
+                                            color=theme.TEXT_HEADING, selectable=True,
                                         ),
                                         *([action_button] if action_button else []),
                                     ],
@@ -201,7 +190,7 @@ class ToastHost(ft.Container):
                         ),
                     ),
                     ft.Container(
-                        bgcolor=ft.Colors.BLACK_26,
+                        bgcolor=theme.SURFACE,
                         content=ft.Stack(height=3, controls=[progress]),
                     ),
                 ],
@@ -213,7 +202,7 @@ class ToastHost(ft.Container):
             shadow=ft.BoxShadow(
                 blur_radius=8,
                 spread_radius=0,
-                color=ft.Colors.with_opacity(0.22, "#000000"),
+                color=ft.Colors.with_opacity(0.22, theme.BLACK),
                 offset=ft.Offset(0, 5),
             ),
             # An opacity layer isolates BackdropFilter from the page while it

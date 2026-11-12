@@ -9,24 +9,33 @@ from urllib.parse import urlparse
 import webbrowser
 
 import flet as ft
+import ui_theme as theme
 
 from mod_services import (LocalMod, ModManager, ModrinthClient, jar_base_name, newer_compatible_version,
                           version_loader_compatible, version_matches_environment)
 from mod_markdown import normalize_mod_markdown
 from mod_compatibility import version_supports_profile
-from ui_controls import (SimpleInput, AcrylicSelector, launcher_button, launcher_back_button,
-                          launcher_icon_button, rounded_artwork, ACCENT, MUTED, search_input, card_surface)
+from ui_controls import (
+    SimpleInput,
+    AcrylicSelector,
+    launcher_button,
+    launcher_back_button,
+    launcher_icon_button,
+    rounded_artwork,
+    search_input,
+    card_surface,
+    launcher_asset_icon,
+)
 from ui_motion import StaggeredReveal
 from ui_profiles import ProfileList, profile_card_surface, profile_list_surface
 from ui_progress import ProgressHost, ProgressTask, track_progress
 from ui_scroll_views import ScrollColumn
 
 BODY_FONT = "Segoe UI"
-DETAIL_MUTED = "#929db1"
 SIDEBAR_WIDTH = 236
 
 
-def text(value: str, size=13, *, pixel=False, color="#c5cedc", **kwargs) -> ft.Text:
+def text(value: str, size=13, *, pixel=False, color=theme.TEXT_DETAIL, **kwargs) -> ft.Text:
     return ft.Text(value, size=size, color=color, font_family="ps" if pixel else None, **kwargs)
 
 
@@ -36,27 +45,27 @@ def open_link(url: str) -> None:
 
 
 def markdown(value: str, *, base_url: str = "https://modrinth.com/") -> ft.Markdown:
-    body = ft.TextStyle(font_family=BODY_FONT, color="#d1d7e2", size=14, height=1.55)
+    body = ft.TextStyle(font_family=BODY_FONT, color=theme.TEXT_SECONDARY, size=14, height=1.55)
     def heading(size: int) -> ft.TextStyle:
-        return ft.TextStyle(font_family=BODY_FONT, color="#e5ebf4", size=size, weight=ft.FontWeight.W_600, height=1.35)
+        return ft.TextStyle(font_family=BODY_FONT, color=theme.TEXT_HEADING, size=size, weight=ft.FontWeight.W_600, height=1.35)
     return ft.Markdown(
         value=normalize_mod_markdown(value, base_url), selectable=True, extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
-        image_error_content=text("Image unavailable", 12, color=DETAIL_MUTED),
+        image_error_content=text("Image unavailable", 12, color=theme.MUTED),
         auto_follow_links=False, on_tap_link=lambda e: open_link(e.data),
         md_style_sheet=ft.MarkdownStyleSheet(
-            p_text_style=body, a_text_style=ft.TextStyle(color=ACCENT, font_family=BODY_FONT),
+            p_text_style=body, a_text_style=ft.TextStyle(color=theme.ACCENT, font_family=BODY_FONT),
             h1_text_style=heading(22), h2_text_style=heading(19), h3_text_style=heading(17),
             h4_text_style=heading(16), h5_text_style=heading(15), h6_text_style=heading(14),
-            strong_text_style=ft.TextStyle(font_family=BODY_FONT, color="#e5ebf4", weight=ft.FontWeight.W_600),
+            strong_text_style=ft.TextStyle(font_family=BODY_FONT, color=theme.TEXT_HEADING, weight=ft.FontWeight.W_600),
             em_text_style=ft.TextStyle(font_family=BODY_FONT, italic=True),
             del_text_style=ft.TextStyle(font_family=BODY_FONT, decoration=ft.TextDecoration.LINE_THROUGH),
             list_bullet_text_style=body, table_body_text_style=body, table_head_text_style=heading(14),
-            blockquote_text_style=body, code_text_style=ft.TextStyle(font_family="Consolas", color="#e5ebf4", size=13),
+            blockquote_text_style=body, code_text_style=ft.TextStyle(font_family="Consolas", color=theme.TEXT_HEADING, size=13),
             block_spacing=16, list_indent=20,
             blockquote_padding=ft.Padding.all(12),
-            blockquote_decoration=ft.BoxDecoration(bgcolor=ft.Colors.BLACK_26, border_radius=5),
+            blockquote_decoration=ft.BoxDecoration(bgcolor=theme.SURFACE, border_radius=5),
             codeblock_padding=ft.Padding.all(12),
-            codeblock_decoration=ft.BoxDecoration(bgcolor=ft.Colors.BLACK_26, border_radius=5),
+            codeblock_decoration=ft.BoxDecoration(bgcolor=theme.SURFACE, border_radius=5),
             table_cells_padding=ft.Padding.symmetric(horizontal=10, vertical=8),
         ),
     )
@@ -99,10 +108,10 @@ class ModDetailsPage(ft.Container):
         self._source_manager = None
 
         self.back = launcher_back_button(lambda e: on_back(), tooltip="Back to Mods")
-        self.profile_label = text("", 12, color=DETAIL_MUTED, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+        self.profile_label = text("", 12, color=theme.MUTED, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
         self.back_bar = ft.Row([self.back, ft.Container(expand=True), self.profile_label])
-        self.title = text("Mod details", 28, pixel=True, color=ACCENT, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS)
-        self.subtitle = text("", 12, color=DETAIL_MUTED, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+        self.title = text("Mod details", 28, pixel=True, color=theme.ACCENT, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS)
+        self.subtitle = text("", 12, color=theme.MUTED, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
         self.summary = text("", 13, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS)
         self.icon_host = ft.Container(width=64, height=64, alignment=ft.Alignment.CENTER)
         self.install_button = launcher_button("Install", self._install_latest, primary=True, height=44, width=96)
@@ -113,20 +122,20 @@ class ModDetailsPage(ft.Container):
                 self.title, self.subtitle, self.summary,
             ], expand=True, spacing=5),
             self.install_button, self.toggle_button, self.remove_button,
-        ], spacing=16, vertical_alignment=ft.CrossAxisAlignment.CENTER), glow_color="#454641", horizontal_padding=16)
+        ], spacing=16, vertical_alignment=ft.CrossAxisAlignment.CENTER), glow_color=theme.GLOW, horizontal_padding=16)
         self.section_buttons = {key: launcher_button(label, lambda e, name=key: self.set_section(name))
                                 for key, label in (("overview", "Overview"), ("versions", "Versions"), ("gallery", "Gallery"))}
         self.tabs = ft.Row(list(self.section_buttons.values()), spacing=8)
-        self.feedback = ft.Row([text("", 12, color=MUTED, expand=True), launcher_button("Retry", self._retry)], visible=False)
+        self.feedback = ft.Row([text("", 12, color=theme.MUTED, expand=True), launcher_button("Retry", self._retry)], visible=False)
         self.body = profile_list_surface(ft.Container(expand=True))
         self.version_search = search_input("Search versions", on_change=self._filter_versions)
         self.release_filter = AcrylicSelector([("all", "All releases"), ("release", "Stable"), ("beta", "Beta"), ("alpha", "Alpha")], "release", self._release_filter_changed, width=160)
-        self.compatible_only = ft.Switch(value=True, active_color=ACCENT, track_color="#2b3b55", on_change=self._filter_versions)
+        self.compatible_only = ft.Switch(value=True, active_color=theme.ACCENT, track_color=theme.SWITCH_TRACK, on_change=self._filter_versions)
         self.version_list = ProfileList(on_order_changed=lambda ids: False)
-        self.version_hint = text("", 12, color=MUTED)
+        self.version_hint = text("", 12, color=theme.MUTED)
         self.version_previous = launcher_icon_button(icon=ft.Icons.CHEVRON_LEFT_SHARP, tooltip="Previous versions", on_click=lambda e: self._paginate_versions(-1))
         self.version_next = launcher_icon_button(icon=ft.Icons.CHEVRON_RIGHT_SHARP, tooltip="Next versions", on_click=lambda e: self._paginate_versions(1))
-        self.version_page_label = text("", 12, color=MUTED)
+        self.version_page_label = text("", 12, color=theme.MUTED)
         self.version_footer = ft.Row([ft.Container(expand=True), self.version_previous, self.version_page_label, self.version_next], spacing=8)
         self.versions_panel = ft.Column([
             ft.Row([self.version_search, self.release_filter], spacing=12),
@@ -315,8 +324,10 @@ class ModDetailsPage(ft.Container):
             self._icon_src = icon_url or "sidebar/mods.png"
             self.icon_host.content = rounded_artwork(
                 ft.Image(src=self._icon_src, width=64, height=64, fit=ft.BoxFit.CONTAIN, filter_quality=ft.FilterQuality.NONE,
+                         color=theme.ACCENT if not icon_url else None,
+                         color_blend_mode=ft.BlendMode.SRC_IN,
                          cache_width=128, gapless_playback=True,
-                         error_content=ft.Image(src="sidebar/mods.png", width=48, height=48, filter_quality=ft.FilterQuality.NONE)), size=64)
+                         error_content=launcher_asset_icon(src="sidebar/mods.png", width=48, height=48, filter_quality=ft.FilterQuality.NONE)), size=64)
         can_change = self._can_change()
         update = self._latest_update()
         self.install_button.visible = bool(self.project) and (not self.local or update is not None)
@@ -334,8 +345,8 @@ class ModDetailsPage(ft.Container):
         self.feedback.visible = bool(self.error)
         self.feedback.controls[0].value = self.error
         for key, button in self.section_buttons.items():
-            button.style.bgcolor = ft.Colors.BLACK_26 if key == self.section else ft.Colors.TRANSPARENT
-            button.content.color = ACCENT if key == self.section else MUTED
+            button.style.bgcolor = theme.SURFACE if key == self.section else theme.TRANSPARENT
+            button.content.color = theme.ACCENT if key == self.section else theme.MUTED
         self.section_buttons["gallery"].visible = bool(self.project.get("gallery"))
         if self.section == "versions":
             self._render_versions()
@@ -348,14 +359,14 @@ class ModDetailsPage(ft.Container):
         self._update()
 
     def _fact(self, title: str, value: str) -> ft.Column:
-        return ft.Column([text(title, 11, color=DETAIL_MUTED), text(value or "Not provided", 13, selectable=True)], spacing=4)
+        return ft.Column([text(title, 11, color=theme.MUTED), text(value or "Not provided", 13, selectable=True)], spacing=4)
 
     def _link(self, label: str, url: str) -> ft.Button:
         button = launcher_button(label, lambda e: open_link(url), height=32, width=SIDEBAR_WIDTH - 32)
         button.style.padding = 0
         button.content = ft.Row([
-            text(label, 13, color=ACCENT, expand=True),
-            ft.Icon(ft.Icons.OPEN_IN_NEW_SHARP, size=15, color=DETAIL_MUTED),
+            text(label, 13, color=theme.ACCENT, expand=True),
+            ft.Icon(ft.Icons.OPEN_IN_NEW_SHARP, size=15, color=theme.MUTED),
         ], spacing=8)
         return button
 
@@ -400,11 +411,11 @@ class ModDetailsPage(ft.Container):
                 for key, url in local_links.items():
                     if isinstance(url, str) and urlparse(url).scheme in {"http", "https"}:
                         links.append(self._link(key.title(), url))
-        sidebar = [text("About this mod", 18, pixel=True, color=ACCENT), *facts]
+        sidebar = [text("About this mod", 18, pixel=True, color=theme.ACCENT), *facts]
         if links:
-            sidebar.extend([text("Links", 16, pixel=True, color=ACCENT),
+            sidebar.extend([text("Links", 16, pixel=True, color=theme.ACCENT),
                             ft.Column(links, spacing=2, horizontal_alignment=ft.CrossAxisAlignment.STRETCH)])
-        panel = ft.Container(padding=16, bgcolor=ft.Colors.BLACK_26, border_radius=5,
+        panel = ft.Container(padding=16, bgcolor=theme.SURFACE, border_radius=5,
                              content=ft.Column(sidebar, spacing=12, horizontal_alignment=ft.CrossAxisAlignment.STRETCH))
         return ft.Row([main, ft.Container(width=SIDEBAR_WIDTH, visible=bool(facts or links),
                                          content=ScrollColumn([panel], bottom_fade=True, scroll=ft.ScrollMode.AUTO, expand=True))],
@@ -445,16 +456,16 @@ class ModDetailsPage(ft.Container):
             self._version_actions.append((install, version))
             card = profile_card_surface(ft.Row([
                 ft.Container(content=ft.Column([
-                    text(version.get("name") or version.get("version_number", "Version"), 17, pixel=True, color=ACCENT),
+                    text(version.get("name") or version.get("version_number", "Version"), 17, pixel=True, color=theme.ACCENT),
                     text(" / ".join([version.get("version_type", "release").title(), version.get("date_published", "")[:10],
                                      ", ".join(version.get("loaders", [])), "Minecraft " + ", ".join(version.get("game_versions", []))]), 11,
                          max_lines=2, overflow=ft.TextOverflow.ELLIPSIS),
                 ], spacing=5), expand=True, on_click=lambda e, v=version: self.open_version(v),
                     tooltip="View changelog"),
                 install,
-                launcher_icon_button(icon=ft.Icons.CHEVRON_RIGHT_SHARP, icon_color=MUTED, tooltip="Version details",
+                launcher_icon_button(icon=ft.Icons.CHEVRON_RIGHT_SHARP, icon_color=theme.MUTED, tooltip="Version details",
                               on_click=lambda e, v=version: self.open_version(v)),
-            ], spacing=12), glow_color="#454641")
+            ], spacing=12), glow_color=theme.GLOW)
             card.data = version.get("id")
             card.key = ft.ValueKey("version-" + str(card.data))
             card.margin = ft.Margin.only(bottom=8)
@@ -517,13 +528,13 @@ class ModDetailsPage(ft.Container):
                                   disabled=not compatible or not self._can_change() or bool(self.local and self.local.version_id == version.get("id")))
         self._version_actions = [(install, version)]
         controls = [ft.Row([launcher_back_button(back, tooltip="Back to versions"), ft.Container(expand=True), install]),
-                    text(version.get("name") or version.get("version_number", "Version"), 23, pixel=True, color=ACCENT),
-                    text(requirements, 13), text("Changelog", 19, pixel=True, color=ACCENT),
+                    text(version.get("name") or version.get("version_number", "Version"), 23, pixel=True, color=theme.ACCENT),
+                    text(requirements, 13), text("Changelog", 19, pixel=True, color=theme.ACCENT),
                     markdown("Loading changelog..." if version.get("_changelog_loading") else
                              version.get("changelog") or "No changelog was provided for this release.",
                              base_url=self.project.get("project_url") or "https://modrinth.com/")]
         if not compatible:
-            controls.insert(3, text("This version is incompatible with the selected instance. You can read its details, but it cannot be installed here.", 13, color=ACCENT))
+            controls.insert(3, text("This version is incompatible with the selected instance. You can read its details, but it cannot be installed here.", 13, color=theme.ACCENT))
         for file in version.get("files", []):
             controls.append(self._fact("File", f"{file.get('filename', '')} / {file.get('size', 0) / 1024:.0f} KB"))
         dependencies = [d for d in version.get("dependencies", []) if d.get("dependency_type") == "required"]
@@ -535,10 +546,10 @@ class ModDetailsPage(ft.Container):
         controls = []
         for item in self.project.get("gallery", []):
             controls.append(ft.Container(
-                padding=12, border_radius=5, bgcolor=ft.Colors.BLACK_26,
+                padding=12, border_radius=5, bgcolor=theme.SURFACE,
                 content=ft.Column([
                     ft.Image(src=item.get("url", ""), fit=ft.BoxFit.CONTAIN, height=280),
-                    text(item.get("title") or "", 17, pixel=True, color=ACCENT),
+                    text(item.get("title") or "", 17, pixel=True, color=theme.ACCENT),
                     text(item.get("description") or "", 13),
                 ], spacing=10),
             ))
